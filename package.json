@@ -1,0 +1,12 @@
+{
+  "name": "chromeflow",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces",
+    "dev:mcp": "npm run dev -w packages/mcp-server",
+    "dev:ext": "npm run dev -w packages/extension"
+  }
+}
