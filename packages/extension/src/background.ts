@@ -94,7 +94,8 @@ function isScriptableUrl(url: string | undefined): boolean {
     !url.startsWith("chrome-extension://") &&
     !url.startsWith("edge://") &&
     !url.startsWith("about:") &&
-    !url.startsWith("devtools://")
+    !url.startsWith("devtools://") &&
+    !url.includes("chrome.google.com/webstore")
   );
 }
 
