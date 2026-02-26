@@ -1,10 +1,28 @@
 {
   "name": "chromeflow",
   "version": "0.1.0",
+  "description": "Browser guidance MCP server for Claude Code — highlights, clicks, fills, and captures from the web so you don't have to.",
   "type": "module",
   "bin": {
-    "chromeflow": "./dist/index.js"
+    "chromeflow": "dist/index.js"
   },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/NeoDrew/chromeflow.git"
+  },
+  "homepage": "https://github.com/NeoDrew/chromeflow",
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "claude",
+    "claude-code",
+    "browser",
+    "automation",
+    "chrome"
+  ],
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch"
