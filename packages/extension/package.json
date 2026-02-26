@@ -1,0 +1,14 @@
+{
+  "name": "@chromeflow/extension",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.297",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0"
+  }
+}

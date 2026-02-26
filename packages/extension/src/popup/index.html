@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Keyclaw</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      width: 260px;
+      background: #0f0f0f;
+      color: #e8e8e8;
+      padding: 16px;
+    }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .logo-icon {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, #7c3aed, #2563eb);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+    }
+    .logo-name {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin-bottom: 12px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #ef4444;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .dot.connected { background: #22c55e; }
+    .dot.connected { animation: pulse 2s infinite; }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .status-text { font-size: 13px; color: #a3a3a3; }
+    .status-text span { color: #e8e8e8; font-weight: 500; }
+    .hint {
+      font-size: 11px;
+      color: #6b6b6b;
+      line-height: 1.5;
+      border-top: 1px solid #1a1a1a;
+      padding-top: 12px;
+    }
+    .hint code {
+      background: #1a1a1a;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 10px;
+      color: #a78bfa;
+    }
+  </style>
+</head>
+<body>
+  <div class="logo">
+    <div class="logo-icon">⚡</div>
+    <div class="logo-name">Keyclaw</div>
+  </div>
+  <div class="status-row">
+    <div class="dot" id="dot"></div>
+    <div class="status-text" id="status-text">Checking...</div>
+  </div>
+  <div class="hint">
+    Run the MCP server in your terminal, then ask Claude to guide you through a page.
+    Server listens on <code>ws://localhost:7878</code>.
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
