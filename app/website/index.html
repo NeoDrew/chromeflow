@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chromeflow | Browser Guidance for Claude Code</title>
+    <meta name="description" content="Chromeflow connects Claude Code to Chrome — it navigates, clicks, fills forms, and captures config values while you stay in control." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="ambient ambient-left" aria-hidden="true"></div>
+    <div class="ambient ambient-right" aria-hidden="true"></div>
+
+    <!-- Nav -->
+    <header class="nav-shell">
+      <nav class="nav">
+        <a class="brand" href="#top"><span class="brand-dot"></span>Chromeflow</a>
+        <a class="nav-cta" href="https://github.com/NeoDrew/chromeflow">GitHub ↗</a>
+      </nav>
+    </header>
+
+    <main id="top">
+
+      <!-- Hero -->
+      <section class="hero wrap">
+        <div class="hero-text">
+          <p class="eyebrow">MCP server + Chrome extension</p>
+          <h1>Claude Code,<br><span>now with a browser.</span></h1>
+          <blockquote class="tagline">
+            "I kept flipping between Claude and Chrome for every setup task —<br>
+            so I built a tool. Now I don't."
+          </blockquote>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="#setup">Get Started</a>
+            <a class="btn btn-secondary" href="https://github.com/NeoDrew/chromeflow">View on GitHub</a>
+          </div>
+        </div>
+        <div class="hero-visual">
+          <div class="compare">
+            <div class="compare-col col-before">
+              <p class="col-label">Before</p>
+              <div class="flow-list">
+                <div class="flow-item fi-you">You read the instructions in Claude</div>
+                <div class="flow-arrow flip">⟷ switch to Chrome</div>
+                <div class="flow-item fi-chrome">Manually click through the UI</div>
+                <div class="flow-arrow flip">⟷ switch back to Claude</div>
+                <div class="flow-item fi-you">"Wait — what was step 3?"</div>
+                <div class="flow-repeat">× every step, every task</div>
+              </div>
+            </div>
+            <div class="compare-col col-after">
+              <p class="col-label col-label-after">With Chromeflow</p>
+              <div class="flow-list">
+                <div class="flow-item fi-you">You ask Claude once</div>
+                <div class="flow-arrow">↓</div>
+                <div class="flow-cf">
+                  <p class="cf-name">Chromeflow</p>
+                  <ul>
+                    <li>navigates the browser</li>
+                    <li>clicks &amp; fills forms</li>
+                    <li>captures keys → <code>.env</code></li>
+                  </ul>
+                </div>
+                <div class="flow-arrow">↓</div>
+                <div class="flow-done">✓ Done</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Setup -->
+      <section id="setup" class="setup-section wrap">
+        <p class="section-label">Setup</p>
+        <h2>Two steps. That's it.</h2>
+
+        <div class="setup-steps">
+          <div class="setup-step">
+            <div class="step-header">
+              <span class="step-n">1</span>
+              <h3>Run the setup command</h3>
+            </div>
+            <p class="step-desc">From your project directory. Registers the MCP server globally and writes Claude's instructions into your project.</p>
+            <div class="terminal">
+              <div class="terminal-bar">
+                <span class="dot dot-red"></span><span class="dot dot-yellow"></span><span class="dot dot-green"></span>
+                <span class="terminal-title">terminal</span>
+              </div>
+              <pre class="terminal-body"><span class="t-prompt">$</span> npx chromeflow setup
+
+<span class="t-dim">Chromeflow Setup
+────────────────────────────────────────</span>
+<span class="t-ok">✓</span> Registered MCP server in ~/.claude.json
+<span class="t-ok">✓</span> Created CLAUDE.md
+
+<span class="t-dim">Open chrome://extensions → Load unpacked</span>
+<span class="t-dim">Done. Restart Claude Code to activate.</span></pre>
+            </div>
+          </div>
+
+          <div class="setup-step">
+            <div class="step-header">
+              <span class="step-n">2</span>
+              <h3>Load the Chrome extension</h3>
+            </div>
+            <p class="step-desc">One time. Persists across Chrome restarts. Once the extension is on the Chrome Web Store, this will be a single click.</p>
+            <ol class="ext-steps">
+              <li>Open <code>chrome://extensions</code> in Chrome</li>
+              <li>Enable <strong>Developer mode</strong> (top-right toggle)</li>
+              <li>Click <strong>Load unpacked</strong> and select the <code>extension/dist</code> folder printed above</li>
+            </ol>
+            <p class="ext-note">Then restart Claude Code. The extension connects automatically.</p>
+          </div>
+        </div>
+
+        <div class="setup-then">
+          <p class="setup-then-label">Then just ask Claude:</p>
+          <div class="prompt-examples">
+            <span class="prompt">"Set up Stripe — create monthly and annual pricing, write the IDs to .env"</span>
+            <span class="prompt">"Get my Supabase anon key and service role key"</span>
+            <span class="prompt">"Configure SendGrid webhooks for this project"</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- How Claude works -->
+      <section class="how-section wrap">
+        <p class="section-label">How it works</p>
+        <div class="how-grid">
+          <div class="how-card">
+            <span class="how-icon">⚡</span>
+            <h3>Claude acts directly</h3>
+            <p>Buttons, forms, fields Claude knows the answer to — it handles without asking. Save, Continue, Create, prices, URLs, names.</p>
+          </div>
+          <div class="how-card">
+            <span class="how-icon">🛑</span>
+            <h3>Pauses for what matters</h3>
+            <p>Passwords, payment details, personal choices — Chromeflow highlights them and waits. You stay in control of anything sensitive.</p>
+          </div>
+          <div class="how-card">
+            <span class="how-icon">📋</span>
+            <h3>Captures &amp; writes to .env</h3>
+            <p>API keys and secrets are read from the page and written straight to your <code>.env</code>. No copy-pasting.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA -->
+      <section class="cta-section wrap">
+        <h2>Stop context-switching.<br>Start shipping.</h2>
+        <div class="cta-actions">
+          <a class="btn btn-primary" href="#setup">Get Started</a>
+          <a class="btn btn-ghost" href="https://github.com/NeoDrew/chromeflow">View on GitHub</a>
+        </div>
+      </section>
+
+    </main>
+
+    <footer class="footer">
+      <div class="footer-inner wrap">
+        <span class="footer-brand"><span class="brand-dot"></span>Chromeflow</span>
+        <span class="footer-links">
+          <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+          <a href="https://www.npmjs.com/package/chromeflow">npm</a>
+        </span>
+      </div>
+    </footer>
+  </body>
+</html>
