@@ -17,19 +17,23 @@ jobs:
         with:
           node-version: '20'
 
-      # Install runtime deps only via workspace (production deps are always fully installed)
+      # Install runtime deps via workspace (production deps are always fully installed)
       - name: Install runtime dependencies
         run: npm ci --omit=dev
 
-      # Install TypeScript in isolation, completely outside the workspace,
-      # to avoid whatever is causing devDependency partial-installation in CI
-      - name: Install build tools (isolated)
-        run: npm install --prefix /tmp/build typescript @types/node @types/ws
+      # Install @types into workspace node_modules as production deps (not devDeps)
+      # so they land correctly and TypeScript can find them
+      - name: Install type definitions
+        run: npm install --no-save @types/node @types/ws
+
+      # Install TypeScript compiler in isolation outside the workspace
+      - name: Install TypeScript compiler (isolated)
+        run: npm install --prefix /tmp/ts typescript
 
       - name: Build
         run: |
           cp ../../CLAUDE.md ./CLAUDE.md
-          /tmp/build/node_modules/.bin/tsc
+          /tmp/ts/node_modules/.bin/tsc
           node --input-type=commonjs -e "const fs=require('fs');const f='dist/index.js';fs.writeFileSync(f,'#!/usr/bin/env node\n'+fs.readFileSync(f,'utf8'));"
         working-directory: packages/mcp-server
 
