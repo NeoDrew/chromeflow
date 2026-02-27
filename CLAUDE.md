@@ -97,5 +97,6 @@ Use the absolute path for `envPath` — it's the Claude Code working directory +
 - After any action → `get_page_text()` to check for errors (not `take_screenshot`)
 - `click_element` not found → `scroll_page("down")` then retry
 - Still not found → `take_screenshot()` then `highlight_region(x,y,w,h,msg)`
+- `fill_input` not found → `click_element(hint)` to focus the field, then retry `fill_input`. If still failing, `take_screenshot()` then `highlight_region(x,y,w,h,"Type: [value]")` — do NOT ask the user to type unless all automated attempts have failed
 - Waiting for async result (build, save, deploy) → `wait_for_selector(selector, timeout)`
 - Never use Bash to work around a stuck browser interaction
