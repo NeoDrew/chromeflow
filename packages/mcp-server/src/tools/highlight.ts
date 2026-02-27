@@ -21,7 +21,7 @@ export function registerHighlightTools(server: McpServer, bridge: WsBridge) {
         .string()
         .optional()
         .describe(
-          "When the user needs to type something, pass the exact text here. It will be shown prominently in the callout so the user knows exactly what to enter."
+          "Only use when the user must personally type the value (password, email, personal data). Do NOT use when Claude will auto-fill after the click — in that case, omit this and use message: 'Click here — I'll fill it in'."
         ),
     },
     async ({ text, message, valueToType }) => {
@@ -64,7 +64,7 @@ export function registerHighlightTools(server: McpServer, bridge: WsBridge) {
         .string()
         .optional()
         .describe(
-          "When the user needs to type something, pass the exact text here. It will be shown prominently in the callout so the user knows exactly what to enter."
+          "Only use when the user must personally type the value (password, email, personal data). Do NOT use when Claude will auto-fill after the click — in that case, omit this and use message: \"Click here — I'll fill it in\"."
         ),
     },
     async ({ x, y, width, height, message, valueToType }) => {
