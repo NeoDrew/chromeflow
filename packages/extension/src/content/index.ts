@@ -45,6 +45,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         return { type: "find_highlight_response", requestId: msg.requestId, found: false };
       }
       highlightElement(el, msg.message as string);
+      armClickBuffer();
       return { type: "find_highlight_response", requestId: msg.requestId, found: true };
     }
 
@@ -57,6 +58,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         height: msg.height as number,
         message: msg.message as string,
       });
+      armClickBuffer();
       return { type: "action_done", requestId: msg.requestId };
     }
 
@@ -74,9 +76,21 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "start_click_watch": {
-      // Respond immediately so the message channel isn't held open.
-      // Will notify background via a separate sendMessage when click detected.
-      startClickWatch(msg.requestId as string);
+      // Disarm the pre-buffer listener since we're taking over with a real watch.
+      preClickCleanup?.();
+      preClickCleanup = null;
+
+      if (pendingPreClick) {
+        // User already clicked while the highlight was showing — fire immediately.
+        pendingPreClick = false;
+        chrome.runtime.sendMessage({
+          source: "chromeflow-content",
+          type: "click_detected",
+          requestId: msg.requestId as string,
+        });
+      } else {
+        startClickWatch(msg.requestId as string);
+      }
       return { type: "action_done", requestId: msg.requestId };
     }
 
@@ -147,6 +161,32 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         message: `Unknown message type: ${msg.type}`,
       };
   }
+}
+
+// ─── Pre-armed click buffer ─────────────────────────────────────────────────
+// Arms a click listener as soon as a highlight is shown, so that if the user
+// clicks before wait_for_click is called, the click is not missed.
+
+let pendingPreClick = false;
+let preClickCleanup: (() => void) | null = null;
+
+function armClickBuffer() {
+  // Reset any previous buffer
+  preClickCleanup?.();
+  pendingPreClick = false;
+
+  const onPointerDown = () => {
+    pendingPreClick = true;
+    cleanup();
+  };
+
+  const cleanup = () => {
+    document.removeEventListener("pointerdown", onPointerDown, true);
+    preClickCleanup = null;
+  };
+
+  preClickCleanup = cleanup;
+  document.addEventListener("pointerdown", onPointerDown, { capture: true, once: true });
 }
 
 // ─── Click watching ────────────────────────────────────────────────────────

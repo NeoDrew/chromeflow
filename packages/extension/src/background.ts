@@ -327,10 +327,7 @@ async function handleMcpMessage(msg: {
           lastPanelState.steps[idx].done = true;
         }
       }
-      // Intercept clear to drop persisted panel
-      if (msg.type === "clear") {
-        lastPanelState = null;
-      }
+
 
       const tab = await getActiveTab();
       return forwardToContentScript(tab, msg);
