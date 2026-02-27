@@ -1,12 +1,31 @@
 /**
  * Find a form input by its label/placeholder/aria-label and set its value,
  * dispatching the synthetic events React/Vue/Svelte apps need to pick up the change.
+ * Also handles contenteditable elements used by dashboards like Stripe.
  */
 export function fillInput(
   textHint: string,
   value: string
 ): { success: boolean; message: string } {
   const lower = textHint.toLowerCase().trim();
+
+  // Try contenteditable elements first (used by Stripe, Notion, etc.)
+  const editable = findContentEditable(lower);
+  if (editable) {
+    editable.focus();
+    // Select all existing content and replace
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editable);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    // insertText is the most React-compatible way to set value in contenteditable
+    document.execCommand("insertText", false, value);
+    editable.dispatchEvent(new Event("input", { bubbles: true }));
+    editable.dispatchEvent(new Event("change", { bubbles: true }));
+    editable.scrollIntoView({ behavior: "smooth", block: "center" });
+    return { success: true, message: `Filled "${textHint}" with value` };
+  }
 
   const input = findInput(lower);
   if (!input) {
@@ -108,6 +127,35 @@ function findInput(lower: string): FillableInput | null {
     }
   }
 
+  return null;
+}
+
+function findContentEditable(lower: string): HTMLElement | null {
+  for (const el of Array.from(
+    document.querySelectorAll<HTMLElement>('[contenteditable]:not([contenteditable="false"])')
+  )) {
+    const ariaLabel = (el.getAttribute("aria-label") ?? "").toLowerCase();
+    const dataPlaceholder = (
+      el.getAttribute("data-placeholder") ??
+      el.getAttribute("placeholder") ??
+      ""
+    ).toLowerCase();
+    if (ariaLabel.includes(lower) || dataPlaceholder.includes(lower)) return el;
+
+    // Check for a <label> or nearby text node that matches
+    const id = el.id;
+    if (id) {
+      const label = document.querySelector<HTMLLabelElement>(`label[for="${id}"]`);
+      if (label?.textContent?.toLowerCase().includes(lower)) return el;
+    }
+    const container = el.closest("div, li, tr, fieldset, form") ?? el.parentElement;
+    if (container) {
+      const text = container.textContent?.toLowerCase() ?? "";
+      // Only match if the hint appears as a label near this element (not as its own content)
+      const ownText = el.textContent?.toLowerCase() ?? "";
+      if (text.includes(lower) && !ownText.includes(lower)) return el;
+    }
+  }
   return null;
 }
 
