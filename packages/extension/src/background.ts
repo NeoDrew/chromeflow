@@ -240,6 +240,56 @@ async function handleMcpMessage(msg: {
       });
     }
 
+    case "wait_for_selector": {
+      const selector = msg.selector as string;
+      const timeout = (msg.timeout as number) ?? 30_000;
+      const tab = await getActiveTab();
+      return new Promise((resolve, reject) => {
+        const start = Date.now();
+        const check = async () => {
+          if (Date.now() - start > timeout) {
+            reject(new Error(`Selector "${selector}" not found after ${timeout / 1000}s`));
+            return;
+          }
+          try {
+            const results = await chrome.scripting.executeScript({
+              target: { tabId: tab.id! },
+              func: (sel: string) => !!document.querySelector(sel),
+              args: [selector],
+            });
+            if (results[0]?.result) {
+              resolve({ type: "action_done", requestId: msg.requestId });
+            } else {
+              setTimeout(check, 500);
+            }
+          } catch {
+            setTimeout(check, 500);
+          }
+        };
+        check();
+      });
+    }
+
+    case "execute_script": {
+      const tab = await getActiveTab();
+      if (!isScriptableUrl(tab.url)) {
+        throw new Error(`Cannot execute script on ${tab.url}`);
+      }
+      const results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id! },
+        world: "MAIN",
+        func: (code: string) => {
+          try { return String((0, eval)(code)); } catch (e) { return `Error: ${e}`; }
+        },
+        args: [msg.code as string],
+      });
+      return {
+        type: "script_response",
+        requestId: msg.requestId,
+        result: String(results[0]?.result ?? "undefined"),
+      };
+    }
+
     case "click_element": {
       const tab = await getActiveTab();
       const result = await forwardToContentScript(tab, msg) as { success: boolean; message: string };

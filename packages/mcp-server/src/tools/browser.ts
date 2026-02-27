@@ -51,4 +51,25 @@ export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
       };
     }
   );
+
+  server.tool(
+    "execute_script",
+    `Execute JavaScript in the current page's context and return the result as a string.
+Use this to read framework state, check DOM properties, or interact with page APIs that aren't reachable via text.
+Prefer get_page_text for reading visible content. Use this for programmatic DOM queries (e.g. checking an element's attribute, reading a value not visible in text).`,
+    {
+      code: z
+        .string()
+        .describe(
+          "JavaScript expression to evaluate in the page (e.g. 'document.title', 'document.querySelector(\".price\")?.textContent')"
+        ),
+    },
+    async ({ code }) => {
+      const response = await bridge.request({ type: "execute_script", code });
+      if (response.type !== "script_response") throw new Error("Unexpected response");
+      return {
+        content: [{ type: "text", text: `Result: ${(response as { result: string }).result}` }],
+      };
+    }
+  );
 }

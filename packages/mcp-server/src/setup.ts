@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -7,7 +7,22 @@ import { execSync } from "child_process";
 const HOME = homedir();
 const CLAUDE_JSON_PATH = join(HOME, ".claude.json");
 
-// The CLAUDE.md content injected into user projects
+function getClaudeMdContent(): string {
+  // Resolve relative to this file: dist/index.js → ../CLAUDE.md
+  const packageDir = dirname(dirname(fileURLToPath(import.meta.url)));
+  const claudeMdPath = join(packageDir, "CLAUDE.md");
+  if (existsSync(claudeMdPath)) {
+    return readFileSync(claudeMdPath, "utf8");
+  }
+  // Fallback for local dev: look two levels up (packages/mcp-server/CLAUDE.md)
+  const devPath = join(dirname(fileURLToPath(import.meta.url)), "..", "CLAUDE.md");
+  if (existsSync(devPath)) {
+    return readFileSync(devPath, "utf8");
+  }
+  throw new Error("CLAUDE.md not found in package. Run `npm run build` first.");
+}
+
+// Placeholder kept for the old hardcoded string — now unused
 const PROJECT_CLAUDE_MD = `# Chromeflow — Claude Instructions
 
 ## What chromeflow is
@@ -130,20 +145,24 @@ function patchClaudeJson(serverScriptPath: string) {
   writeFileSync(CLAUDE_JSON_PATH, JSON.stringify(config, null, 2) + "\n");
 }
 
-function patchProjectClaudeMd(cwd: string) {
+function patchProjectClaudeMd(cwd: string, force = false) {
   const claudeMdPath = join(cwd, "CLAUDE.md");
+  const content = getClaudeMdContent();
 
   if (existsSync(claudeMdPath)) {
     const existing = readFileSync(claudeMdPath, "utf8");
     if (existing.includes("chromeflow")) {
-      return "already-present";
+      if (!force) return "already-present";
+      // Replace the existing chromeflow section with the fresh content
+      const before = existing.slice(0, existing.indexOf("# Chromeflow")).trimEnd();
+      writeFileSync(claudeMdPath, (before ? before + "\n\n" : "") + content);
+      return "updated";
     }
-    // Append chromeflow section
-    writeFileSync(claudeMdPath, existing.trimEnd() + "\n\n" + PROJECT_CLAUDE_MD);
+    writeFileSync(claudeMdPath, existing.trimEnd() + "\n\n" + content);
     return "appended";
   }
 
-  writeFileSync(claudeMdPath, PROJECT_CLAUDE_MD);
+  writeFileSync(claudeMdPath, content);
   return "created";
 }
 
@@ -166,9 +185,6 @@ export async function runSetup() {
   const scriptPath = fileURLToPath(import.meta.url);
   const distDir = dirname(scriptPath);
   const serverScriptPath = resolve(distDir, "index.js");
-
-  // Derive extension dist path (works both from dist/ and from src/ during dev)
-  // dist/ → mcp-server/ → packages/ → chromeflow/ → packages/extension/dist
   const extensionDistPath = resolve(distDir, "..", "..", "extension", "dist");
 
   console.log("\nChromeflow Setup\n" + "─".repeat(40));
@@ -183,7 +199,7 @@ export async function runSetup() {
   const cwd = process.cwd();
   const mdResult = patchProjectClaudeMd(cwd);
   if (mdResult === "already-present") {
-    console.log("✓ CLAUDE.md already has chromeflow instructions");
+    console.log("✓ CLAUDE.md already has chromeflow instructions (run `npx chromeflow update` to refresh)");
   } else if (mdResult === "appended") {
     console.log(`✓ Appended chromeflow instructions to ${join(cwd, "CLAUDE.md")}`);
   } else {
@@ -203,4 +219,19 @@ export async function runSetup() {
   console.log(`  3. Select: ${extensionDistPath}`);
 
   console.log("\nDone. Restart Claude Code to activate chromeflow.\n");
+}
+
+export async function runUpdate() {
+  const cwd = process.cwd();
+  console.log("\nChromeflow Update\n" + "─".repeat(40));
+
+  const mdResult = patchProjectClaudeMd(cwd, true);
+  if (mdResult === "updated") {
+    console.log(`✓ Updated chromeflow instructions in ${join(cwd, "CLAUDE.md")}`);
+  } else if (mdResult === "appended") {
+    console.log(`✓ Appended chromeflow instructions to ${join(cwd, "CLAUDE.md")}`);
+  } else {
+    console.log(`✓ Created ${join(cwd, "CLAUDE.md")}`);
+  }
+  console.log("Done.\n");
 }

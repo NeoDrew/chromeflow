@@ -115,6 +115,26 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       return { type: "read_response", requestId: msg.requestId, value };
     }
 
+    case "get_page_text": {
+      const selector = msg.selector as string | undefined;
+      let root: Element;
+      if (selector) {
+        root = document.querySelector(selector) ?? document.body;
+      } else {
+        root = document.querySelector("main, [role='main']") ?? document.body;
+      }
+      const clone = root.cloneNode(true) as Element;
+      ["nav", "header", "footer", "script", "style", "noscript"].forEach((tag) => {
+        clone.querySelectorAll(tag).forEach((el) => el.remove());
+      });
+      let text = (clone.textContent ?? "")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n\s*\n+/g, "\n\n")
+        .trim();
+      if (text.length > 4000) text = text.slice(0, 4000) + "\n... (truncated)";
+      return { type: "page_text_response", requestId: msg.requestId, text };
+    }
+
     case "clear": {
       clearAllOverlays();
       clearPanel();
