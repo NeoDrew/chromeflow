@@ -26,8 +26,9 @@
   ],
   "scripts": {
     "prebuild": "cp ../../CLAUDE.md ./CLAUDE.md",
-    "build": "tsup",
-    "dev": "tsup --watch"
+    "build": "tsc",
+    "postbuild": "node --input-type=commonjs -e \"const fs=require('fs');const f='dist/index.js';fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'));\"",
+    "dev": "tsc --watch"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
@@ -37,8 +38,6 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
-    "tinyglobby": "^0.2.11",
-    "tsup": "^8.0.0",
     "typescript": "^5.5.0"
   }
 }
