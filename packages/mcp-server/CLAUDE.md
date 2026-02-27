@@ -101,3 +101,4 @@ Use the absolute path for `envPath` — it's the Claude Code working directory +
 - Never use Bash to work around a stuck browser interaction
 
 
+
