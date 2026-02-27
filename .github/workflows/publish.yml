@@ -19,8 +19,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: npm install --ignore-scripts
-        working-directory: packages/mcp-server
+        run: npm install --no-package-lock
 
       - name: Build
         run: npm run build
