@@ -65,6 +65,29 @@ After filling, call wait_for_click only if the user needs to review/confirm; oth
   );
 
   server.tool(
+    "get_page_text",
+    `Get the visible text content of the current page without taking a screenshot.
+Use this instead of take_screenshot whenever you need to read what's on the page — errors, build status, form labels, confirmation messages, etc.
+Only use take_screenshot when you need to locate an element's pixel position for highlight_region.`,
+    {
+      selector: z
+        .string()
+        .optional()
+        .describe(
+          "CSS selector to scope the extraction (e.g. 'main', '.error-toast', '[data-testid=\"status\"]'). Omit to auto-extract from the main content area."
+        ),
+    },
+    async ({ selector }) => {
+      const response = await bridge.request({ type: "get_page_text", selector });
+      if (response.type !== "page_text_response") throw new Error("Unexpected response");
+      const text = (response as { text: string }).text;
+      return {
+        content: [{ type: "text", text: text || "(no text found on page)" }],
+      };
+    }
+  );
+
+  server.tool(
     "write_to_env",
     "Write a key=value pair to a .env file. Use this after capturing an API key or ID from the page.",
     {

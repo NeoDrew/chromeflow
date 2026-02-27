@@ -81,7 +81,7 @@ export default function Setup() {
           fontSize: '0.7rem', letterSpacing: '0.12em',
           textTransform: 'uppercase', color: 'var(--amber)',
           marginBottom: '0.75rem',
-        }}>Setup</p>
+        }}>Installation</p>
         <h2 className="fade-up delay-1" style={{
           fontSize: 'clamp(1.8rem, 3vw, 2.4rem)',
           fontWeight: 700, letterSpacing: '-0.025em',
@@ -92,7 +92,7 @@ export default function Setup() {
 
         <div className="fade-up delay-2" style={{
           display: 'grid', gridTemplateColumns: '1fr 1fr',
-          gap: '1.25rem', marginBottom: '2.5rem',
+          gap: '1.25rem',
         }}>
 
           {/* Step 1 */}
@@ -104,11 +104,11 @@ export default function Setup() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
               <StepNum n="1" />
               <h3 style={{ fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
-                Run the setup command
+                Run this command
               </h3>
             </div>
             <p style={{ fontSize: '0.88rem', color: 'var(--muted)', marginBottom: '1.1rem', lineHeight: 1.6 }}>
-              From your project directory. Registers the MCP server globally and writes Claude's instructions into your project.
+              From your project directory. Registers the MCP server and writes Claude's instructions into your project.
             </p>
             <CopyCommand />
           </div>
@@ -122,11 +122,11 @@ export default function Setup() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
               <StepNum n="2" />
               <h3 style={{ fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
-                Load the Chrome extension
+                Install the Chrome extension
               </h3>
             </div>
             <p style={{ fontSize: '0.88rem', color: 'var(--muted)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-              One time. Persists across Chrome restarts. When the extension hits the Chrome Web Store, this becomes a single click.
+              One time. Persists across Chrome restarts.
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
@@ -151,47 +151,6 @@ export default function Setup() {
                 </div>
               ))}
             </div>
-
-            <p style={{
-              marginTop: '1.5rem', fontSize: '0.82rem', color: 'var(--subtle)',
-              fontStyle: 'italic',
-            }}>
-              Then restart Claude Code. The extension connects automatically.
-            </p>
-          </div>
-        </div>
-
-        {/* Prompt examples */}
-        <div className="fade-up delay-3" style={{
-          padding: '1.5rem',
-          background: 'var(--surface)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-lg)',
-          boxShadow: 'var(--shadow-sm)',
-        }}>
-          <p style={{
-            fontFamily: 'JetBrains Mono, monospace',
-            fontSize: '0.68rem', letterSpacing: '0.1em', textTransform: 'uppercase',
-            color: 'var(--amber)', marginBottom: '1rem',
-          }}>
-            Then just ask Claude
-          </p>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-            {[
-              '"Set up Stripe — create monthly and annual pricing, write the price IDs to .env"',
-              '"Get my Supabase anon key and service role key"',
-              '"Configure SendGrid webhooks for this project"',
-            ].map(p => (
-              <div key={p} style={{
-                fontSize: '0.9rem', color: 'var(--muted)', fontStyle: 'italic',
-                padding: '0.65rem 0.9rem',
-                background: 'var(--amber-glow)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-              }}>
-                {p}
-              </div>
-            ))}
           </div>
         </div>
       </div>

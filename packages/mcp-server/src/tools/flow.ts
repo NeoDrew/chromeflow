@@ -20,7 +20,7 @@ export function registerFlowTools(server: McpServer, bridge: WsBridge) {
     "click_element",
     `Click a button, link, or interactive element on the page by its visible text or aria-label.
 Use this whenever Claude can press a button without needing user input — e.g. "Save", "Continue", "Create product", "Add pricing", "Confirm", "Next".
-After clicking, call take_screenshot() to see the result before proceeding.
+After clicking, use get_page_text to check the result — only use take_screenshot if you need pixel positions.
 Do NOT use for: elements that require the user to make a personal choice, consent to terms, or enter sensitive data.`,
     {
       textHint: z
@@ -110,6 +110,28 @@ If the click causes page navigation, this resolves when the new page finishes lo
       }
       return {
         content: [{ type: "text", text: `Page navigated to: ${url}` }],
+      };
+    }
+  );
+
+  server.tool(
+    "wait_for_selector",
+    `Wait for a CSS selector to appear on the page. Use this instead of polling with take_screenshot.
+Examples: wait for a build to finish, a success/error message to appear, a modal to open.
+After it resolves, use get_page_text to read the result rather than taking a screenshot.`,
+    {
+      selector: z
+        .string()
+        .describe(
+          "CSS selector to wait for (e.g. '.deploy-ready', '[data-status=\"error\"]', '.toast-error')"
+        ),
+      timeout: z.number().optional().describe("Max seconds to wait (default 30)"),
+    },
+    async ({ selector, timeout = 30 }) => {
+      const timeoutMs = timeout * 1000;
+      await bridge.request({ type: "wait_for_selector", selector, timeout: timeoutMs }, timeoutMs + 5000);
+      return {
+        content: [{ type: "text", text: `Selector "${selector}" found on page.` }],
       };
     }
   );
