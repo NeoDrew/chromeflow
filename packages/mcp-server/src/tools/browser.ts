@@ -42,7 +42,7 @@ export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
 
   server.tool(
     "clear_overlays",
-    "Remove all Keyclaw highlights, callouts, and guide panels from the current page",
+    "Remove all highlights and callout annotations from the current page. Does NOT remove the guide panel — the guide panel persists until the next flow starts.",
     {},
     async () => {
       await bridge.request({ type: "clear" });
