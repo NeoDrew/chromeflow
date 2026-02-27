@@ -19,7 +19,8 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
-        run: npm install
+        run: npm install --ignore-scripts
+        working-directory: packages/mcp-server
 
       - name: Build
         run: npm run build
