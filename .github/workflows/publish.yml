@@ -20,7 +20,6 @@ jobs:
 
       - name: Install dependencies
         run: npm install
-        working-directory: packages/mcp-server
 
       - name: Build
         run: npm run build
