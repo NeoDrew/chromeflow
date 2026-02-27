@@ -99,7 +99,3 @@ Use the absolute path for `envPath` — it's the Claude Code working directory +
 - Still not found → `take_screenshot()` then `highlight_region(x,y,w,h,msg)`
 - Waiting for async result (build, save, deploy) → `wait_for_selector(selector, timeout)`
 - Never use Bash to work around a stuck browser interaction
-
-
-
-
