@@ -7,7 +7,7 @@ export type DistributiveOmit<T, K extends keyof T> = T extends unknown
 export type ServerMessage =
   | { type: "navigate"; requestId: string; url: string }
   | { type: "screenshot"; requestId: string }
-  | { type: "find_highlight"; requestId: string; text: string; message: string }
+  | { type: "find_highlight"; requestId: string; text: string; message: string; valueToType?: string }
   | {
       type: "highlight_region";
       requestId: string;
@@ -16,6 +16,7 @@ export type ServerMessage =
       width: number;
       height: number;
       message: string;
+      valueToType?: string;
     }
   | {
       type: "show_panel";

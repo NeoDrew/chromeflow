@@ -169,7 +169,7 @@ function ensureScrollListener() {
   );
 }
 
-function createHighlightElements(message: string, color: string): [HTMLDivElement, HTMLDivElement] {
+function createHighlightElements(message: string, color: string, valueToType?: string): [HTMLDivElement, HTMLDivElement] {
   ensureStyles();
   const container = getOrCreateContainer();
 
@@ -202,7 +202,32 @@ function createHighlightElements(message: string, color: string): [HTMLDivElemen
     animation: chromeflow-fadein 0.2s ease;
     z-index: 1;
   `;
-  callout.textContent = message;
+
+  if (valueToType) {
+    const label = document.createElement("div");
+    label.textContent = message;
+    label.style.cssText = `margin-bottom: 6px; opacity: 0.9;`;
+
+    const valueBox = document.createElement("div");
+    valueBox.textContent = valueToType;
+    valueBox.style.cssText = `
+      background: rgba(255,255,255,0.2);
+      border: 1px solid rgba(255,255,255,0.4);
+      border-radius: 4px;
+      padding: 5px 8px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      user-select: text;
+      pointer-events: auto;
+    `;
+
+    callout.appendChild(label);
+    callout.appendChild(valueBox);
+  } else {
+    callout.textContent = message;
+  }
 
   container.appendChild(box);
   container.appendChild(callout);
@@ -217,8 +242,9 @@ export function renderHighlight(opts: {
   height: number;
   message: string;
   color?: string;
+  valueToType?: string;
 }) {
-  const { message, color = "#7c3aed" } = opts;
+  const { message, color = "#7c3aed", valueToType } = opts;
 
   // Coordinates are already CSS viewport pixels — convert to document-absolute for scroll tracking
   const docX = opts.x + window.scrollX;
@@ -228,19 +254,19 @@ export function renderHighlight(opts: {
 
   clearAllOverlays(); // one highlight at a time
 
-  const [box, callout] = createHighlightElements(message, color);
+  const [box, callout] = createHighlightElements(message, color, valueToType);
   const h: TrackedHighlight = { docX, docY, width: cssW, height: cssH, message, boxEl: box, calloutEl: callout };
   tracked.push(h);
   positionElements(h);
   ensureScrollListener();
 }
 
-export function highlightElement(el: Element, message: string, color = "#7c3aed") {
+export function highlightElement(el: Element, message: string, color = "#7c3aed", valueToType?: string) {
   el.scrollIntoView({ behavior: "smooth", block: "center" });
 
   clearAllOverlays(); // one highlight at a time
 
-  const [box, callout] = createHighlightElements(message, color);
+  const [box, callout] = createHighlightElements(message, color, valueToType);
   const h: TrackedHighlight = { element: el, width: 0, height: 0, message, boxEl: box, calloutEl: callout };
   tracked.push(h);
 

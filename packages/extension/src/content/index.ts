@@ -44,7 +44,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       if (!el) {
         return { type: "find_highlight_response", requestId: msg.requestId, found: false };
       }
-      highlightElement(el, msg.message as string);
+      highlightElement(el, msg.message as string, "#7c3aed", msg.valueToType as string | undefined);
       armClickBuffer();
       return { type: "find_highlight_response", requestId: msg.requestId, found: true };
     }
@@ -57,6 +57,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         width: msg.width as number,
         height: msg.height as number,
         message: msg.message as string,
+        valueToType: msg.valueToType as string | undefined,
       });
       armClickBuffer();
       return { type: "action_done", requestId: msg.requestId };
