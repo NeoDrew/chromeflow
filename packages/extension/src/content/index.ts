@@ -137,7 +137,6 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "clear": {
       clearAllOverlays();
-      clearPanel();
       return { type: "action_done", requestId: msg.requestId };
     }
 
