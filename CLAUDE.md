@@ -43,10 +43,12 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 ```
 1. show_guide_panel(title, steps[])          — show the full plan upfront
 2. open_page(url)                            — navigate to the right page
+   mark_step_done(0)                         — ALWAYS mark step 0 done right after open_page succeeds
 3. For each step:
    a. Claude acts directly:
         click_element("Save")               — press buttons/links Claude can press
         fill_input("Product name", "Pro")   — fill fields Claude knows the answer to
+        clear_overlays()                    — call this immediately after fill_input succeeds
         scroll_page("down")                 — reveal off-screen content then retry
    b. Check results with text, not vision:
         get_page_text()                     — read errors/status after actions
@@ -60,6 +62,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
    d. Pause for the user when needed:
         find_and_highlight(text, msg)        — show the user what to do
         wait_for_click()                    — wait for user interaction
+        [after wait_for_click + fill_input] clear_overlays() — always clear after filling
    e. mark_step_done(i)                      — check off the step
 4. clear_overlays()                          — clean up when done
 ```
@@ -97,6 +100,6 @@ Use the absolute path for `envPath` — it's the Claude Code working directory +
 - After any action → `get_page_text()` to check for errors (not `take_screenshot`)
 - `click_element` not found → `scroll_page("down")` then retry
 - Still not found → `take_screenshot()` then `highlight_region(x,y,w,h,msg)`
-- `fill_input` not found → `click_element(hint)` to focus the field, then retry `fill_input`. If still failing, `take_screenshot()` then `highlight_region(x,y,w,h, message: "Click here — I'll fill it in")` (NO `valueToType`) then `wait_for_click()` then retry `fill_input` — after the user focuses the field by clicking, the active-element fallback will fill it automatically. Only use `valueToType` when the user genuinely must type the value themselves (e.g. password, personal data).
+- `fill_input` not found → `click_element(hint)` to focus the field, then retry `fill_input`. If still failing, `take_screenshot()` then `highlight_region(x,y,w,h, message: "Click here — I'll fill it in")` (NO `valueToType`) then `wait_for_click()` then retry `fill_input` — after the user focuses the field by clicking, the active-element fallback will fill it automatically. After `fill_input` succeeds, immediately call `clear_overlays()` to remove the highlight. Only use `valueToType` when the user genuinely must type the value themselves (e.g. password, personal data).
 - Waiting for async result (build, save, deploy) → `wait_for_selector(selector, timeout)`
 - Never use Bash to work around a stuck browser interaction
