@@ -29,6 +29,36 @@ export function fillInput(
 
   const input = findInput(lower);
   if (!input) {
+    // Last resort: the user may have just clicked/focused the target field via
+    // wait_for_click — try to fill whatever is currently focused.
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+      if (active.isContentEditable) {
+        active.focus();
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(active);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        document.execCommand("insertText", false, value);
+        active.dispatchEvent(new Event("input", { bubbles: true }));
+        active.dispatchEvent(new Event("change", { bubbles: true }));
+        return { success: true, message: `Filled "${textHint}" with value` };
+      }
+      if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
+        if (isEditable(active)) {
+          const nativeSetter = Object.getOwnPropertyDescriptor(
+            active instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+            "value"
+          )?.set;
+          if (nativeSetter) nativeSetter.call(active, value);
+          else active.value = value;
+          active.dispatchEvent(new Event("input", { bubbles: true }));
+          active.dispatchEvent(new Event("change", { bubbles: true }));
+          return { success: true, message: `Filled "${textHint}" with value` };
+        }
+      }
+    }
     return { success: false, message: `No input found for "${textHint}"` };
   }
 
