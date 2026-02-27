@@ -177,6 +177,7 @@ function armClickBuffer() {
 
   const onPointerDown = () => {
     pendingPreClick = true;
+    clearAllOverlays(); // remove the highlight as soon as the user clicks
     cleanup();
   };
 
@@ -198,6 +199,7 @@ function startClickWatch(requestId: string) {
     if (done) return;
     done = true;
     cleanup();
+    clearAllOverlays(); // remove the highlight as soon as the user clicks
     chrome.runtime.sendMessage({
       source: "chromeflow-content",
       type: "click_detected",
