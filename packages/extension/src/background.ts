@@ -160,11 +160,10 @@ async function handleMcpMessage(msg: {
 }): Promise<unknown> {
   switch (msg.type) {
     case "navigate": {
-      const tab = await getActiveTab();
-      await chrome.tabs.update(tab.id!, { url: msg.url as string });
+      const newTab = await chrome.tabs.create({ url: msg.url as string, active: true });
       await new Promise<void>((resolve) => {
         const listener = (id: number, info: chrome.tabs.TabChangeInfo) => {
-          if (id === tab.id && info.status === "complete") {
+          if (id === newTab.id && info.status === "complete") {
             chrome.tabs.onUpdated.removeListener(listener);
             resolve();
           }
