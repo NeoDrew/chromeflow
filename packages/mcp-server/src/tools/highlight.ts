@@ -15,14 +15,21 @@ export function registerHighlightTools(server: McpServer, bridge: WsBridge) {
       message: z
         .string()
         .describe(
-          "Instruction to show the user in the callout (e.g. 'Click here to create your API key')"
+          "Instruction to show the user in the callout (e.g. 'Click here to create your API key'). When the user needs to type something, use a short instruction like 'Type this in the field:' and pass the text as valueToType."
+        ),
+      valueToType: z
+        .string()
+        .optional()
+        .describe(
+          "When the user needs to type something, pass the exact text here. It will be shown prominently in the callout so the user knows exactly what to enter."
         ),
     },
-    async ({ text, message }) => {
+    async ({ text, message, valueToType }) => {
       const response = await bridge.request({
         type: "find_highlight",
         text,
         message,
+        valueToType,
       });
       if (response.type !== "find_highlight_response") {
         throw new Error("Unexpected response from extension");
@@ -51,11 +58,17 @@ export function registerHighlightTools(server: McpServer, bridge: WsBridge) {
       message: z
         .string()
         .describe(
-          "Instruction to show the user in the callout (e.g. 'Click here to reveal your API key')"
+          "Instruction to show the user in the callout. When the user needs to type something, use a short instruction like 'Type this in the field:' and pass the text as valueToType."
+        ),
+      valueToType: z
+        .string()
+        .optional()
+        .describe(
+          "When the user needs to type something, pass the exact text here. It will be shown prominently in the callout so the user knows exactly what to enter."
         ),
     },
-    async ({ x, y, width, height, message }) => {
-      await bridge.request({ type: "highlight_region", x, y, width, height, message });
+    async ({ x, y, width, height, message, valueToType }) => {
+      await bridge.request({ type: "highlight_region", x, y, width, height, message, valueToType });
       return {
         content: [
           {
