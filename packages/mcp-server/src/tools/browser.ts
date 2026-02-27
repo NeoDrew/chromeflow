@@ -17,7 +17,7 @@ export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
 
   server.tool(
     "take_screenshot",
-    "Capture a screenshot of the current browser tab so you can see what is on the page. Use this to identify element positions before highlighting.",
+    "Capture a screenshot ONLY when click_element or fill_input has failed and you need pixel coordinates to call highlight_region. DO NOT use this to check page state, confirm actions, or see what loaded — use get_page_text for all of that.",
     {},
     async () => {
       const response = await bridge.request({ type: "screenshot" });
