@@ -30,7 +30,10 @@ export type ServerMessage =
   | { type: "mark_step_done"; requestId: string; stepIndex: number }
   | { type: "fill_input"; requestId: string; textHint: string; value: string }
   | { type: "click_element"; requestId: string; textHint: string }
-  | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number };
+  | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
+  | { type: "get_page_text"; requestId: string; selector?: string }
+  | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number }
+  | { type: "execute_script"; requestId: string; code: string };
 
 // Messages sent from Extension → MCP server
 export type ClientMessage =
@@ -49,4 +52,6 @@ export type ClientMessage =
   | { type: "navigation_complete"; requestId: string; url: string }
   | { type: "fill_response"; requestId: string; success: boolean; message: string }
   | { type: "click_element_response"; requestId: string; success: boolean; message: string }
+  | { type: "page_text_response"; requestId: string; text: string }
+  | { type: "script_response"; requestId: string; result: string }
   | { type: "error"; requestId: string; message: string };

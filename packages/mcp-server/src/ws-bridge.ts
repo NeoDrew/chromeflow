@@ -93,7 +93,7 @@ export class WsBridge {
   }
 
   /** Send a message and wait for a response from the extension. */
-  request(message: ServerMessagePayload): Promise<ClientMessage> {
+  request(message: ServerMessagePayload, timeoutMs = REQUEST_TIMEOUT_MS): Promise<ClientMessage> {
     if (!this.isConnected()) {
       return Promise.reject(
         new Error(
@@ -105,8 +105,8 @@ export class WsBridge {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error(`Request timed out after ${REQUEST_TIMEOUT_MS}ms`));
-      }, REQUEST_TIMEOUT_MS);
+        reject(new Error(`Request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
 
       this.pending.set(requestId, { resolve, reject, timer });
       this.client!.send(JSON.stringify({ ...message, requestId }));

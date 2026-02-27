@@ -5,10 +5,12 @@ import { registerBrowserTools } from "./tools/browser.js";
 import { registerHighlightTools } from "./tools/highlight.js";
 import { registerCaptureTools } from "./tools/capture.js";
 import { registerFlowTools } from "./tools/flow.js";
-import { runSetup } from "./setup.js";
+import { runSetup, runUpdate } from "./setup.js";
 
 if (process.argv[2] === "setup") {
   runSetup().catch((err) => { console.error(err); process.exit(1); });
+} else if (process.argv[2] === "update") {
+  runUpdate().catch((err) => { console.error(err); process.exit(1); });
 } else {
   main().catch((err) => { console.error("[chromeflow] Fatal error:", err); process.exit(1); });
 }
