@@ -20,7 +20,7 @@ async function main() {
 
   const server = new McpServer({
     name: "chromeflow",
-    version: "0.1.2",
+    version: "0.1.3",
   });
 
   registerBrowserTools(server, bridge);
