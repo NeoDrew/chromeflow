@@ -100,3 +100,4 @@ Use the absolute path for `envPath` — it's the Claude Code working directory +
 - Waiting for async result (build, save, deploy) → `wait_for_selector(selector, timeout)`
 - Never use Bash to work around a stuck browser interaction
 
+
