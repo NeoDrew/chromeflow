@@ -150,6 +150,43 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       return { type: "page_text_response", requestId: msg.requestId, text };
     }
 
+    case "get_elements": {
+      const SELECTORS = "input:not([type=hidden]), textarea, select, button, a[href], [role=button], [role=link]";
+      const results: Array<{ index: number; type: string; label: string; x: number; y: number; width: number; height: number }> = [];
+      let idx = 0;
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>(SELECTORS))) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width === 0 || rect.height === 0) continue;
+        if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+        const s = getComputedStyle(el);
+        if (s.visibility === "hidden" || s.display === "none" || s.opacity === "0") continue;
+
+        let label = "";
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement) {
+          label = el.placeholder || el.getAttribute("aria-label") || el.getAttribute("name") || "";
+          if (!label && el.id) {
+            const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
+            if (lbl) label = (lbl.textContent ?? "").trim();
+          }
+        } else {
+          label = (el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 60);
+        }
+
+        const type = el instanceof HTMLInputElement ? (el.type || "text") : el.tagName.toLowerCase();
+        results.push({
+          index: ++idx,
+          type,
+          label: label.replace(/\s+/g, " ").trim(),
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        });
+        if (idx >= 60) break;
+      }
+      return { type: "elements_response", requestId: msg.requestId, elements: results };
+    }
+
     case "clear": {
       clearAllOverlays();
       return { type: "action_done", requestId: msg.requestId };
