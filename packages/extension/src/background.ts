@@ -200,6 +200,26 @@ async function handleMcpMessage(msg: {
       const ctx = canvas.getContext("2d")!;
       ctx.drawImage(bitmap, 0, 0, cssWidth, cssHeight);
       bitmap.close();
+
+      // Draw a coordinate grid so Claude can read off exact pixel positions
+      // instead of estimating them visually.
+      const GRID = 100;
+      ctx.strokeStyle = "rgba(255,0,0,0.35)";
+      ctx.lineWidth = 1;
+      ctx.font = "bold 10px monospace";
+      for (let x = GRID; x < cssWidth; x += GRID) {
+        ctx.strokeStyle = "rgba(255,0,0,0.35)";
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, cssHeight); ctx.stroke();
+        ctx.fillStyle = "rgba(255,0,0,0.85)";
+        ctx.fillText(String(x), x + 2, 11);
+      }
+      for (let y = GRID; y < cssHeight; y += GRID) {
+        ctx.strokeStyle = "rgba(255,0,0,0.35)";
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(cssWidth, y); ctx.stroke();
+        ctx.fillStyle = "rgba(255,0,0,0.85)";
+        ctx.fillText(String(y), 2, y - 2);
+      }
+
       const outBlob = await canvas.convertToBlob({ type: "image/png" });
       const buf = await outBlob.arrayBuffer();
       const bytes = new Uint8Array(buf);

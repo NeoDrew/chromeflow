@@ -1,6 +1,6 @@
 {
   "name": "chromeflow",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "Browser guidance MCP server for Claude Code — highlights, clicks, fills, and captures from the web so you don't have to.",
   "type": "module",
   "bin": {

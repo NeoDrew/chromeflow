@@ -34,7 +34,8 @@ export type ServerMessage =
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
   | { type: "get_page_text"; requestId: string; selector?: string }
   | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number }
-  | { type: "execute_script"; requestId: string; code: string };
+  | { type: "execute_script"; requestId: string; code: string }
+  | { type: "get_elements"; requestId: string };
 
 // Messages sent from Extension → MCP server
 export type ClientMessage =
@@ -55,4 +56,5 @@ export type ClientMessage =
   | { type: "click_element_response"; requestId: string; success: boolean; message: string }
   | { type: "page_text_response"; requestId: string; text: string }
   | { type: "script_response"; requestId: string; result: string }
-  | { type: "error"; requestId: string; message: string };
+  | { type: "error"; requestId: string; message: string }
+  | { type: "elements_response"; requestId: string; elements: Array<{ index: number; type: string; label: string; x: number; y: number; width: number; height: number }> };
