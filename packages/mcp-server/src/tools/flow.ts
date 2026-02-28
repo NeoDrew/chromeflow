@@ -83,38 +83,6 @@ If the click causes page navigation, this resolves when the new page finishes lo
   );
 
   server.tool(
-    "wait_for_navigation",
-    "Wait for the browser to navigate to a new page (without requiring a prior click watch). Useful after calling open_page or after a form submission.",
-    {
-      urlPattern: z
-        .string()
-        .optional()
-        .describe("Substring to match in the new URL — waits for any navigation if omitted"),
-      timeout: z
-        .number()
-        .optional()
-        .describe("Max seconds to wait (default 30)"),
-    },
-    async ({ urlPattern, timeout = 30 }) => {
-      const response = await bridge.request({
-        type: "start_click_watch",
-        timeout: timeout * 1000,
-      });
-      const url = (response as { url?: string }).url ?? "";
-      if (urlPattern && !url.includes(urlPattern)) {
-        return {
-          content: [
-            { type: "text", text: `Navigation detected to ${url} (pattern "${urlPattern}" not matched — proceeding anyway).` },
-          ],
-        };
-      }
-      return {
-        content: [{ type: "text", text: `Page navigated to: ${url}` }],
-      };
-    }
-  );
-
-  server.tool(
     "wait_for_selector",
     `Wait for a CSS selector to appear on the page. Use this instead of polling with take_screenshot.
 Examples: wait for a build to finish, a success/error message to appear, a modal to open.
