@@ -149,12 +149,28 @@ function findInput(lower: string): FillableInput | null {
   const textNode = walker.nextNode();
   if (textNode) {
     const anchor = (textNode as Text).parentElement!;
-    // Look for nearest input sibling/cousin
-    const container = anchor.closest("div, li, tr, fieldset, form") ?? anchor.parentElement;
-    if (container) {
-      const nearby = container.querySelector<FillableInput>("input, textarea, select");
-      if (nearby && isEditable(nearby)) return nearby;
+    // Walk up to 6 ancestor levels looking for an input — also check next sibling at each
+    // level (handles layouts where label and input are in separate sibling divs, e.g. Stripe).
+    let node: Element | null = anchor;
+    for (let depth = 0; depth < 6 && node && node !== document.body; depth++) {
+      const input = node.querySelector<FillableInput>("input, textarea, select");
+      if (input && isEditable(input)) return input;
+      const sibling = node.nextElementSibling;
+      if (sibling) {
+        const sibInput = sibling.querySelector<FillableInput>("input, textarea, select");
+        if (sibInput && isEditable(sibInput)) return sibInput;
+      }
+      node = node.parentElement;
     }
+  }
+
+  // 5. Input/textarea whose name or id attribute matches the hint (e.g. <input name="name">)
+  for (const el of Array.from(document.querySelectorAll<FillableInput>("input, textarea"))) {
+    const name = (el as HTMLInputElement).name?.toLowerCase() ?? "";
+    if (name === lower && isEditable(el)) return el;
+  }
+  for (const el of Array.from(document.querySelectorAll<FillableInput>("input, textarea"))) {
+    if (el.id.toLowerCase() === lower && isEditable(el)) return el;
   }
 
   return null;

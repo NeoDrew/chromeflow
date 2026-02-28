@@ -176,8 +176,20 @@ async function handleMcpMessage(msg: {
 
     case "screenshot": {
       const tab = await getActiveTab();
-      const cssWidth = tab.width ?? 1280;
-      const cssHeight = tab.height ?? 800;
+      // Use window.innerWidth/Height from the page — these are always in CSS pixels.
+      // tab.width/height can return physical pixels on some HiDPI systems, which would
+      // cause the downscaled image to use the wrong coordinate space.
+      let cssWidth = tab.width ?? 1280;
+      let cssHeight = tab.height ?? 800;
+      if (isScriptableUrl(tab.url)) {
+        try {
+          const r = await chrome.scripting.executeScript({
+            target: { tabId: tab.id! },
+            func: () => [window.innerWidth, window.innerHeight] as [number, number],
+          });
+          if (r[0]?.result) [cssWidth, cssHeight] = r[0].result;
+        } catch { /* fall back to tab.width/height */ }
+      }
       const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId!, { format: "png" });
 
       // captureVisibleTab returns an image at device resolution (DPR × CSS pixels).
