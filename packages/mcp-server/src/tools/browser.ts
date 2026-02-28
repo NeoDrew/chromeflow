@@ -79,7 +79,8 @@ After calling this, use those exact coordinates in highlight_region — do NOT a
     "execute_script",
     `Execute JavaScript in the current page's context and return the result as a string.
 Use this to read framework state, check DOM properties, or interact with page APIs that aren't reachable via text.
-Prefer get_page_text for reading visible content. Use this for programmatic DOM queries (e.g. checking an element's attribute, reading a value not visible in text).`,
+Prefer get_page_text for reading visible content. Use this for programmatic DOM queries (e.g. checking an element's attribute, reading a value not visible in text).
+NOTE: Pages with strict Content Security Policy (e.g. Stripe, GitHub) will block eval and return a CSP error — do not retry, use get_page_text or fill_input instead.`,
     {
       code: z
         .string()
