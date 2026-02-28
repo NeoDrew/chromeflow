@@ -176,19 +176,26 @@ function armClickBuffer() {
   preClickCleanup?.();
   pendingPreClick = false;
 
-  const onPointerDown = () => {
+  const onPointerDown = (e: PointerEvent) => {
+    const { clientX, clientY } = e;
     pendingPreClick = true;
     clearAllOverlays(); // remove the highlight as soon as the user clicks
+    // Forward focus to the underlying element (the overlay intercepted the click,
+    // so the input was never focused — fix that before fill_input is called).
+    requestAnimationFrame(() => {
+      const el = document.elementFromPoint(clientX, clientY);
+      if (el instanceof HTMLElement) el.focus();
+    });
     cleanup();
   };
 
   const cleanup = () => {
-    document.removeEventListener("pointerdown", onPointerDown, true);
+    document.removeEventListener("pointerdown", onPointerDown as EventListener, true);
     preClickCleanup = null;
   };
 
   preClickCleanup = cleanup;
-  document.addEventListener("pointerdown", onPointerDown, { capture: true, once: true });
+  document.addEventListener("pointerdown", onPointerDown as EventListener, { capture: true, once: true });
 }
 
 // ─── Click watching ────────────────────────────────────────────────────────
@@ -196,11 +203,19 @@ function armClickBuffer() {
 function startClickWatch(requestId: string) {
   let done = false;
 
-  const notify = () => {
+  const notify = (clientX?: number, clientY?: number) => {
     if (done) return;
     done = true;
     cleanup();
     clearAllOverlays(); // remove the highlight as soon as the user clicks
+    // Forward focus to the underlying element so fill_input's activeElement
+    // fallback can find it.
+    if (clientX !== undefined && clientY !== undefined) {
+      requestAnimationFrame(() => {
+        const el = document.elementFromPoint(clientX, clientY);
+        if (el instanceof HTMLElement) el.focus();
+      });
+    }
     chrome.runtime.sendMessage({
       source: "chromeflow-content",
       type: "click_detected",
@@ -211,7 +226,7 @@ function startClickWatch(requestId: string) {
   // Accept any click on the page — the user is following the visual guide and
   // knows what to click. Filtering by position caused false negatives when
   // highlight coordinates were slightly off.
-  const onPointerDown = () => notify();
+  const onPointerDown = (e: PointerEvent) => notify(e.clientX, e.clientY);
 
   // Also advance when the user presses Enter/Tab (completing a form field)
   const onKeyDown = (e: KeyboardEvent) => {
