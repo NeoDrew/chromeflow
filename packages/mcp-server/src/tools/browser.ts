@@ -53,6 +53,29 @@ export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
   );
 
   server.tool(
+    "get_elements",
+    `Get the exact pixel positions of all visible interactive elements on the page (inputs, buttons, links, selects).
+Use this INSTEAD OF take_screenshot when you need coordinates for highlight_region — the coordinates are exact DOM values, not estimates.
+Returns a numbered list with element type, label, and precise x/y/width/height in CSS pixels.
+After calling this, use those exact coordinates in highlight_region — do NOT adjust them.`,
+    {},
+    async () => {
+      const response = await bridge.request({ type: "get_elements" });
+      if (response.type !== "elements_response") throw new Error("Unexpected response");
+      const els = (response as { elements: Array<{ index: number; type: string; label: string; x: number; y: number; width: number; height: number }> }).elements;
+      if (els.length === 0) {
+        return { content: [{ type: "text", text: "No visible interactive elements found on page." }] };
+      }
+      const lines = els.map(e =>
+        `${e.index}. ${e.type} "${e.label}" — x:${e.x} y:${e.y} w:${e.width} h:${e.height}`
+      );
+      return {
+        content: [{ type: "text", text: `Visible interactive elements:\n${lines.join("\n")}\n\nUse these exact x/y values in highlight_region.` }],
+      };
+    }
+  );
+
+  server.tool(
     "execute_script",
     `Execute JavaScript in the current page's context and return the result as a string.
 Use this to read framework state, check DOM properties, or interact with page APIs that aren't reachable via text.
