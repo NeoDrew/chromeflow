@@ -62,13 +62,14 @@ After calling this, use those exact coordinates in highlight_region — do NOT a
     async () => {
       const response = await bridge.request({ type: "get_elements" });
       if (response.type !== "elements_response") throw new Error("Unexpected response");
-      const els = (response as { elements: Array<{ index: number; type: string; label: string; x: number; y: number; width: number; height: number }> }).elements;
+      const els = (response as { elements: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> }).elements;
       if (els.length === 0) {
         return { content: [{ type: "text", text: "No visible interactive elements found on page." }] };
       }
-      const lines = els.map(e =>
-        `${e.index}. ${e.type} "${e.label}" — x:${e.x} y:${e.y} w:${e.width} h:${e.height}`
-      );
+      const lines = els.map(e => {
+        const val = e.value ? ` [currently: "${e.value}"]` : "";
+        return `${e.index}. ${e.type} "${e.label}"${val} — x:${e.x} y:${e.y} w:${e.width} h:${e.height}`;
+      });
       return {
         content: [{ type: "text", text: `Visible interactive elements:\n${lines.join("\n")}\n\nUse these exact x/y values in highlight_region.` }],
       };
