@@ -1,6 +1,6 @@
 {
   "name": "chromeflow",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "Browser guidance MCP server for Claude Code — highlights, clicks, fills, and captures from the web so you don't have to.",
   "type": "module",
   "bin": {
@@ -8,7 +8,8 @@
   },
   "files": [
     "dist",
-    "CLAUDE.md"
+    "CLAUDE.md",
+    "README.md"
   ],
   "repository": {
     "type": "git",
@@ -25,7 +26,7 @@
     "chrome"
   ],
   "scripts": {
-    "prebuild": "cp ../../CLAUDE.md ./CLAUDE.md",
+    "prebuild": "cp ../../CLAUDE.md ./CLAUDE.md && cp ../../README.md ./README.md",
     "build": "tsc",
     "postbuild": "node --input-type=commonjs -e \"const fs=require('fs');const f='dist/index.js';fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'));\"",
     "dev": "tsc --watch"
