@@ -136,7 +136,10 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       if (selector) {
         root = document.querySelector(selector) ?? document.body;
       } else {
-        root = document.querySelector("main, [role='main']") ?? document.body;
+        const main = document.querySelector("main, [role='main']");
+        // Fall back to body if main has insufficient text (e.g. React SPAs where
+        // main is a near-empty shell and content is rendered in child components).
+        root = (main && (main.textContent ?? "").trim().length > 80) ? main : document.body;
       }
       const clone = root.cloneNode(true) as Element;
       ["nav", "header", "footer", "script", "style", "noscript"].forEach((tag) => {
@@ -152,7 +155,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "get_elements": {
       const SELECTORS = "input:not([type=hidden]), textarea, select, button, a[href], [role=button], [role=link]";
-      const results: Array<{ index: number; type: string; label: string; x: number; y: number; width: number; height: number }> = [];
+      const results: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> = [];
       let idx = 0;
       for (const el of Array.from(document.querySelectorAll<HTMLElement>(SELECTORS))) {
         const rect = el.getBoundingClientRect();
@@ -173,10 +176,26 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         }
 
         const type = el instanceof HTMLInputElement ? (el.type || "text") : el.tagName.toLowerCase();
+
+        // Include the current value so Claude can see what's already selected/filled.
+        let currentValue = "";
+        if (el instanceof HTMLSelectElement) {
+          currentValue = el.options[el.selectedIndex]?.text ?? el.value;
+        } else if (el instanceof HTMLInputElement) {
+          if (el.type === "checkbox" || el.type === "radio") {
+            currentValue = el.checked ? "checked" : "unchecked";
+          } else if (el.value && el.value !== el.placeholder) {
+            currentValue = el.value.slice(0, 40);
+          }
+        } else if (el instanceof HTMLTextAreaElement) {
+          if (el.value) currentValue = el.value.slice(0, 40);
+        }
+
         results.push({
           index: ++idx,
           type,
           label: label.replace(/\s+/g, " ").trim(),
+          value: currentValue,
           x: Math.round(rect.x),
           y: Math.round(rect.y),
           width: Math.round(rect.width),

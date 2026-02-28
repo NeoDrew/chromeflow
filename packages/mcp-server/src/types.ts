@@ -57,4 +57,4 @@ export type ClientMessage =
   | { type: "page_text_response"; requestId: string; text: string }
   | { type: "script_response"; requestId: string; result: string }
   | { type: "error"; requestId: string; message: string }
-  | { type: "elements_response"; requestId: string; elements: Array<{ index: number; type: string; label: string; x: number; y: number; width: number; height: number }> };
+  | { type: "elements_response"; requestId: string; elements: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> };
