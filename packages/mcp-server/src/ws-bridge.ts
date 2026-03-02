@@ -81,7 +81,9 @@ export class WsBridge {
         this.client = null;
         for (const [id, pending] of this.pending) {
           clearTimeout(pending.timer);
-          pending.reject(new Error("Extension disconnected"));
+          pending.reject(new Error(
+            "Chrome extension disconnected. Reload the chromeflow extension in Chrome and try again."
+          ));
           this.pending.delete(id);
         }
       });
