@@ -19,7 +19,11 @@ Claude drives the flow. You only touch the browser for things that genuinely nee
 npx chromeflow setup
 ```
 
-This registers the MCP server in `~/.claude.json` and writes a `CLAUDE.md` into your project so Claude knows when and how to use Chromeflow.
+This:
+- Registers the MCP server in `~/.claude.json`
+- Writes `CLAUDE.md` into your project so Claude knows when and how to use Chromeflow
+- Adds a hint to `~/.claude/CLAUDE.md` so Claude will suggest `npx chromeflow setup` in any project that isn't yet configured
+- Pre-approves Chromeflow tools in `.claude/settings.local.json` (no per-action prompts)
 
 **2. Load the Chrome extension** (one time):
 
@@ -48,13 +52,19 @@ Claude will navigate, highlight steps, click what it can, pause for anything sen
 
 ## Adding to another project
 
-Run the setup wizard from the new project's directory:
+Run setup from the new project's directory — the MCP server is already registered globally, this just drops `CLAUDE.md` and tool permissions into the project:
 
 ```bash
 npx chromeflow setup
 ```
 
-The MCP server is already registered globally — this just adds `CLAUDE.md` to the project.
+## Commands
+
+| Command | What it does |
+|---------|-------------|
+| `npx chromeflow setup` | Register MCP server, write project `CLAUDE.md`, pre-approve tools |
+| `npx chromeflow update` | Refresh the project `CLAUDE.md` with the latest instructions |
+| `npx chromeflow uninstall` | Remove all Chromeflow config (MCP entry, `CLAUDE.md` sections, tool permissions) |
 
 ## Development
 
