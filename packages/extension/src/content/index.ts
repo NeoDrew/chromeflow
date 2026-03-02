@@ -133,8 +133,11 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     case "get_page_text": {
       const selector = msg.selector as string | undefined;
       let root: Element;
+      let selectorMissed = false;
       if (selector) {
-        root = document.querySelector(selector) ?? document.body;
+        const el = document.querySelector(selector);
+        if (!el) selectorMissed = true;
+        root = el ?? document.body;
       } else {
         const main = document.querySelector("main, [role='main']");
         // Fall back to body if main has insufficient text (e.g. React SPAs where
@@ -149,6 +152,9 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         .replace(/[ \t]+/g, " ")
         .replace(/\n\s*\n+/g, "\n\n")
         .trim();
+      if (selectorMissed) {
+        text = `[Warning: selector "${selector}" not found — returning full page text]\n\n` + text;
+      }
       if (text.length > 4000) text = text.slice(0, 4000) + "\n... (truncated)";
       return { type: "page_text_response", requestId: msg.requestId, text };
     }

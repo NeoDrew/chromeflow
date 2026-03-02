@@ -49,6 +49,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 3. For each step:
    a. Claude acts directly:
         click_element("Save")               — press buttons/links Claude can press
+        wait_for_selector(".success") or get_page_text() — ALWAYS confirm after click; click_element returns after 600ms regardless of outcome
         fill_input("Product name", "Pro")   — fill fields Claude knows the answer to
         clear_overlays()                    — call this immediately after fill_input succeeds
         scroll_page("down")                 — reveal off-screen content then retry
@@ -102,6 +103,7 @@ Use the absolute path for `envPath` — it's the Claude Code working directory +
 ## Error handling
 - After any action → `get_page_text()` to check for errors (not `take_screenshot`)
 - After `click_element("Save")` / form submission → use `get_page_text()` or `wait_for_selector` to confirm. Never use `wait_for_navigation` — most form saves don't navigate.
+- After `click_element` → always confirm with `wait_for_selector(".selector")` or `get_page_text()`. `click_element` returns success after 600ms even if the action had no effect.
 - `click_element` not found → `scroll_page("down")` then retry
 - Still not found → `get_elements()` to get exact coords, then `highlight_region(x,y,w,h,msg)` using those coords. Only use `take_screenshot()` if you need to visually inspect the page.
 - `fill_input` not found → `click_element(hint)` to focus the field, then retry `fill_input`. If still failing, use `find_and_highlight(hint, "Click here — I'll fill it in")` (NO `valueToType`) then `wait_for_click()` then retry `fill_input` — after the user focuses the field by clicking, the active-element fallback fills it automatically. `find_and_highlight` uses DOM positioning (pixel-perfect) — only fall back to `take_screenshot` + `highlight_region` if `find_and_highlight` returns false. After `fill_input` succeeds, immediately call `clear_overlays()` to remove the highlight. Only use `valueToType` when the user genuinely must type the value themselves (e.g. password, personal data).

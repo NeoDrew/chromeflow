@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -166,9 +166,49 @@ function patchProjectClaudeMd(cwd: string, force = false) {
   return "created";
 }
 
+const CHROMEFLOW_TOOLS = [
+  "open_page", "take_screenshot", "clear_overlays", "get_elements", "execute_script",
+  "fill_input", "read_element", "get_page_text", "write_to_env",
+  "scroll_page", "click_element", "wait_for_click", "wait_for_selector", "mark_step_done",
+  "find_and_highlight", "highlight_region", "show_guide_panel",
+].map((t) => `mcp__chromeflow__${t}`);
+
+function patchSettingsLocalJson(cwd: string) {
+  const claudeDir = join(cwd, ".claude");
+  const settingsPath = join(claudeDir, "settings.local.json");
+
+  let settings: Record<string, unknown> = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+    } catch {
+      settings = {};
+    }
+  }
+
+  if (!settings.permissions || typeof settings.permissions !== "object") {
+    settings.permissions = {};
+  }
+  const perms = settings.permissions as Record<string, unknown>;
+  const existing: string[] = Array.isArray(perms.allow) ? perms.allow as string[] : [];
+
+  // Remove stale chromeflow entries, add current ones
+  const withoutChromeflow = existing.filter((t) => !t.startsWith("mcp__chromeflow__"));
+  const merged = [...withoutChromeflow, ...CHROMEFLOW_TOOLS];
+
+  const changed =
+    merged.length !== existing.length ||
+    CHROMEFLOW_TOOLS.some((t) => !existing.includes(t));
+  if (!changed) return "already-present";
+
+  perms.allow = merged;
+  if (!existsSync(claudeDir)) mkdirSync(claudeDir, { recursive: true });
+  writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+  return "updated";
+}
+
 function tryOpenExtensionsPage() {
   try {
-    // Try to open Chrome directly to the extensions page
     execSync('open -a "Google Chrome" "chrome://extensions"', { stdio: "ignore" });
     return true;
   } catch {
@@ -181,11 +221,34 @@ function tryOpenExtensionsPage() {
   }
 }
 
+function patchGlobalClaudeMd() {
+  const globalClaudeMdPath = join(HOME, ".claude", "CLAUDE.md");
+  const hint = `## Chromeflow
+
+chromeflow is installed globally as an MCP server.
+
+If you are working in a project and the project's CLAUDE.md does not contain chromeflow
+instructions, tell the user: "Run \`npx chromeflow setup\` in this project directory to
+configure chromeflow for it."
+`;
+
+  if (existsSync(globalClaudeMdPath)) {
+    const existing = readFileSync(globalClaudeMdPath, "utf8");
+    if (existing.includes("chromeflow")) return "already-present";
+    writeFileSync(globalClaudeMdPath, existing.trimEnd() + "\n\n" + hint);
+    return "appended";
+  }
+
+  const dir = join(HOME, ".claude");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(globalClaudeMdPath, hint);
+  return "created";
+}
+
 export async function runSetup() {
   const scriptPath = fileURLToPath(import.meta.url);
   const distDir = dirname(scriptPath);
   const serverScriptPath = resolve(distDir, "index.js");
-  const extensionDistPath = resolve(distDir, "..", "..", "extension", "dist");
 
   console.log("\nChromeflow Setup\n" + "─".repeat(40));
 
@@ -195,15 +258,22 @@ export async function runSetup() {
   console.log(`✓ Registered MCP server in ~/.claude.json`);
   console.log(viaNpx ? `  → npx -y chromeflow (auto-updates)` : `  → node ${serverScriptPath}`);
 
-  // 2. Project CLAUDE.md
+  // 2. Project CLAUDE.md + settings.local.json
   const cwd = process.cwd();
   const mdResult = patchProjectClaudeMd(cwd);
+  const settingsResult = patchSettingsLocalJson(cwd);
   if (mdResult === "already-present") {
     console.log("✓ CLAUDE.md already has chromeflow instructions (run `npx chromeflow update` to refresh)");
   } else if (mdResult === "appended") {
     console.log(`✓ Appended chromeflow instructions to ${join(cwd, "CLAUDE.md")}`);
   } else {
     console.log(`✓ Created ${join(cwd, "CLAUDE.md")}`);
+  }
+
+  if (settingsResult === "already-present") {
+    console.log("✓ .claude/settings.local.json already allows chromeflow tools");
+  } else {
+    console.log("✓ Added chromeflow tools to .claude/settings.local.json (no approval prompts)");
   }
 
   // 3. Chrome extension
@@ -214,9 +284,20 @@ export async function runSetup() {
   } else {
     console.log("  Open chrome://extensions in Chrome.");
   }
+  const extensionDistPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "extension", "dist");
   console.log("  1. Enable Developer mode (top-right toggle)");
   console.log("  2. Click 'Load unpacked'");
   console.log(`  3. Select: ${extensionDistPath}`);
+
+  // 4. Global ~/.claude/CLAUDE.md hint
+  const globalResult = patchGlobalClaudeMd();
+  if (globalResult === "already-present") {
+    console.log("✓ ~/.claude/CLAUDE.md already has chromeflow hint");
+  } else if (globalResult === "appended") {
+    console.log("✓ Appended chromeflow hint to ~/.claude/CLAUDE.md");
+  } else {
+    console.log("✓ Created ~/.claude/CLAUDE.md with chromeflow hint");
+  }
 
   console.log("\nDone. Restart Claude Code to activate chromeflow.\n");
 }
@@ -233,5 +314,13 @@ export async function runUpdate() {
   } else {
     console.log(`✓ Created ${join(cwd, "CLAUDE.md")}`);
   }
+
+  const settingsResult = patchSettingsLocalJson(cwd);
+  if (settingsResult === "already-present") {
+    console.log("✓ .claude/settings.local.json already up to date");
+  } else {
+    console.log("✓ Updated chromeflow tools in .claude/settings.local.json");
+  }
+
   console.log("Done.\n");
 }
