@@ -302,6 +302,67 @@ export async function runSetup() {
   console.log("\nDone. Restart Claude Code to activate chromeflow.\n");
 }
 
+export async function runUninstall() {
+  const cwd = process.cwd();
+  console.log("\nChromeflow Uninstall\n" + "─".repeat(40));
+
+  // 1. Remove from ~/.claude.json
+  if (existsSync(CLAUDE_JSON_PATH)) {
+    try {
+      const config = JSON.parse(readFileSync(CLAUDE_JSON_PATH, "utf8")) as Record<string, unknown>;
+      if (config.mcpServers && typeof config.mcpServers === "object") {
+        delete (config.mcpServers as Record<string, unknown>).chromeflow;
+      }
+      writeFileSync(CLAUDE_JSON_PATH, JSON.stringify(config, null, 2) + "\n");
+      console.log("✓ Removed chromeflow MCP server from ~/.claude.json");
+    } catch {
+      console.log("  Could not update ~/.claude.json (skipping)");
+    }
+  }
+
+  // 2. Remove chromeflow section from project CLAUDE.md
+  const claudeMdPath = join(cwd, "CLAUDE.md");
+  if (existsSync(claudeMdPath)) {
+    const existing = readFileSync(claudeMdPath, "utf8");
+    if (existing.includes("# Chromeflow")) {
+      const idx = existing.indexOf("# Chromeflow");
+      const before = existing.slice(0, idx).trimEnd();
+      writeFileSync(claudeMdPath, before ? before + "\n" : "");
+      console.log(`✓ Removed chromeflow section from ${claudeMdPath}`);
+    }
+  }
+
+  // 3. Remove chromeflow tools from .claude/settings.local.json
+  const settingsPath = join(cwd, ".claude", "settings.local.json");
+  if (existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(readFileSync(settingsPath, "utf8")) as Record<string, unknown>;
+      const perms = settings.permissions as Record<string, unknown> | undefined;
+      if (perms && Array.isArray(perms.allow)) {
+        perms.allow = (perms.allow as string[]).filter((t) => !t.startsWith("mcp__chromeflow__"));
+      }
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + "\n");
+      console.log("✓ Removed chromeflow tools from .claude/settings.local.json");
+    } catch {
+      console.log("  Could not update .claude/settings.local.json (skipping)");
+    }
+  }
+
+  // 4. Remove chromeflow hint from ~/.claude/CLAUDE.md
+  const globalClaudeMdPath = join(HOME, ".claude", "CLAUDE.md");
+  if (existsSync(globalClaudeMdPath)) {
+    const existing = readFileSync(globalClaudeMdPath, "utf8");
+    if (existing.includes("## Chromeflow")) {
+      const idx = existing.indexOf("## Chromeflow");
+      const before = existing.slice(0, idx).trimEnd();
+      writeFileSync(globalClaudeMdPath, before ? before + "\n" : "");
+      console.log("✓ Removed chromeflow hint from ~/.claude/CLAUDE.md");
+    }
+  }
+
+  console.log("\nDone. Restart Claude Code to complete removal.\n");
+}
+
 export async function runUpdate() {
   const cwd = process.cwd();
   console.log("\nChromeflow Update\n" + "─".repeat(40));
