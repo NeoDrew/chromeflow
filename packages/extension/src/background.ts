@@ -15,6 +15,11 @@ const pendingClicks = new Map<
   (result: { type: string; url?: string }) => void
 >();
 
+// Recent navigation completions per tab — used to resolve click-watches that
+// register AFTER the navigation already fired (race condition when the user
+// clicks a link and the page loads before wait_for_click is processed).
+const recentNavigations = new Map<number, { url: string; time: number }>();
+
 // Persisted panel state — re-injected on every new page load
 let lastPanelState: { title: string; steps: Array<{ text: string; done?: boolean }> } | null = null;
 
@@ -68,12 +73,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   if (info.status !== "complete") return;
 
+  const url = tab.url ?? "";
+  recentNavigations.set(tabId, { url, time: Date.now() });
+
   for (const [requestId, cb] of pendingClicks) {
     // Any navigation on an active tab resolves the pending click-watch
     chrome.tabs.query({ active: true, currentWindow: true }, ([activeTab]) => {
       if (activeTab?.id === tabId) {
         pendingClicks.delete(requestId);
-        cb({ type: "navigation_complete", url: tab.url ?? "" });
+        cb({ type: "navigation_complete", url });
       }
     });
   }
@@ -268,6 +276,17 @@ async function handleMcpMessage(msg: {
         }, timeout);
 
         pendingClicks.set(msg.requestId, finish);
+
+        // Race condition guard: if the user clicked a link and the page finished
+        // loading before this handler ran, onUpdated already fired with no pending
+        // clicks. Check recentNavigations and resolve immediately if so.
+        chrome.tabs.query({ active: true, currentWindow: true }, ([activeTab]) => {
+          if (!activeTab?.id) return;
+          const nav = recentNavigations.get(activeTab.id);
+          if (nav && Date.now() - nav.time < 5000) {
+            finish({ type: "navigation_complete", url: nav.url });
+          }
+        });
       });
     }
 
