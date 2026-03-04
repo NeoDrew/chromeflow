@@ -43,7 +43,7 @@ export default function HowItWorks() {
           Less tab-switching. More shipping.
         </h2>
 
-        <div className="fade-up delay-2" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '4rem' }}>
+        <div className="fade-up delay-2 cols-3" style={{ gap: '1rem', marginBottom: '4rem' }}>
           {cards.map(({ icon, title, body }) => (
             <div key={title} className="card-hover" style={{
               background: 'var(--surface)',
