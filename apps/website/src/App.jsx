@@ -1,8 +1,13 @@
 import Hero from './components/Hero'
 import Setup from './components/Setup'
 import BeforeAfter from './components/BeforeAfter'
+import Privacy from './components/Privacy'
+
+const path = window.location.pathname.replace(/\/$/, '')
 
 export default function App() {
+  if (path === '/privacy') return <Privacy />
+
   return (
     <main>
       <Hero />
