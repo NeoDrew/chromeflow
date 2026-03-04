@@ -90,10 +90,7 @@ export default function Setup() {
           Two steps. That's it.
         </h2>
 
-        <div className="fade-up delay-2" style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr',
-          gap: '1.25rem',
-        }}>
+        <div className="fade-up delay-2 cols-2" style={{ gap: '1.25rem' }}>
 
           {/* Step 1 */}
           <div style={{

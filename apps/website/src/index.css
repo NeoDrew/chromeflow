@@ -119,3 +119,41 @@ code {
   transform: translateY(-3px);
   box-shadow: var(--shadow-lg) !important;
 }
+
+/* ── Responsive layout ───────────────────────────── */
+
+.cols-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.cols-3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.section-hero {
+  padding: 8rem 0 6rem;
+  text-align: center;
+}
+
+@media (max-width: 900px) {
+  .cols-3 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .cols-2,
+  .cols-3 {
+    grid-template-columns: 1fr;
+  }
+
+  .section-hero {
+    padding: 3.5rem 0 2.5rem;
+  }
+
+  .wrap {
+    padding: 0 1.25rem;
+  }
+}
