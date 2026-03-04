@@ -21,10 +21,11 @@ export default function Footer() {
         </div>
         <div style={{ display: 'flex', gap: '1.5rem' }}>
           {[
-            ['GitHub', 'https://github.com/NeoDrew/chromeflow'],
-            ['npm', 'https://www.npmjs.com/package/chromeflow'],
-          ].map(([label, href]) => (
-            <a key={label} href={href} target="_blank" rel="noreferrer" style={{
+            ['GitHub', 'https://github.com/NeoDrew/chromeflow', true],
+            ['npm', 'https://www.npmjs.com/package/chromeflow', true],
+            ['Privacy', '/privacy', false],
+          ].map(([label, href, external]) => (
+            <a key={label} href={href} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})} style={{
               fontSize: '0.85rem', color: 'var(--subtle)',
               transition: 'color 0.15s',
             }}
