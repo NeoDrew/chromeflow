@@ -128,10 +128,7 @@ export default function BeforeAfter() {
           Before and after.
         </h2>
 
-        <div className="fade-up delay-2" style={{
-          display: 'grid', gridTemplateColumns: '1fr 1fr',
-          gap: '1.5rem',
-        }}>
+        <div className="fade-up delay-2 cols-2" style={{ gap: '1.5rem' }}>
 
           {/* ── Before ── */}
           <div style={{

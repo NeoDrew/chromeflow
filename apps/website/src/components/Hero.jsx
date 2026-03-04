@@ -1,6 +1,6 @@
 export default function Hero() {
   return (
-    <section style={{ padding: '8rem 0 6rem', textAlign: 'center' }}>
+    <section className="section-hero">
       <div className="wrap" style={{ maxWidth: 700 }}>
         <p className="hero-el" style={{
           fontFamily: 'JetBrains Mono, monospace',
