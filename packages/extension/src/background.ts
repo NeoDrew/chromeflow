@@ -328,9 +328,11 @@ async function handleMcpMessage(msg: {
     case "wait_for_selector": {
       const selector = msg.selector as string;
       const timeout = (msg.timeout as number) ?? 30_000;
+      const refreshIntervalMs = (msg.refresh as number | undefined); // ms between page reloads
       const tab = await getActiveTab();
       return new Promise((resolve, reject) => {
         const start = Date.now();
+        let lastRefresh = Date.now();
         const check = async () => {
           if (Date.now() - start > timeout) {
             reject(new Error(`Selector "${selector}" not found after ${timeout / 1000}s`));
@@ -345,6 +347,11 @@ async function handleMcpMessage(msg: {
             if (results[0]?.result) {
               resolve({ type: "action_done", requestId: msg.requestId });
             } else {
+              if (refreshIntervalMs && Date.now() - lastRefresh >= refreshIntervalMs) {
+                lastRefresh = Date.now();
+                chrome.tabs.reload(tab.id!);
+                await waitForNavigation(tab.id!, 15_000);
+              }
               setTimeout(check, 500);
             }
           } catch {
