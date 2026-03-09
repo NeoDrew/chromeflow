@@ -86,7 +86,10 @@ If the click causes page navigation, this resolves when the new page finishes lo
     "wait_for_selector",
     `Wait for a CSS selector to appear on the page. Use this instead of polling with take_screenshot.
 Examples: wait for a build to finish, a success/error message to appear, a modal to open.
-After it resolves, use get_page_text to read the result rather than taking a screenshot.`,
+After it resolves, use get_page_text to read the result rather than taking a screenshot.
+Use the refresh parameter when results appear on the same page after a server-side process completes
+(e.g. a query that runs asynchronously and updates the page when done) — the page will be reloaded
+every N seconds until the selector appears.`,
     {
       selector: z
         .string()
@@ -94,10 +97,17 @@ After it resolves, use get_page_text to read the result rather than taking a scr
           "CSS selector to wait for (e.g. '.deploy-ready', '[data-status=\"error\"]', '.toast-error')"
         ),
       timeout: z.number().optional().describe("Max seconds to wait (default 30)"),
+      refresh: z
+        .number()
+        .optional()
+        .describe(
+          "If set, reload the page every N seconds while waiting. Use when the result requires a server-side process to complete and the page won't update without a reload (e.g. waiting for a query job to finish)."
+        ),
     },
-    async ({ selector, timeout = 30 }) => {
+    async ({ selector, timeout = 30, refresh }) => {
       const timeoutMs = timeout * 1000;
-      await bridge.request({ type: "wait_for_selector", selector, timeout: timeoutMs }, timeoutMs + 5000);
+      const refreshMs = refresh ? refresh * 1000 : undefined;
+      await bridge.request({ type: "wait_for_selector", selector, timeout: timeoutMs, refresh: refreshMs }, timeoutMs + 5000);
       return {
         content: [{ type: "text", text: `Selector "${selector}" found on page.` }],
       };
