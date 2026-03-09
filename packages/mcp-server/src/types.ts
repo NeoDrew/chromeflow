@@ -33,7 +33,7 @@ export type ServerMessage =
   | { type: "click_element"; requestId: string; textHint: string }
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
   | { type: "get_page_text"; requestId: string; selector?: string }
-  | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number }
+  | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number; refresh?: number }
   | { type: "execute_script"; requestId: string; code: string }
   | { type: "get_elements"; requestId: string };
 
@@ -55,6 +55,6 @@ export type ClientMessage =
   | { type: "fill_response"; requestId: string; success: boolean; message: string }
   | { type: "click_element_response"; requestId: string; success: boolean; message: string }
   | { type: "page_text_response"; requestId: string; text: string }
-  | { type: "script_response"; requestId: string; result: string }
+  | { type: "script_response"; requestId: string; result: string; alert?: string | null }
   | { type: "error"; requestId: string; message: string }
   | { type: "elements_response"; requestId: string; elements: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> };
