@@ -87,9 +87,8 @@ If the click causes page navigation, this resolves when the new page finishes lo
     `Wait for a CSS selector to appear on the page. Use this instead of polling with take_screenshot.
 Examples: wait for a build to finish, a success/error message to appear, a modal to open.
 After it resolves, use get_page_text to read the result rather than taking a screenshot.
-Use the refresh parameter when results appear on the same page after a server-side process completes
-(e.g. a query that runs asynchronously and updates the page when done) — the page will be reloaded
-every N seconds until the selector appears.`,
+For long-running server-side processes (e.g. a query job that may take minutes), set poll_interval
+to 15 seconds so the page is checked gently rather than hammered every 500ms.`,
     {
       selector: z
         .string()
@@ -97,17 +96,17 @@ every N seconds until the selector appears.`,
           "CSS selector to wait for (e.g. '.deploy-ready', '[data-status=\"error\"]', '.toast-error')"
         ),
       timeout: z.number().optional().describe("Max seconds to wait (default 30)"),
-      refresh: z
+      poll_interval: z
         .number()
         .optional()
         .describe(
-          "If set, reload the page every N seconds while waiting. Use when the result requires a server-side process to complete and the page won't update without a reload (e.g. waiting for a query job to finish)."
+          "How often to check for the selector, in seconds (default 0.5). Set to 15 when waiting for a slow server-side process."
         ),
     },
-    async ({ selector, timeout = 30, refresh }) => {
+    async ({ selector, timeout = 30, poll_interval }) => {
       const timeoutMs = timeout * 1000;
-      const refreshMs = refresh ? refresh * 1000 : undefined;
-      await bridge.request({ type: "wait_for_selector", selector, timeout: timeoutMs, refresh: refreshMs }, timeoutMs + 5000);
+      const pollMs = poll_interval ? poll_interval * 1000 : undefined;
+      await bridge.request({ type: "wait_for_selector", selector, timeout: timeoutMs, refresh: pollMs }, timeoutMs + 5000);
       return {
         content: [{ type: "text", text: `Selector "${selector}" found on page.` }],
       };
