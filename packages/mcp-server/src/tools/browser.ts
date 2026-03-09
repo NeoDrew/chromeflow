@@ -81,19 +81,26 @@ After calling this, use those exact coordinates in highlight_region — do NOT a
     `Execute JavaScript in the current page's context and return the result as a string.
 Use this to read framework state, check DOM properties, or interact with page APIs that aren't reachable via text.
 Prefer get_page_text for reading visible content. Use this for programmatic DOM queries (e.g. checking an element's attribute, reading a value not visible in text).
+Top-level return statements are supported (e.g. multi-statement scripts with \`return value;\`).
+If the page called alert()/confirm()/prompt() since the last check, the message will appear as PAGE ALERT in the result — read it and act on it.
 NOTE: Pages with strict Content Security Policy (e.g. Stripe, GitHub) will block eval and return a CSP error — do not retry, use get_page_text or fill_input instead.`,
     {
       code: z
         .string()
         .describe(
-          "JavaScript expression to evaluate in the page (e.g. 'document.title', 'document.querySelector(\".price\")?.textContent')"
+          "JavaScript expression or multi-statement script to evaluate in the page. Top-level `return` is supported."
         ),
     },
     async ({ code }) => {
       const response = await bridge.request({ type: "execute_script", code });
       if (response.type !== "script_response") throw new Error("Unexpected response");
+      const { result, alert } = response as { result: string; alert?: string | null };
+      let text = `Result: ${result}`;
+      if (alert) {
+        text += `\n\nPAGE ALERT: "${alert}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
+      }
       return {
-        content: [{ type: "text", text: `Result: ${(response as { result: string }).result}` }],
+        content: [{ type: "text", text }],
       };
     }
   );

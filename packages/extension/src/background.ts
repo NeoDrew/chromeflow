@@ -85,9 +85,44 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
       }
     });
   }
+
+  // Re-inject alert capture on every page load so dialogs never block
+  if (isScriptableUrl(url)) {
+    injectAlertCapture(tabId);
+  }
 });
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
+
+/**
+ * Inject alert/confirm/prompt interceptors into the page's MAIN world so that
+ * JS dialogs don't block the page. The captured message is stored in
+ * window._alertCapture and read back by execute_script / click_element.
+ */
+async function injectAlertCapture(tabId: number): Promise<void> {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: () => {
+        (window as any)._alertCapture = (window as any)._alertCapture ?? null;
+        window.alert = (msg?: unknown) => {
+          (window as any)._alertCapture = String(msg ?? "");
+        };
+        window.confirm = (msg?: string) => {
+          (window as any)._alertCapture = String(msg ?? "");
+          return true;
+        };
+        window.prompt = (msg?: string, def?: string) => {
+          (window as any)._alertCapture = String(msg ?? "");
+          return def !== undefined ? def : null;
+        };
+      },
+    });
+  } catch {
+    // Non-scriptable pages (chrome://, etc.) will throw — ignore.
+  }
+}
 
 async function getActiveTab(): Promise<chrome.tabs.Tab> {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -329,14 +364,42 @@ async function handleMcpMessage(msg: {
         target: { tabId: tab.id! },
         world: "MAIN",
         func: (code: string) => {
-          try { return String((0, eval)(code)); } catch (e) { return `Error: ${e}`; }
+          let result: unknown;
+          try {
+            result = (0, eval)(code);
+          } catch (e) {
+            // Top-level `return` statements are illegal outside a function.
+            // Retry wrapped in an IIFE so they work as expected.
+            if (String(e).includes("Illegal return")) {
+              try {
+                result = (0, eval)(`(function() { ${code} })()`);
+              } catch (e2) {
+                result = `Error: ${e2}`;
+              }
+            } else {
+              result = `Error: ${e}`;
+            }
+          }
+          const captured = (window as any)._alertCapture ?? null;
+          if (captured) (window as any)._alertCapture = null;
+          return JSON.stringify({ result: String(result ?? "undefined"), alert: captured });
         },
         args: [msg.code as string],
       });
+      let result = "undefined";
+      let alertMsg: string | null = null;
+      try {
+        const parsed = JSON.parse(String(results[0]?.result ?? "{}"));
+        result = parsed.result ?? "undefined";
+        alertMsg = parsed.alert ?? null;
+      } catch {
+        result = String(results[0]?.result ?? "undefined");
+      }
       return {
         type: "script_response",
         requestId: msg.requestId,
-        result: String(results[0]?.result ?? "undefined"),
+        result,
+        alert: alertMsg,
       };
     }
 
@@ -355,9 +418,31 @@ async function handleMcpMessage(msg: {
         new Promise<null>((r) => setTimeout(() => r(null), 600)),
       ]);
 
-      const message = navigationResult
+      // Check if a JS alert/confirm/prompt fired during or after the click.
+      // The interceptor (injected on page load) captures these non-blockingly.
+      let alertMessage: string | null = null;
+      if (isScriptableUrl(tab.url)) {
+        try {
+          const alertResults = await chrome.scripting.executeScript({
+            target: { tabId: tab.id! },
+            world: "MAIN",
+            func: () => {
+              const captured = (window as any)._alertCapture ?? null;
+              if (captured) (window as any)._alertCapture = null;
+              return captured;
+            },
+          });
+          alertMessage = (alertResults[0]?.result as string | null) ?? null;
+        } catch { /* non-scriptable or unloaded tab — ignore */ }
+      }
+
+      let message = navigationResult
         ? `Clicked and navigated to ${navigationResult}`
         : result.message;
+
+      if (alertMessage) {
+        message += `\n\nPAGE ALERT: "${alertMessage}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
+      }
 
       return { type: "click_element_response", success: true, message };
     }
