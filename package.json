@@ -4,6 +4,9 @@
   "workspaces": [
     "packages/*"
   ],
+  "overrides": {
+    "express-rate-limit": "^8.2.2"
+  },
   "scripts": {
     "build": "npm run build --workspaces",
     "dev:mcp": "npm run dev -w packages/mcp-server",
