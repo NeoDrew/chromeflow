@@ -25,12 +25,11 @@ This:
 - Adds a hint to `~/.claude/CLAUDE.md` so Claude will suggest `npx chromeflow setup` in any project that isn't yet configured
 - Pre-approves Chromeflow tools in `.claude/settings.local.json` (no per-action prompts)
 
-**2. Load the Chrome extension** (one time):
+**2. Install the Chrome extension** (one time):
 
-The setup wizard opens `chrome://extensions` for you. Then:
-1. Enable **Developer mode** (top-right toggle)
-2. Click **Load unpacked**
-3. Select the path printed by the setup wizard
+The setup wizard opens the Chrome Web Store for you — click **Add to Chrome**.
+
+Or install directly: [chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime](https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime)
 
 The extension persists across Chrome restarts. You only do this once.
 
@@ -88,7 +87,7 @@ npm run dev:mcp   # watches mcp-server
 npm run dev:ext   # watches extension
 ```
 
-After rebuilding the extension, click **Update** on `chrome://extensions`.
+After rebuilding the extension, reload it from `chrome://extensions`.
 
 ## Requirements
 
