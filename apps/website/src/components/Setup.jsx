@@ -126,23 +126,33 @@ export default function Setup() {
               One time. Persists across Chrome restarts.
             </p>
 
-            <a
-              href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime"
-              target="_blank"
-              rel="noreferrer"
-              style={{
-                display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
-                padding: '0.6rem 1.1rem',
-                background: 'var(--amber-dim)', border: '1px solid rgba(217,119,6,0.3)',
-                borderRadius: 'var(--radius)', color: 'var(--amber)',
-                fontWeight: 600, fontSize: '0.88rem', textDecoration: 'none',
-                transition: 'opacity 0.15s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
-              onMouseLeave={e => e.currentTarget.style.opacity = '1'}
-            >
-              Add to Chrome
-            </a>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <a
+                href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime"
+                target="_blank"
+                rel="noreferrer"
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.6rem',
+                  width: '100%', padding: '0.9rem 1.5rem',
+                  background: 'linear-gradient(135deg, var(--amber), var(--orange))',
+                  border: 'none',
+                  borderRadius: 'var(--radius)', color: '#fff',
+                  fontWeight: 700, fontSize: '1rem', textDecoration: 'none',
+                  boxShadow: '0 2px 12px rgba(217,119,6,0.35)',
+                  transition: 'opacity 0.15s, transform 0.15s',
+                }}
+                onMouseEnter={e => { e.currentTarget.style.opacity = '0.9'; e.currentTarget.style.transform = 'translateY(-1px)'; }}
+                onMouseLeave={e => { e.currentTarget.style.opacity = '1'; e.currentTarget.style.transform = 'translateY(0)'; }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="12" cy="12" r="4" fill="white"/>
+                  <path d="M12 2C10.07 2 8.28 2.61 6.82 3.64L10.18 9.5C10.74 9.19 11.35 9 12 9H21.93C21.44 5.05 17.08 2 12 2Z" fill="white"/>
+                  <path d="M2.46 8.5C1.54 9.55 1 10.91 1 12.39C1 15.57 3.14 18.26 6.09 19.24L9.45 13.38C9.17 12.96 9 12.5 9 12C9 11.37 9.22 10.79 9.59 10.32L2.46 8.5Z" fill="rgba(255,255,255,0.7)"/>
+                  <path d="M12 15C13.66 15 15 13.66 15 12C15 11.67 14.94 11.35 14.83 11.06L18.59 4.59C20.69 6.06 22 8.35 22 12C22 17.52 17.52 22 12 22C9.8 22 7.78 21.27 6.17 20.05L9.53 14.19C10.24 14.69 11.09 15 12 15Z" fill="rgba(255,255,255,0.85)"/>
+                </svg>
+                Add to Chrome — It's Free
+              </a>
+            </div>
           </div>
         </div>
       </div>
