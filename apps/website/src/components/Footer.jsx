@@ -23,6 +23,7 @@ export default function Footer() {
           {[
             ['GitHub', 'https://github.com/NeoDrew/chromeflow', true],
             ['npm', 'https://www.npmjs.com/package/chromeflow', true],
+            ['Chrome Store', 'https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime', true],
             ['Privacy', '/privacy', false],
           ].map(([label, href, external]) => (
             <a key={label} href={href} {...(external ? { target: '_blank', rel: 'noreferrer' } : {})} style={{

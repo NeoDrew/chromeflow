@@ -126,28 +126,23 @@ export default function Setup() {
               One time. Persists across Chrome restarts.
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-              {[
-                ['Open', <><code>chrome://extensions</code> in Chrome</>],
-                ['Enable', <><strong style={{ color: 'var(--text)' }}>Developer mode</strong> (top-right toggle)</>],
-                ['Click', <><strong style={{ color: 'var(--text)' }}>Load unpacked</strong> and select the <code>extension/dist</code> path printed above</>],
-              ].map(([verb, rest], i) => (
-                <div key={i} style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-start' }}>
-                  <div style={{
-                    width: 20, height: 20, borderRadius: '50%', flexShrink: 0,
-                    background: 'var(--amber-dim)', border: '1px solid rgba(217,119,6,0.2)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontFamily: 'JetBrains Mono, monospace', fontSize: '0.65rem',
-                    color: 'var(--amber)', fontWeight: 700, marginTop: 2,
-                  }}>
-                    {i + 1}
-                  </div>
-                  <p style={{ fontSize: '0.88rem', color: 'var(--muted)', lineHeight: 1.55 }}>
-                    <strong style={{ color: 'var(--amber)' }}>{verb}</strong> {rest}
-                  </p>
-                </div>
-              ))}
-            </div>
+            <a
+              href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime"
+              target="_blank"
+              rel="noreferrer"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: '0.5rem',
+                padding: '0.6rem 1.1rem',
+                background: 'var(--amber-dim)', border: '1px solid rgba(217,119,6,0.3)',
+                borderRadius: 'var(--radius)', color: 'var(--amber)',
+                fontWeight: 600, fontSize: '0.88rem', textDecoration: 'none',
+                transition: 'opacity 0.15s',
+              }}
+              onMouseEnter={e => e.currentTarget.style.opacity = '0.8'}
+              onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+            >
+              Add to Chrome
+            </a>
           </div>
         </div>
       </div>
