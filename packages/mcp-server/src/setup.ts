@@ -207,13 +207,15 @@ function patchSettingsLocalJson(cwd: string) {
   return "updated";
 }
 
-function tryOpenExtensionsPage() {
+const STORE_URL = "https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime";
+
+function tryOpenStorePage() {
   try {
-    execSync('open -a "Google Chrome" "chrome://extensions"', { stdio: "ignore" });
+    execSync(`open "${STORE_URL}"`, { stdio: "ignore" });
     return true;
   } catch {
     try {
-      execSync('xdg-open "chrome://extensions"', { stdio: "ignore" });
+      execSync(`xdg-open "${STORE_URL}"`, { stdio: "ignore" });
       return true;
     } catch {
       return false;
@@ -277,17 +279,13 @@ export async function runSetup() {
   }
 
   // 3. Chrome extension
-  console.log("\nChrome extension (one-time manual step):");
-  const opened = tryOpenExtensionsPage();
+  console.log("\nChrome extension (one-time step):");
+  const opened = tryOpenStorePage();
   if (opened) {
-    console.log("  Opened chrome://extensions in Chrome.");
+    console.log("  Opened Chrome Web Store — click 'Add to Chrome' to install.");
   } else {
-    console.log("  Open chrome://extensions in Chrome.");
+    console.log(`  Install from the Chrome Web Store:\n  ${STORE_URL}`);
   }
-  const extensionDistPath = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "extension", "dist");
-  console.log("  1. Enable Developer mode (top-right toggle)");
-  console.log("  2. Click 'Load unpacked'");
-  console.log(`  3. Select: ${extensionDistPath}`);
 
   // 4. Global ~/.claude/CLAUDE.md hint
   const globalResult = patchGlobalClaudeMd();

@@ -19,15 +19,13 @@ node /path/to/chromeflow/packages/mcp-server/dist/index.js setup
 This will:
 - Register the MCP server in `~/.claude.json`
 - Create or update `CLAUDE.md` in your current project
-- Open `chrome://extensions` so you can load the extension
+- Open the Chrome Web Store so you can install the extension
 
-## Load the Chrome extension (one time)
+## Install the Chrome extension (one time)
 
-The setup wizard opens the page for you. Then:
+The setup wizard opens the Chrome Web Store for you — click **Add to Chrome**.
 
-1. Enable **Developer mode** (top-right toggle)
-2. Click **Load unpacked**
-3. Select the path printed by the setup wizard (`packages/extension/dist`)
+Or install directly: https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime
 
 You only do this once. The extension persists across Chrome restarts.
 
