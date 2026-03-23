@@ -213,11 +213,52 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "get_form_fields": {
-      const fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }> = [];
+      const fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string }> = [];
       let idx = 0;
 
-      // Standard inputs, textareas, selects
-      const FIELD_SELECTORS = "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select";
+      // Helper: find nearest section heading above an element for stable context
+      function getNearestHeading(el: Element): string {
+        let node: Element | null = el.parentElement;
+        for (let d = 0; d < 8 && node && node !== document.body; d++) {
+          for (const sel of ["h1,h2,h3,h4,h5,h6", "legend", "[class*='section-title'],[class*='heading'],[class*='section-header']"]) {
+            const h = node.querySelector(sel);
+            if (h && h !== el && !h.contains(el)) return (h.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
+          }
+          node = node.parentElement;
+        }
+        return "";
+      }
+
+      // File inputs — always include even if visually hidden (commonly 0×0 behind custom drag zones)
+      for (const el of Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"))) {
+        const rect = el.getBoundingClientRect();
+        let label = el.getAttribute("aria-label") || el.getAttribute("name") || "";
+        if (!label && el.id) {
+          const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
+          if (lbl) label = (lbl.textContent ?? "").trim();
+        }
+        if (!label) {
+          let node: Element | null = el.parentElement;
+          for (let d = 0; d < 5 && node; d++) {
+            const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+            if (text && text.length < 120) { label = text.slice(0, 80); break; }
+            node = node.parentElement;
+          }
+        }
+        const context = getNearestHeading(el);
+        fields.push({
+          index: ++idx,
+          type: "file",
+          label: (label.replace(/\s+/g, " ").slice(0, 80) || "(unnamed)") + " — manual only, cannot be filled programmatically",
+          value: el.files?.[0]?.name ?? "",
+          y: Math.round(rect.top + window.scrollY),
+          selector: el.id ? `#${el.id}` : "input[type=file]",
+          ...(context ? { context } : {}),
+        });
+      }
+
+      // Standard inputs (file handled above), textareas, selects
+      const FIELD_SELECTORS = "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=file]), textarea, select";
       for (const el of Array.from(document.querySelectorAll<HTMLElement>(FIELD_SELECTORS))) {
         const s = getComputedStyle(el);
         if (s.display === "none" || s.visibility === "hidden") continue;
@@ -232,7 +273,6 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           if (lbl) label = (lbl.textContent ?? "").trim();
         }
         if (!label) {
-          // Walk up to find a nearby label-like element
           let node: Element | null = el.parentElement;
           for (let d = 0; d < 4 && node && node !== document.body; d++) {
             const heading = node.querySelector("label, h1, h2, h3, h4, h5, legend, [class*='label']");
@@ -256,6 +296,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           ? `#${el.id}`
           : `${el.tagName.toLowerCase()}:nth-of-type(${Array.from(document.querySelectorAll(el.tagName)).indexOf(el) + 1})`;
 
+        const context = getNearestHeading(el);
         fields.push({
           index: ++idx,
           type: el instanceof HTMLInputElement ? (el.type || "text") : el.tagName.toLowerCase(),
@@ -263,6 +304,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           value: value.slice(0, 60),
           y: Math.round(rect.top + window.scrollY),
           selector,
+          ...(context ? { context } : {}),
         });
       }
 
@@ -282,6 +324,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         }
 
         const currentText = (editor.querySelector(".cm-content")?.textContent ?? "").slice(0, 60);
+        const context = getNearestHeading(editor);
         fields.push({
           index: ++idx,
           type: "codemirror",
@@ -289,6 +332,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           value: currentText,
           y: Math.round(rect.top + window.scrollY),
           selector: ".cm-editor",
+          ...(context ? { context } : {}),
         });
       }
 
@@ -302,21 +346,34 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     case "scroll_to_element": {
       const query = (msg.query as string).toLowerCase();
       let target: Element | null = null;
+      let matchedText = "";
 
       // Try as CSS selector first
-      try { target = document.querySelector(msg.query as string); } catch { /* invalid selector */ }
+      try {
+        target = document.querySelector(msg.query as string);
+        if (target) matchedText = msg.query as string;
+      } catch { /* invalid selector */ }
 
       // Otherwise search by label/text
       if (!target) {
         for (const el of Array.from(document.querySelectorAll<HTMLElement>("input, textarea, select, button, [role=button], label, h1, h2, h3, h4, h5, h6"))) {
           const text = (el.textContent ?? el.getAttribute("aria-label") ?? el.getAttribute("placeholder") ?? "").toLowerCase();
-          if (text.includes(query)) { target = el; break; }
+          if (text.includes(query)) {
+            target = el;
+            matchedText = (el.textContent ?? el.getAttribute("aria-label") ?? "").trim().slice(0, 60);
+            break;
+          }
         }
       }
 
-      if (!target) return { type: "action_done", requestId: msg.requestId, message: `Element matching "${msg.query}" not found` };
+      if (!target) return { type: "action_done", requestId: msg.requestId, message: `No element found matching "${msg.query}"` };
       target.scrollIntoView({ behavior: "smooth", block: "center" });
-      return { type: "action_done", requestId: msg.requestId };
+      const rect = target.getBoundingClientRect();
+      return {
+        type: "action_done",
+        requestId: msg.requestId,
+        message: `Scrolled to "${matchedText}" (now at viewport y≈${Math.round(rect.top)})`,
+      };
     }
 
     case "save_page_state": {

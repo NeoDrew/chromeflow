@@ -105,7 +105,15 @@ export function fillInput(
   // Scroll into view and briefly highlight it
   input.scrollIntoView({ behavior: "smooth", block: "center" });
 
-  return { success: true, message: `Filled "${textHint}" with value` };
+  // Read back the value to confirm it was accepted (React may discard improperly dispatched events)
+  const confirmedValue = (input as HTMLInputElement | HTMLTextAreaElement).value;
+  const accepted = confirmedValue === value;
+  return {
+    success: true,
+    message: accepted
+      ? `Filled "${textHint}" with value`
+      : `Filled "${textHint}" but value may not have been accepted by React (got back: "${confirmedValue.slice(0, 60)}")`,
+  };
 }
 
 type FillableInput = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -156,13 +164,16 @@ function findInput(lower: string): FillableInput | null {
     // Walk up to 6 ancestor levels looking for an input — also check next sibling at each
     // level (handles layouts where label and input are in separate sibling divs, e.g. Stripe).
     let node: Element | null = anchor;
-    for (let depth = 0; depth < 6 && node && node !== document.body; depth++) {
+    for (let depth = 0; depth < 8 && node && node !== document.body; depth++) {
       const input = node.querySelector<FillableInput>("input, textarea, select");
       if (input && isEditable(input)) return input;
-      const sibling = node.nextElementSibling;
-      if (sibling) {
-        const sibInput = sibling.querySelector<FillableInput>("input, textarea, select");
-        if (sibInput && isEditable(sibInput)) return sibInput;
+      // Check both next and previous siblings — React forms often put label and input
+      // in separate sibling branches (e.g. <div>label</div><div><input/></div>)
+      for (const sibling of [node.nextElementSibling, node.previousElementSibling]) {
+        if (sibling) {
+          const sibInput = sibling.querySelector<FillableInput>("input, textarea, select");
+          if (sibInput && isEditable(sibInput)) return sibInput;
+        }
       }
       node = node.parentElement;
     }
