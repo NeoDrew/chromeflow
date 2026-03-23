@@ -1,7 +1,11 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { appendFileSync, readFileSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import type { WsBridge } from "../ws-bridge.js";
+
+const PAGE_STATE_FILE = join(tmpdir(), "chromeflow_page_state.json");
 
 export function registerCaptureTools(server: McpServer, bridge: WsBridge) {
   server.tool(
@@ -83,6 +87,46 @@ Only use take_screenshot when you need to locate an element's pixel position for
       const text = (response as { text: string }).text;
       return {
         content: [{ type: "text", text: text || "(no text found on page)" }],
+      };
+    }
+  );
+
+  server.tool(
+    "save_page_state",
+    `Snapshot the current values of all form fields (inputs, textareas, checkboxes, selects, CodeMirror editors) to a local file.
+Use this before a context window runs out or any time you want a checkpoint mid-form.
+A future session can call restore_page_state to pick up exactly where you left off.`,
+    {},
+    async () => {
+      const response = await bridge.request({ type: "save_page_state" });
+      if (response.type !== "save_state_response") throw new Error("Unexpected response");
+      const state = (response as { state: unknown[] }).state;
+      writeFileSync(PAGE_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
+      return {
+        content: [{ type: "text", text: `Saved ${state.length} field values to ${PAGE_STATE_FILE}. Call restore_page_state in a future session to reload them.` }],
+      };
+    }
+  );
+
+  server.tool(
+    "restore_page_state",
+    `Restore form field values from a previously saved snapshot (created by save_page_state).
+Use this at the start of a new session when resuming a long form-filling task.
+The snapshot is read from the local temp file written by save_page_state.`,
+    {},
+    async () => {
+      let state: import("../types.js").PageFieldState[];
+      try {
+        state = JSON.parse(readFileSync(PAGE_STATE_FILE, "utf-8")) as import("../types.js").PageFieldState[];
+      } catch {
+        return {
+          content: [{ type: "text", text: `No saved page state found at ${PAGE_STATE_FILE}. Call save_page_state first.` }],
+        };
+      }
+      const response = await bridge.request({ type: "restore_page_state", state });
+      const msg = (response as { message?: string }).message ?? "Done";
+      return {
+        content: [{ type: "text", text: msg }],
       };
     }
   );

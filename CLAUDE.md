@@ -44,15 +44,16 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 
 ```
 1. show_guide_panel(title, steps[])          — show the full plan upfront
-2. open_page(url)                            — navigate to the right page
+2. open_page(url)                            — navigate to the right page (add new_tab=true to keep current tab open)
    mark_step_done(0)                         — ALWAYS mark step 0 done right after open_page succeeds
 3. For each step:
    a. Claude acts directly:
         click_element("Save")               — press buttons/links Claude can press
         wait_for_selector(".success") or get_page_text() — ALWAYS confirm after click; click_element returns after 600ms regardless of outcome
-        fill_input("Product name", "Pro")   — fill fields Claude knows the answer to
+        fill_input("Product name", "Pro")   — fill fields Claude knows the answer to (works on React, CodeMirror, and contenteditable)
         clear_overlays()                    — call this immediately after fill_input succeeds
         scroll_page("down")                 — reveal off-screen content then retry
+        scroll_to_element("label text")     — jump directly to a known field instead of guessing pixel scroll amount
    b. Check results with text, not vision:
         get_page_text()                     — read errors/status after actions
         wait_for_selector(".success")       — wait for async changes (builds, modals)
@@ -99,6 +100,17 @@ After a secret key or API key is revealed:
 3. Tell the user what was written
 
 Use the absolute path for `envPath` — it's the Claude Code working directory + `/.env`.
+
+## Working with complex forms
+- Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory of every field (type, label, current value, vertical position). This prevents missing fields and avoids positional guesswork.
+- `fill_input` works on React-controlled inputs, contenteditable (Stripe, Notion), and **CodeMirror 6 editors** — it auto-detects all three. No `execute_script` workaround needed.
+- `scroll_to_element("label text or #selector")` scrolls a specific field into view without guessing pixel offsets.
+- For multi-session tasks (long forms that may exceed context), call `save_page_state()` as a checkpoint. A future session can call `restore_page_state()` to reload all field values from the saved snapshot.
+
+## Working with multiple tabs
+- `open_page(url, new_tab=true)` opens a URL without losing the current tab.
+- `list_tabs()` shows all open tabs with their index, title, and URL.
+- `switch_to_tab("1")` switches by tab number; `switch_to_tab("form")` matches by URL or title substring.
 
 ## Error handling
 - After any action → `get_page_text()` to check for errors (not `take_screenshot`)

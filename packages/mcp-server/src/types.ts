@@ -5,7 +5,8 @@ export type DistributiveOmit<T, K extends keyof T> = T extends unknown
 
 // Messages sent from MCP server → Extension (via WebSocket)
 export type ServerMessage =
-  | { type: "navigate"; requestId: string; url: string }
+  | { type: "navigate"; requestId: string; url: string; newTab?: boolean }
+  | { type: "switch_to_tab"; requestId: string; query: string }
   | { type: "screenshot"; requestId: string }
   | { type: "find_highlight"; requestId: string; text: string; message: string; valueToType?: string }
   | {
@@ -35,7 +36,19 @@ export type ServerMessage =
   | { type: "get_page_text"; requestId: string; selector?: string }
   | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number; refresh?: number }
   | { type: "execute_script"; requestId: string; code: string }
-  | { type: "get_elements"; requestId: string };
+  | { type: "get_elements"; requestId: string }
+  | { type: "get_form_fields"; requestId: string }
+  | { type: "scroll_to_element"; requestId: string; query: string }
+  | { type: "save_page_state"; requestId: string }
+  | { type: "restore_page_state"; requestId: string; state: PageFieldState[] }
+  | { type: "list_tabs"; requestId: string };
+
+export type PageFieldState = {
+  selector: string;
+  type: string;
+  value: string;
+  checked?: boolean;
+};
 
 // Messages sent from Extension → MCP server
 export type ClientMessage =
@@ -57,4 +70,7 @@ export type ClientMessage =
   | { type: "page_text_response"; requestId: string; text: string }
   | { type: "script_response"; requestId: string; result: string; alert?: string | null }
   | { type: "error"; requestId: string; message: string }
-  | { type: "elements_response"; requestId: string; elements: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> };
+  | { type: "elements_response"; requestId: string; elements: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> }
+  | { type: "form_fields_response"; requestId: string; fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }> }
+  | { type: "save_state_response"; requestId: string; state: PageFieldState[] }
+  | { type: "tabs_response"; requestId: string; tabs: Array<{ index: number; title: string; url: string; active: boolean }> };

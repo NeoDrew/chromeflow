@@ -5,12 +5,46 @@ import type { WsBridge } from "../ws-bridge.js";
 export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
   server.tool(
     "open_page",
-    "Navigate the user's active Chrome tab to a URL",
-    { url: z.string().url().describe("The URL to navigate to") },
-    async ({ url }) => {
-      await bridge.request({ type: "navigate", url });
+    "Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it.",
+    {
+      url: z.string().url().describe("The URL to navigate to"),
+      new_tab: z.boolean().optional().describe("Open in a new tab instead of replacing the current one (default false)"),
+    },
+    async ({ url, new_tab }) => {
+      await bridge.request({ type: "navigate", url, newTab: new_tab ?? false });
       return {
-        content: [{ type: "text", text: `Navigated to ${url}` }],
+        content: [{ type: "text", text: `Navigated to ${url}${new_tab ? " (new tab)" : ""}` }],
+      };
+    }
+  );
+
+  server.tool(
+    "switch_to_tab",
+    `Switch the active tab to a different open tab. Use this after open_page(new_tab=true) to switch back to the original tab, or to jump between tabs.
+Accepts: a tab number (1-based), a URL substring, or a title substring.
+Example: switch_to_tab("1") to go to the first tab, switch_to_tab("form") to find a tab whose URL or title contains "form".`,
+    {
+      query: z.string().describe("Tab number (1-based), URL substring, or title substring to match"),
+    },
+    async ({ query }) => {
+      await bridge.request({ type: "switch_to_tab", query });
+      return {
+        content: [{ type: "text", text: `Switched to tab matching "${query}"` }],
+      };
+    }
+  );
+
+  server.tool(
+    "list_tabs",
+    "List all open tabs in the current window with their index, title, and URL. Use this before switch_to_tab if you're not sure which tab to switch to.",
+    {},
+    async () => {
+      const response = await bridge.request({ type: "list_tabs" });
+      if (response.type !== "tabs_response") throw new Error("Unexpected response");
+      const tabs = (response as { tabs: Array<{ index: number; title: string; url: string; active: boolean }> }).tabs;
+      const lines = tabs.map(t => `${t.index}. ${t.active ? "[active] " : ""}${t.title} — ${t.url}`);
+      return {
+        content: [{ type: "text", text: `Open tabs:\n${lines.join("\n")}` }],
       };
     }
   );
@@ -72,6 +106,30 @@ After calling this, use those exact coordinates in highlight_region — do NOT a
       });
       return {
         content: [{ type: "text", text: `Visible interactive elements:\n${lines.join("\n")}\n\nUse these exact x/y values in highlight_region.` }],
+      };
+    }
+  );
+
+  server.tool(
+    "get_form_fields",
+    `Get a full inventory of all form fields on the page: inputs, textareas, selects, and CodeMirror editors.
+Run this once at the start of a complex form to understand what fields exist, their labels, current values, and vertical positions.
+Returns fields sorted by their y-position on the page (top to bottom).
+Unlike get_elements, this includes ALL fields (even far below the fold) and is not limited to 60 items.`,
+    {},
+    async () => {
+      const response = await bridge.request({ type: "get_form_fields" });
+      if (response.type !== "form_fields_response") throw new Error("Unexpected response");
+      const fields = (response as { fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }> }).fields;
+      if (fields.length === 0) {
+        return { content: [{ type: "text", text: "No form fields found on page." }] };
+      }
+      const lines = fields.map(f => {
+        const val = f.value ? ` [currently: "${f.value}"]` : "";
+        return `${f.index}. [${f.type}] "${f.label}"${val} — y:${f.y}`;
+      });
+      return {
+        content: [{ type: "text", text: `Form fields (${fields.length} total, sorted top-to-bottom):\n${lines.join("\n")}` }],
       };
     }
   );
