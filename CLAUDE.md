@@ -96,13 +96,20 @@ use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it
 
 ## Working with complex forms
 - Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory
-  of every field (type, label, current value, vertical position). Use `get_elements()` when
-  you need pixel coordinates of visible elements; use `get_form_fields()` when you need to
-  understand the full structure of a form including fields below the fold.
+  of every field (type, label, current value, vertical position, and section heading). Use
+  `get_elements()` when you need pixel coordinates of visible elements; use `get_form_fields()`
+  when you need to understand the full structure of a form including fields below the fold.
+- `get_form_fields()` includes `[type=file]` fields even when they are visually hidden behind
+  custom drag-and-drop zones. File fields are marked "manual only" — highlight them and ask
+  the user to select the file; they cannot be filled programmatically.
 - `fill_input` works on React-controlled inputs, contenteditable (Stripe, Notion), and
   **CodeMirror 6 editors** — it auto-detects all three. No `execute_script` workaround needed.
+  After filling, `fill_input` reads back the value and warns if React did not accept it.
+- If a form has collapsible sections, expand them all before calling `get_form_fields()` so
+  the field list is complete. Use the `[under: "section name"]` context in each field's entry
+  to identify fields by section rather than by index — indices shift when sections expand.
 - Prefer `scroll_to_element("label text or #selector")` over `scroll_page` whenever you know
-  which field or section you need — it scrolls precisely without guessing pixel amounts.
+  which field or section you need — it scrolls precisely and confirms the matched element.
 - For multi-session tasks (long forms that may exceed context), call `save_page_state()` as a
   checkpoint. A future session can call `restore_page_state()` to reload all field values.
 
@@ -112,6 +119,8 @@ use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it
 - `open_page(url, new_tab=true)` opens a URL without losing the current tab. Use sparingly —
   prefer switching to an existing tab over opening a new one.
 - `switch_to_tab("1")` switches by tab number; `switch_to_tab("form")` matches by URL or title substring.
+- Before navigating away from a partially-filled form, call `save_page_state()` so the form
+  can be restored if the tab reloads or the page loses its state on return.
 
 ## Error handling
 
