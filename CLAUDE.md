@@ -63,7 +63,8 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         [if fails] get_elements()           — get EXACT DOM coords, use these in highlight_region
         highlight_region(x,y,w,h,msg)       — use exact coords from get_elements, not estimates
         [after wait_for_click] get_page_text() — confirm result, NOT take_screenshot
-        [last resort only] take_screenshot() — only if you need to see the visual layout
+        [last resort only] take_screenshot() — returns image to Claude only (no file, no clipboard)
+        take_and_copy_screenshot()          — same as above BUT also saves PNG + copies to clipboard
    d. Pause for the user when needed:
         find_and_highlight(text, msg)        — show the user what to do
         wait_for_click()                    — wait for user interaction

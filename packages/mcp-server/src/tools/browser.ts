@@ -55,7 +55,7 @@ Example: switch_to_tab("1") to go to the first tab, switch_to_tab("form") to fin
 
   server.tool(
     "take_screenshot",
-    "Capture a screenshot ONLY when click_element or fill_input has failed and you need pixel coordinates to call highlight_region. DO NOT use this to check page state, confirm actions, or see what loaded — use get_page_text for all of that.",
+    "Capture a screenshot and return it to Claude only — no file is saved, nothing goes to the clipboard. Use ONLY when you need to visually inspect the page layout or get pixel coordinates for highlight_region. DO NOT use to check page state or confirm actions — use get_page_text for that. To also save or copy the image, use take_and_copy_screenshot instead.",
     {},
     async () => {
       const response = await bridge.request({ type: "screenshot" });
@@ -80,10 +80,10 @@ Example: switch_to_tab("1") to go to the first tab, switch_to_tab("form") to fin
 
   server.tool(
     "take_and_copy_screenshot",
-    `Take a screenshot, copy it to the system clipboard, and save it as a PNG file.
-Use this when you need to share, upload, or keep a screenshot outside of Claude.
-The image is always copied to the clipboard so you can immediately paste it anywhere.
-save_to controls where the file is saved: "downloads" (default) saves to ~/Downloads, "cwd" saves to Claude's current working directory.`,
+    `Take a screenshot, return it to Claude, copy it to the system clipboard, and save it as a PNG file.
+Use this instead of take_screenshot when you need the image outside of Claude — to paste into a chat, upload to a form, or keep as a file.
+Unlike take_screenshot (Claude-only), this also puts the image on the clipboard and saves it to disk.
+save_to controls where the PNG is saved: "downloads" (default) saves to ~/Downloads, "cwd" saves to Claude's current working directory.`,
     {
       save_to: z
         .enum(["downloads", "cwd"])
