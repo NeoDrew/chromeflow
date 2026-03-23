@@ -171,6 +171,9 @@ const CHROMEFLOW_TOOLS = [
   "fill_input", "read_element", "get_page_text", "write_to_env",
   "scroll_page", "click_element", "wait_for_click", "wait_for_selector", "mark_step_done",
   "find_and_highlight", "highlight_region", "show_guide_panel",
+  // v0.1.23+
+  "switch_to_tab", "list_tabs", "get_form_fields", "scroll_to_element",
+  "save_page_state", "restore_page_state",
 ].map((t) => `mcp__chromeflow__${t}`);
 
 function patchSettingsLocalJson(cwd: string) {
@@ -361,17 +364,50 @@ export async function runUninstall() {
   console.log("\nDone. Restart Claude Code to complete removal.\n");
 }
 
+/**
+ * Fetch the latest CLAUDE.md directly from the npm registry (via unpkg CDN).
+ * Falls back to the bundled copy if the network is unavailable.
+ */
+async function fetchLatestClaudeMd(): Promise<string> {
+  try {
+    const res = await fetch("https://unpkg.com/chromeflow@latest/CLAUDE.md");
+    if (res.ok) return await res.text();
+  } catch {
+    // Network unavailable — fall through to bundled copy
+  }
+  return getClaudeMdContent();
+}
+
 export async function runUpdate() {
   const cwd = process.cwd();
   console.log("\nChromeflow Update\n" + "─".repeat(40));
 
-  const mdResult = patchProjectClaudeMd(cwd, true);
-  if (mdResult === "updated") {
-    console.log(`✓ Updated chromeflow instructions in ${join(cwd, "CLAUDE.md")}`);
-  } else if (mdResult === "appended") {
-    console.log(`✓ Appended chromeflow instructions to ${join(cwd, "CLAUDE.md")}`);
+  // Fetch fresh CLAUDE.md from the registry so we're never serving a stale cached copy.
+  const freshContent = await fetchLatestClaudeMd();
+  const claudeMdPath = join(cwd, "CLAUDE.md");
+
+  let mdResult: string;
+  if (existsSync(claudeMdPath)) {
+    const existing = readFileSync(claudeMdPath, "utf8");
+    if (existing.includes("# Chromeflow")) {
+      const before = existing.slice(0, existing.indexOf("# Chromeflow")).trimEnd();
+      writeFileSync(claudeMdPath, (before ? before + "\n\n" : "") + freshContent);
+      mdResult = "updated";
+    } else {
+      writeFileSync(claudeMdPath, existing.trimEnd() + "\n\n" + freshContent);
+      mdResult = "appended";
+    }
   } else {
-    console.log(`✓ Created ${join(cwd, "CLAUDE.md")}`);
+    writeFileSync(claudeMdPath, freshContent);
+    mdResult = "created";
+  }
+
+  if (mdResult === "updated") {
+    console.log(`✓ Updated chromeflow instructions in ${claudeMdPath}`);
+  } else if (mdResult === "appended") {
+    console.log(`✓ Appended chromeflow instructions to ${claudeMdPath}`);
+  } else {
+    console.log(`✓ Created ${claudeMdPath}`);
   }
 
   const settingsResult = patchSettingsLocalJson(cwd);
