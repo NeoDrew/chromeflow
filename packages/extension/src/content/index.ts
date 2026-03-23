@@ -212,6 +212,179 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       return { type: "elements_response", requestId: msg.requestId, elements: results };
     }
 
+    case "get_form_fields": {
+      const fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }> = [];
+      let idx = 0;
+
+      // Standard inputs, textareas, selects
+      const FIELD_SELECTORS = "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select";
+      for (const el of Array.from(document.querySelectorAll<HTMLElement>(FIELD_SELECTORS))) {
+        const s = getComputedStyle(el);
+        if (s.display === "none" || s.visibility === "hidden") continue;
+        const rect = el.getBoundingClientRect();
+
+        // Derive label
+        let label = "";
+        const inputEl = el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+        label = inputEl.getAttribute("placeholder") || inputEl.getAttribute("aria-label") || "";
+        if (!label && el.id) {
+          const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
+          if (lbl) label = (lbl.textContent ?? "").trim();
+        }
+        if (!label) {
+          // Walk up to find a nearby label-like element
+          let node: Element | null = el.parentElement;
+          for (let d = 0; d < 4 && node && node !== document.body; d++) {
+            const heading = node.querySelector("label, h1, h2, h3, h4, h5, legend, [class*='label']");
+            if (heading && heading !== el) { label = (heading.textContent ?? "").trim(); break; }
+            node = node.parentElement;
+          }
+        }
+
+        // Current value
+        let value = "";
+        if (el instanceof HTMLSelectElement) {
+          value = el.options[el.selectedIndex]?.text ?? el.value;
+        } else if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
+          value = el.checked ? "checked" : "unchecked";
+        } else {
+          value = (el as HTMLInputElement | HTMLTextAreaElement).value ?? "";
+        }
+
+        // Unique selector (prefer id, fall back to nth-of-type)
+        const selector = el.id
+          ? `#${el.id}`
+          : `${el.tagName.toLowerCase()}:nth-of-type(${Array.from(document.querySelectorAll(el.tagName)).indexOf(el) + 1})`;
+
+        fields.push({
+          index: ++idx,
+          type: el instanceof HTMLInputElement ? (el.type || "text") : el.tagName.toLowerCase(),
+          label: label.replace(/\s+/g, " ").slice(0, 80),
+          value: value.slice(0, 60),
+          y: Math.round(rect.top + window.scrollY),
+          selector,
+        });
+      }
+
+      // CodeMirror 6 editors
+      for (const editor of Array.from(document.querySelectorAll<HTMLElement>(".cm-editor"))) {
+        const s = getComputedStyle(editor);
+        if (s.display === "none" || s.visibility === "hidden") continue;
+        const rect = editor.getBoundingClientRect();
+
+        let label = editor.getAttribute("aria-label") ?? "";
+        if (!label) {
+          const container = editor.closest("div[class], section, fieldset, li") ?? editor.parentElement;
+          if (container) {
+            const heading = container.querySelector("label, h1, h2, h3, h4, h5, legend, [class*='label']");
+            if (heading) label = (heading.textContent ?? "").trim();
+          }
+        }
+
+        const currentText = (editor.querySelector(".cm-content")?.textContent ?? "").slice(0, 60);
+        fields.push({
+          index: ++idx,
+          type: "codemirror",
+          label: label.replace(/\s+/g, " ").slice(0, 80),
+          value: currentText,
+          y: Math.round(rect.top + window.scrollY),
+          selector: ".cm-editor",
+        });
+      }
+
+      // Sort by vertical position on page
+      fields.sort((a, b) => a.y - b.y);
+      fields.forEach((f, i) => { f.index = i + 1; });
+
+      return { type: "form_fields_response", requestId: msg.requestId, fields };
+    }
+
+    case "scroll_to_element": {
+      const query = (msg.query as string).toLowerCase();
+      let target: Element | null = null;
+
+      // Try as CSS selector first
+      try { target = document.querySelector(msg.query as string); } catch { /* invalid selector */ }
+
+      // Otherwise search by label/text
+      if (!target) {
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>("input, textarea, select, button, [role=button], label, h1, h2, h3, h4, h5, h6"))) {
+          const text = (el.textContent ?? el.getAttribute("aria-label") ?? el.getAttribute("placeholder") ?? "").toLowerCase();
+          if (text.includes(query)) { target = el; break; }
+        }
+      }
+
+      if (!target) return { type: "action_done", requestId: msg.requestId, message: `Element matching "${msg.query}" not found` };
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      return { type: "action_done", requestId: msg.requestId };
+    }
+
+    case "save_page_state": {
+      const state: Array<{ selector: string; type: string; value: string; checked?: boolean }> = [];
+      for (const el of Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input, textarea, select"))) {
+        if (!el.id && !el.name) continue; // skip unadressable elements
+        const selector = el.id ? `#${el.id}` : `[name="${el.name}"]`;
+        if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
+          state.push({ selector, type: el.type, value: el.value, checked: el.checked });
+        } else {
+          const value = (el as HTMLInputElement | HTMLTextAreaElement).value;
+          if (value) state.push({ selector, type: el instanceof HTMLSelectElement ? "select" : el instanceof HTMLTextAreaElement ? "textarea" : (el.type || "text"), value });
+        }
+      }
+      // CodeMirror editors (use index-based selector)
+      document.querySelectorAll<HTMLElement>(".cm-editor").forEach((editor, i) => {
+        const content = editor.querySelector(".cm-content")?.textContent ?? "";
+        if (content.trim()) state.push({ selector: `.cm-editor:nth-of-type(${i + 1})`, type: "codemirror", value: content });
+      });
+      return { type: "save_state_response", requestId: msg.requestId, state };
+    }
+
+    case "restore_page_state": {
+      const stateItems = msg.state as Array<{ selector: string; type: string; value: string; checked?: boolean }>;
+      let restored = 0;
+      for (const item of stateItems) {
+        if (item.type === "codemirror") {
+          // Find the nth .cm-editor by parsing the selector
+          const match = item.selector.match(/:nth-of-type\((\d+)\)/);
+          const n = match ? parseInt(match[1], 10) - 1 : 0;
+          const editors = document.querySelectorAll<HTMLElement>(".cm-editor");
+          const editor = editors[n];
+          if (editor) {
+            const cmContent = editor.querySelector<HTMLElement>(".cm-content");
+            if (cmContent) {
+              cmContent.focus();
+              document.execCommand("selectAll");
+              document.execCommand("insertText", false, item.value);
+              restored++;
+            }
+          }
+          continue;
+        }
+        try {
+          const el = document.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(item.selector);
+          if (!el) continue;
+          if (item.type === "checkbox" || item.type === "radio") {
+            (el as HTMLInputElement).checked = item.checked ?? false;
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+          } else if (el instanceof HTMLSelectElement) {
+            el.value = item.value;
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+          } else {
+            const nativeSetter = Object.getOwnPropertyDescriptor(
+              el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+              "value"
+            )?.set;
+            if (nativeSetter) nativeSetter.call(el, item.value);
+            else (el as HTMLInputElement).value = item.value;
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          restored++;
+        } catch { /* skip bad selectors */ }
+      }
+      return { type: "action_done", requestId: msg.requestId, message: `Restored ${restored} of ${stateItems.length} fields` };
+    }
+
     case "clear": {
       clearAllOverlays();
       return { type: "action_done", requestId: msg.requestId };

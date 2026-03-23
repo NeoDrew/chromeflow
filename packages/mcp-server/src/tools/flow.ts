@@ -114,6 +114,20 @@ to 15 seconds so the page is checked gently rather than hammered every 500ms.`,
   );
 
   server.tool(
+    "scroll_to_element",
+    `Scroll an element into view by CSS selector or label/text match.
+Use this instead of guessing scroll amounts when you know which field or section you need to reach.
+Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address"), scroll_to_element(".cm-editor")`,
+    {
+      query: z.string().describe("CSS selector (e.g. '#my-input', '.section-header') or visible text / label to search for"),
+    },
+    async ({ query }) => {
+      await bridge.request({ type: "scroll_to_element", query });
+      return { content: [{ type: "text", text: `Scrolled to element matching "${query}".` }] };
+    }
+  );
+
+  server.tool(
     "mark_step_done",
     "Mark a step in the guide panel as completed (shows a green check). Call this after wait_for_click resolves.",
     {
