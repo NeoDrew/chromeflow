@@ -1,5 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { writeFileSync, copyFileSync } from "fs";
+import { tmpdir, homedir } from "os";
+import { join } from "path";
+import { execSync } from "child_process";
 import type { WsBridge } from "../ws-bridge.js";
 
 export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
@@ -69,6 +73,54 @@ Example: switch_to_tab("1") to go to the first tab, switch_to_tab("form") to fin
             type: "text",
             text: `Screenshot captured (${response.width}x${response.height}). Analyze the image to identify element positions for highlighting.`,
           },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "take_and_copy_screenshot",
+    `Take a screenshot, copy it to the system clipboard, and save it as a PNG file.
+Use this when you need to share, upload, or keep a screenshot outside of Claude.
+The image is always copied to the clipboard so you can immediately paste it anywhere.
+save_to controls where the file is saved: "downloads" (default) saves to ~/Downloads, "cwd" saves to Claude's current working directory.`,
+    {
+      save_to: z
+        .enum(["downloads", "cwd"])
+        .optional()
+        .describe('Where to save the PNG file: "downloads" (~/Downloads, default) or "cwd" (Claude\'s current working directory)'),
+    },
+    async ({ save_to = "downloads" }) => {
+      const response = await bridge.request({ type: "screenshot" });
+      if (response.type !== "screenshot_response") throw new Error("Unexpected response from extension");
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const filename = `chromeflow-${timestamp}.png`;
+      const imageBuffer = Buffer.from((response as { image: string }).image, "base64");
+
+      // Write to temp file first (needed for osascript clipboard copy)
+      const tmpPath = join(tmpdir(), filename);
+      writeFileSync(tmpPath, imageBuffer);
+
+      // Save to final destination
+      const savePath = save_to === "cwd"
+        ? join(process.cwd(), filename)
+        : join(homedir(), "Downloads", filename);
+      copyFileSync(tmpPath, savePath);
+
+      // Copy to clipboard (macOS via osascript; silent fail on other platforms)
+      let clipboardNote = "";
+      try {
+        execSync(`osascript -e 'set the clipboard to (read (POSIX file "${tmpPath}") as «class PNGf»)'`);
+        clipboardNote = "Copied to clipboard. ";
+      } catch {
+        clipboardNote = "";
+      }
+
+      return {
+        content: [
+          { type: "image", data: (response as { image: string }).image, mimeType: "image/png" },
+          { type: "text", text: `${clipboardNote}Saved to ${savePath}` },
         ],
       };
     }

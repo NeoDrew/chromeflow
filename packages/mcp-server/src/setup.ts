@@ -174,6 +174,8 @@ const CHROMEFLOW_TOOLS = [
   // v0.1.23+
   "switch_to_tab", "list_tabs", "get_form_fields", "scroll_to_element",
   "save_page_state", "restore_page_state",
+  // v0.1.25+
+  "take_and_copy_screenshot",
 ].map((t) => `mcp__chromeflow__${t}`);
 
 function patchSettingsLocalJson(cwd: string) {
