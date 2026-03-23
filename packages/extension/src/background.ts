@@ -203,10 +203,18 @@ async function handleMcpMessage(msg: {
 }): Promise<unknown> {
   switch (msg.type) {
     case "navigate": {
-      const newTab = await chrome.tabs.create({ url: msg.url as string, active: true });
+      let targetTab: chrome.tabs.Tab;
+      if (msg.newTab) {
+        targetTab = await chrome.tabs.create({ url: msg.url as string, active: true });
+      } else {
+        // Reuse active tab
+        const active = await getActiveTab();
+        await chrome.tabs.update(active.id!, { url: msg.url as string });
+        targetTab = { ...active, id: active.id };
+      }
       await new Promise<void>((resolve) => {
         const listener = (id: number, info: chrome.tabs.TabChangeInfo) => {
-          if (id === newTab.id && info.status === "complete") {
+          if (id === targetTab.id && info.status === "complete") {
             chrome.tabs.onUpdated.removeListener(listener);
             resolve();
           }
@@ -215,6 +223,40 @@ async function handleMcpMessage(msg: {
         setTimeout(resolve, 15000);
       });
       return { type: "action_done" };
+    }
+
+    case "switch_to_tab": {
+      const query = (msg.query as string).toLowerCase();
+      const allTabs = await chrome.tabs.query({ currentWindow: true });
+      // Match by 1-based index, URL substring, or title substring
+      const byIndex = parseInt(query, 10);
+      let target: chrome.tabs.Tab | undefined;
+      if (!isNaN(byIndex)) {
+        target = allTabs[byIndex - 1];
+      } else {
+        target = allTabs.find(
+          (t) =>
+            (t.url ?? "").toLowerCase().includes(query) ||
+            (t.title ?? "").toLowerCase().includes(query)
+        );
+      }
+      if (!target?.id) {
+        const list = allTabs.map((t, i) => `${i + 1}. ${t.title} — ${t.url}`).join("\n");
+        throw new Error(`No tab matching "${msg.query}". Open tabs:\n${list}`);
+      }
+      await chrome.tabs.update(target.id, { active: true });
+      return { type: "action_done" };
+    }
+
+    case "list_tabs": {
+      const allTabs = await chrome.tabs.query({ currentWindow: true });
+      const tabs = allTabs.map((t, i) => ({
+        index: i + 1,
+        title: t.title ?? "",
+        url: t.url ?? "",
+        active: t.active ?? false,
+      }));
+      return { type: "tabs_response", tabs };
     }
 
     case "screenshot": {

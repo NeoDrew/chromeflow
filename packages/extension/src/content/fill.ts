@@ -9,7 +9,11 @@ export function fillInput(
 ): { success: boolean; message: string } {
   const lower = textHint.toLowerCase().trim();
 
-  // Try contenteditable elements first (used by Stripe, Notion, etc.)
+  // Try CodeMirror 6 editors first (.cm-editor wrapping a .cm-content div)
+  const cmResult = fillCodeMirror(lower, value);
+  if (cmResult) return cmResult;
+
+  // Try contenteditable elements (used by Stripe, Notion, etc.)
   const editable = findContentEditable(lower);
   if (editable) {
     editable.focus();
@@ -174,6 +178,64 @@ function findInput(lower: string): FillableInput | null {
   }
 
   return null;
+}
+
+/**
+ * Detect and fill a CodeMirror 6 editor matching the hint.
+ * CM6 uses a `.cm-editor` host element containing a `.cm-content` div with role="textbox".
+ * Standard fill_input doesn't work because CM6 is not a native input.
+ */
+function fillCodeMirror(lower: string, value: string): { success: boolean; message: string } | null {
+  const editors = Array.from(document.querySelectorAll<HTMLElement>(".cm-editor"));
+  if (editors.length === 0) return null;
+
+  let targetEditor: HTMLElement | null = null;
+
+  for (const editor of editors) {
+    // Look for a label, heading, or nearby text that matches the hint
+    const container = editor.closest("div, li, tr, fieldset, form, section, [class]") ?? editor.parentElement;
+    if (!container) continue;
+
+    // Check siblings and ancestors for matching label text
+    const containerText = (container.textContent ?? "").toLowerCase();
+    const editorText = (editor.textContent ?? "").toLowerCase();
+    // Hint should appear as a label near this editor, not as the editor's own content
+    if (containerText.includes(lower) && !editorText.includes(lower)) {
+      targetEditor = editor;
+      break;
+    }
+
+    // Check aria-label on editor or cm-content
+    const ariaLabel = (editor.getAttribute("aria-label") ?? editor.querySelector(".cm-content")?.getAttribute("aria-label") ?? "").toLowerCase();
+    if (ariaLabel.includes(lower)) {
+      targetEditor = editor;
+      break;
+    }
+  }
+
+  // If only one editor exists and no label was found, use it when hint is generic
+  if (!targetEditor && editors.length === 1) {
+    targetEditor = editors[0];
+  }
+
+  if (!targetEditor) return null;
+
+  const cmContent = targetEditor.querySelector<HTMLElement>(".cm-content");
+  if (!cmContent) return null;
+
+  // Focus the editor
+  cmContent.focus();
+
+  // Select all existing content and replace via execCommand (works cross-framework)
+  document.execCommand("selectAll");
+  document.execCommand("insertText", false, value);
+
+  // Dispatch events so any listeners pick up the change
+  cmContent.dispatchEvent(new Event("input", { bubbles: true }));
+  cmContent.dispatchEvent(new Event("change", { bubbles: true }));
+  targetEditor.scrollIntoView({ behavior: "smooth", block: "center" });
+
+  return { success: true, message: `Filled CodeMirror editor "${lower}" with value` };
 }
 
 function findContentEditable(lower: string): HTMLElement | null {
