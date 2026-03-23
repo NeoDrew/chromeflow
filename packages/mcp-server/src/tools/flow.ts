@@ -5,7 +5,7 @@ import type { WsBridge } from "../ws-bridge.js";
 export function registerFlowTools(server: McpServer, bridge: WsBridge) {
   server.tool(
     "scroll_page",
-    "Scroll the page or the focused panel up or down. Use this when a button (e.g. Save) is below the visible area of a panel or page. After scrolling, retry click_element.",
+    "Scroll the page or the focused panel up or down. Use this when the target location is unknown. If you know which field or element you need, use scroll_to_element instead — it scrolls precisely without guessing. After scrolling, retry click_element or fill_input.",
     {
       direction: z.enum(["down", "up"]).describe("Scroll direction"),
       amount: z.number().optional().describe("Pixels to scroll (default 400)"),
@@ -129,7 +129,7 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
 
   server.tool(
     "mark_step_done",
-    "Mark a step in the guide panel as completed (shows a green check). Call this after wait_for_click resolves.",
+    "Mark a step in the guide panel as completed (shows a green check). Call this after any step finishes — whether Claude acted autonomously or the user completed a highlighted step via wait_for_click.",
     {
       stepIndex: z.number().int().describe("0-based index of the step to mark done"),
     },
