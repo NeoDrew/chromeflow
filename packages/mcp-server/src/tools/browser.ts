@@ -172,13 +172,14 @@ Unlike get_elements, this includes ALL fields (even far below the fold) and is n
     async () => {
       const response = await bridge.request({ type: "get_form_fields" });
       if (response.type !== "form_fields_response") throw new Error("Unexpected response");
-      const fields = (response as { fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }> }).fields;
+      const fields = (response as { fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string }> }).fields;
       if (fields.length === 0) {
         return { content: [{ type: "text", text: "No form fields found on page." }] };
       }
       const lines = fields.map(f => {
         const val = f.value ? ` [currently: "${f.value}"]` : "";
-        return `${f.index}. [${f.type}] "${f.label}"${val} — y:${f.y}`;
+        const ctx = f.context ? ` [under: "${f.context}"]` : "";
+        return `${f.index}. [${f.type}] "${f.label}"${val}${ctx} — y:${f.y}`;
       });
       return {
         content: [{ type: "text", text: `Form fields (${fields.length} total, sorted top-to-bottom):\n${lines.join("\n")}` }],
