@@ -40,7 +40,7 @@ export function registerHighlightTools(server: McpServer, bridge: WsBridge) {
             type: "text",
             text: response.found
               ? `Element containing "${text}" highlighted.`
-              : `Element containing "${text}" not found. Try take_screenshot to identify the element visually.`,
+              : `Element containing "${text}" not found. Try get_elements() to get exact DOM coordinates, or take_screenshot() only if you need to see the visual layout.`,
           },
         ],
       };
@@ -49,7 +49,7 @@ export function registerHighlightTools(server: McpServer, bridge: WsBridge) {
 
   server.tool(
     "highlight_region",
-    "Highlight a specific pixel region on the page with an instructional callout. Use this after take_screenshot when you can see the element's position.",
+    "Highlight a specific pixel region on the page with an instructional callout. Use the exact coordinates returned by get_elements — do not estimate positions. Only use take_screenshot first if get_elements cannot identify the element.",
     {
       x: z.number().describe("Left edge of the region in CSS pixels"),
       y: z.number().describe("Top edge of the region in CSS pixels"),
