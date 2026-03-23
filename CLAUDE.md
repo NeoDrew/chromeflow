@@ -22,22 +22,13 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
    `scroll_page` then retry, or use `highlight_region` to show the user. Never use
    `osascript`, `applescript`, or any shell command to control the browser.
 
-2. **Use `get_elements` to get pixel coordinates, not `take_screenshot`.** `get_elements`
-   returns exact DOM coordinates (always accurate). `take_screenshot` is a last resort only
-   when you need to SEE the visual layout — not for finding positions. Correct order when
-   `click_element` or `fill_input` fails: try `get_elements` first to get exact coords →
-   then `highlight_region` using those coords. Only use `take_screenshot` if you genuinely
-   need to see what the page looks like. Screenshots now include a red coordinate grid to
-   help read positions — use the grid labels, not visual estimates.
+2. **Never use `take_screenshot` to find element positions or confirm actions.**
+   `get_elements` returns exact DOM coordinates — always use that first. `get_page_text`
+   tells you what happened after an action — always use that before reaching for a screenshot.
+   `take_screenshot` is only for when you genuinely have no idea what the page looks like
+   and DOM queries can't help. It is a last resort, not a routine check.
 
-3. **`open_page` already waits for navigation.** Never call `wait_for_navigation`
-   immediately after `open_page` — it will time out.
-
-4. **When `click_element` fails:** first try `scroll_page(down)` then retry
-   `click_element`. If it still fails, `take_screenshot` and use `highlight_region`
-   with pixel coordinates from the image.
-
-5. **Use `wait_for_selector` to wait for async page changes** (build completion, modals,
+3. **Use `wait_for_selector` to wait for async page changes** (build completion, modals,
    toasts). Never poll with repeated `take_screenshot` calls.
 
 ## Guided flow pattern
@@ -49,27 +40,25 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 3. For each step:
    a. Claude acts directly:
         click_element("Save")               — press buttons/links Claude can press
-        wait_for_selector(".success") or get_page_text() — ALWAYS confirm after click; click_element returns after 600ms regardless of outcome
+        get_page_text() or wait_for_selector(".success") — ALWAYS confirm after click; click_element returns after 600ms regardless of outcome
         fill_input("Product name", "Pro")   — fill fields Claude knows the answer to (works on React, CodeMirror, and contenteditable)
         clear_overlays()                    — call this immediately after fill_input succeeds
-        scroll_page("down")                 — reveal off-screen content then retry
-        scroll_to_element("label text")     — jump directly to a known field instead of guessing pixel scroll amount
+        scroll_to_element("label text")     — jump directly to a known field; prefer this over scroll_page when the target is known
+        scroll_page("down")                 — reveal off-screen content when target location is unknown
    b. Check results with text, not vision:
         get_page_text()                     — read errors/status after actions
         wait_for_selector(".success")       — wait for async changes (builds, modals)
         execute_script("document.title")    — query DOM state programmatically
-   c. When click_element or fill_input fails and you need pixel coords:
-        click_element("Save")               — try this first, ALWAYS
-        [if fails] get_elements()           — get EXACT DOM coords, use these in highlight_region
-        highlight_region(x,y,w,h,msg)       — use exact coords from get_elements, not estimates
-        [after wait_for_click] get_page_text() — confirm result, NOT take_screenshot
-        [last resort only] take_screenshot() — returns image to Claude only (no file, no clipboard)
-        take_and_copy_screenshot()          — same as above BUT also saves PNG + copies to clipboard
+   c. When an element can't be found or clicked:
+        scroll_page("down") and retry      — always try this first
+        get_elements()                      — get EXACT DOM coords, use these in highlight_region
+        highlight_region(x,y,w,h,msg)       — use exact coords from get_elements
+        [absolute last resort] take_screenshot() — only if you genuinely can't identify the element from DOM
    d. Pause for the user when needed:
         find_and_highlight(text, msg)        — show the user what to do
         wait_for_click()                    — wait for user interaction
-        [after wait_for_click + fill_input] clear_overlays() — always clear after filling
-   e. mark_step_done(i)                      — check off the step
+        [after fill_input] clear_overlays() — always clear after filling
+   e. mark_step_done(i)                      — check off the step after it is complete
 4. clear_overlays()                          — clean up when done
 ```
 
@@ -102,24 +91,46 @@ After a secret key or API key is revealed:
 
 Use the absolute path for `envPath` — it's the Claude Code working directory + `/.env`.
 
+To capture and share a screenshot (e.g. for uploading to a form or pasting into a chat),
+use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it to the clipboard.
+
 ## Working with complex forms
-- Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory of every field (type, label, current value, vertical position). This prevents missing fields and avoids positional guesswork.
-- `fill_input` works on React-controlled inputs, contenteditable (Stripe, Notion), and **CodeMirror 6 editors** — it auto-detects all three. No `execute_script` workaround needed.
-- `scroll_to_element("label text or #selector")` scrolls a specific field into view without guessing pixel offsets.
-- For multi-session tasks (long forms that may exceed context), call `save_page_state()` as a checkpoint. A future session can call `restore_page_state()` to reload all field values from the saved snapshot.
+- Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory
+  of every field (type, label, current value, vertical position). Use `get_elements()` when
+  you need pixel coordinates of visible elements; use `get_form_fields()` when you need to
+  understand the full structure of a form including fields below the fold.
+- `fill_input` works on React-controlled inputs, contenteditable (Stripe, Notion), and
+  **CodeMirror 6 editors** — it auto-detects all three. No `execute_script` workaround needed.
+- Prefer `scroll_to_element("label text or #selector")` over `scroll_page` whenever you know
+  which field or section you need — it scrolls precisely without guessing pixel amounts.
+- For multi-session tasks (long forms that may exceed context), call `save_page_state()` as a
+  checkpoint. A future session can call `restore_page_state()` to reload all field values.
 
 ## Working with multiple tabs
-- Before opening a new tab, call `list_tabs()` to check if the target URL is already open — use `switch_to_tab` to return to it instead of opening a duplicate.
-- `open_page(url, new_tab=true)` opens a URL without losing the current tab. Use sparingly — prefer switching to an existing tab over opening a new one.
+- Before opening a new tab, call `list_tabs()` to check if the target URL is already open —
+  use `switch_to_tab` to return to it instead of opening a duplicate.
+- `open_page(url, new_tab=true)` opens a URL without losing the current tab. Use sparingly —
+  prefer switching to an existing tab over opening a new one.
 - `switch_to_tab("1")` switches by tab number; `switch_to_tab("form")` matches by URL or title substring.
-- `list_tabs()` shows all open tabs with their index, title, and URL.
 
 ## Error handling
-- After any action → `get_page_text()` to check for errors (not `take_screenshot`)
-- After `click_element("Save")` / form submission → use `get_page_text()` or `wait_for_selector` to confirm. Never use `wait_for_navigation` — most form saves don't navigate.
-- After `click_element` → always confirm with `wait_for_selector(".selector")` or `get_page_text()`. `click_element` returns success after 600ms even if the action had no effect.
-- `click_element` not found → `scroll_page("down")` then retry
-- Still not found → `get_elements()` to get exact coords, then `highlight_region(x,y,w,h,msg)` using those coords. Only use `take_screenshot()` if you need to visually inspect the page.
-- `fill_input` not found → `click_element(hint)` to focus the field, then retry `fill_input`. If still failing, use `find_and_highlight(hint, "Click here — I'll fill it in")` (NO `valueToType`) then `wait_for_click()` then retry `fill_input` — after the user focuses the field by clicking, the active-element fallback fills it automatically. `find_and_highlight` uses DOM positioning (pixel-perfect) — only fall back to `take_screenshot` + `highlight_region` if `find_and_highlight` returns false. After `fill_input` succeeds, immediately call `clear_overlays()` to remove the highlight. Only use `valueToType` when the user genuinely must type the value themselves (e.g. password, personal data).
-- Waiting for async result (build, save, deploy) → `wait_for_selector(selector, timeout)`
-- Never use Bash to work around a stuck browser interaction
+
+**After any action**, confirm with `get_page_text()` or `wait_for_selector` — never take a
+screenshot to check what happened.
+
+**`click_element` not found:**
+1. `scroll_page("down")` then retry `click_element`
+2. `get_elements()` to get exact coords → `highlight_region(x,y,w,h,msg)`
+3. `take_screenshot()` only if you still can't identify the element from DOM queries
+
+**`fill_input` not found:**
+1. `click_element(hint)` to focus the field, then retry `fill_input`
+2. `find_and_highlight(hint, "Click here — I'll fill it in")` (no `valueToType`) then
+   `wait_for_click()` — the user's click focuses the field and `fill_input`'s active-element
+   fallback fills it automatically
+3. Call `clear_overlays()` after `fill_input` succeeds
+4. Only use `valueToType` when the user must personally type the value (password, personal data)
+
+**Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots.
+
+**Never use Bash to work around a stuck browser interaction.**
