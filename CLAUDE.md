@@ -109,9 +109,10 @@ Use the absolute path for `envPath` — it's the Claude Code working directory +
 - For multi-session tasks (long forms that may exceed context), call `save_page_state()` as a checkpoint. A future session can call `restore_page_state()` to reload all field values from the saved snapshot.
 
 ## Working with multiple tabs
-- `open_page(url, new_tab=true)` opens a URL without losing the current tab.
-- `list_tabs()` shows all open tabs with their index, title, and URL.
+- Before opening a new tab, call `list_tabs()` to check if the target URL is already open — use `switch_to_tab` to return to it instead of opening a duplicate.
+- `open_page(url, new_tab=true)` opens a URL without losing the current tab. Use sparingly — prefer switching to an existing tab over opening a new one.
 - `switch_to_tab("1")` switches by tab number; `switch_to_tab("form")` matches by URL or title substring.
+- `list_tabs()` shows all open tabs with their index, title, and URL.
 
 ## Error handling
 - After any action → `get_page_text()` to check for errors (not `take_screenshot`)
