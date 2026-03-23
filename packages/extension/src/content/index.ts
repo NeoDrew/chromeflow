@@ -323,9 +323,14 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       const state: Array<{ selector: string; type: string; value: string; checked?: boolean }> = [];
       for (const el of Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input, textarea, select"))) {
         if (!el.id && !el.name) continue; // skip unadressable elements
-        const selector = el.id ? `#${el.id}` : `[name="${el.name}"]`;
-        if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
-          state.push({ selector, type: el.type, value: el.value, checked: el.checked });
+        const isCheckable = el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio");
+        const selector = el.id
+          ? `#${el.id}`
+          : isCheckable
+          ? `[name="${el.name}"][value="${(el as HTMLInputElement).value}"]`
+          : `[name="${el.name}"]`;
+        if (isCheckable) {
+          state.push({ selector, type: (el as HTMLInputElement).type, value: (el as HTMLInputElement).value, checked: (el as HTMLInputElement).checked });
         } else {
           const value = (el as HTMLInputElement | HTMLTextAreaElement).value;
           if (value) state.push({ selector, type: el instanceof HTMLSelectElement ? "select" : el instanceof HTMLTextAreaElement ? "textarea" : (el.type || "text"), value });
