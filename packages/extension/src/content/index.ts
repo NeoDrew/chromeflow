@@ -51,11 +51,30 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "highlight_region": {
       clearAllOverlays();
+      let x = msg.x as number | undefined;
+      let y = msg.y as number | undefined;
+      let width = msg.width as number | undefined;
+      let height = msg.height as number | undefined;
+
+      // If a selector is provided, resolve coordinates from the DOM
+      if (msg.selector) {
+        const el = document.querySelector<HTMLElement>(msg.selector as string);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          const rect = el.getBoundingClientRect();
+          x = Math.round(rect.left);
+          y = Math.round(rect.top);
+          width = Math.round(rect.width);
+          height = Math.round(rect.height);
+        }
+      }
+
+      if (x == null || y == null || width == null || height == null) {
+        return { type: "action_done", requestId: msg.requestId, message: "Element not found for selector" };
+      }
+
       renderHighlight({
-        x: msg.x as number,
-        y: msg.y as number,
-        width: msg.width as number,
-        height: msg.height as number,
+        x, y, width, height,
         message: msg.message as string,
         valueToType: msg.valueToType as string | undefined,
       });
@@ -340,7 +359,21 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       fields.sort((a, b) => a.y - b.y);
       fields.forEach((f, i) => { f.index = i + 1; });
 
-      return { type: "form_fields_response", requestId: msg.requestId, fields };
+      // Warn about conditionally-hidden fields that could appear after user interaction
+      // (e.g. fields revealed by clicking a radio button or checkbox)
+      const hiddenFields = Array.from(document.querySelectorAll<HTMLElement>(
+        "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select"
+      )).filter(el => {
+        const s = getComputedStyle(el);
+        return s.display === "none" || s.visibility === "hidden" || el.getAttribute("aria-hidden") === "true";
+      });
+
+      let warning = "";
+      if (hiddenFields.length > 0) {
+        warning = `\n\n⚠ ${hiddenFields.length} hidden field(s) not shown above — they may appear after you interact with radio buttons, checkboxes, or toggles. Call get_form_fields() again after any such interaction to get an updated inventory.`;
+      }
+
+      return { type: "form_fields_response", requestId: msg.requestId, fields, warning };
     }
 
     case "scroll_to_element": {
@@ -445,6 +478,19 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         } catch { /* skip bad selectors */ }
       }
       return { type: "action_done", requestId: msg.requestId, message: `Restored ${restored} of ${stateItems.length} fields` };
+    }
+
+    case "fill_form": {
+      const formFields = msg.fields as Array<{ label: string; value: string }>;
+      const results: Array<{ label: string; success: boolean; message: string }> = [];
+      for (const field of formFields) {
+        const result = fillInput(field.label, field.value);
+        results.push({ label: field.label, success: result.success, message: result.message });
+        // Brief pause between fills so React can process each change event
+        await new Promise((r) => setTimeout(r, 80));
+      }
+      const succeeded = results.filter((r) => r.success).length;
+      return { type: "fill_form_response", requestId: msg.requestId, results, succeeded, total: formFields.length };
     }
 
     case "clear": {
