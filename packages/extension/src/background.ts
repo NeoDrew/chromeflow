@@ -54,27 +54,6 @@ chrome.runtime.onStartup.addListener(async () => { await ensureOffscreen(); });
 // ─── Inbound messages ──────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg.source === "chromeflow-popup") {
-    (async () => {
-      if (msg.type === "set_claude_window") {
-        await chrome.storage.local.set({ claudeWindowId: msg.windowId });
-        sendResponse({ ok: true });
-      } else if (msg.type === "clear_claude_window") {
-        await chrome.storage.local.remove("claudeWindowId");
-        sendResponse({ ok: true });
-      } else if (msg.type === "get_claude_window") {
-        // Verify the stored windowId is still valid
-        let validId: number | null = claudeWindowId;
-        if (validId) {
-          try { await chrome.windows.get(validId); }
-          catch { await chrome.storage.local.remove("claudeWindowId"); validId = null; }
-        }
-        sendResponse({ windowId: validId });
-      }
-    })();
-    return true;
-  }
-
   if (msg.source === "chromeflow-offscreen") {
     handleMcpMessage(msg.payload)
       .then((result) => sendResponse({ ok: true, result }))
