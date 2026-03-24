@@ -27,26 +27,30 @@ try {
 }
 
 // ─── Window assignment ──────────────────────────────────────────────────────
+// Read/write chrome.storage.local directly — no background roundtrip needed.
 
 async function refreshWindowStatus() {
-  const { windowId } = await chrome.runtime.sendMessage({
-    source: "chromeflow-popup",
-    type: "get_claude_window",
-  }) as { windowId: number | null };
-
   const currentWindow = await chrome.windows.getCurrent();
+  const { claudeWindowId } = await chrome.storage.local.get("claudeWindowId");
 
-  if (windowId) {
-    const isThisWindow = windowId === currentWindow.id;
+  // Validate stored windowId is still open
+  let assignedId: number | null = claudeWindowId ?? null;
+  if (assignedId) {
+    try { await chrome.windows.get(assignedId); }
+    catch { await chrome.storage.local.remove("claudeWindowId"); assignedId = null; }
+  }
+
+  if (assignedId) {
+    const isThisWindow = assignedId === currentWindow.id;
     windowStatus.className = "window-status assigned";
     windowStatus.textContent = isThisWindow
       ? "✓ This window is assigned"
-      : `Assigned to window #${windowId} (not this one)`;
+      : `Assigned to window #${assignedId} (not this one)`;
     btnSet.textContent = isThisWindow ? "Reassign to this window" : "Use this window instead";
     btnClear.style.display = "block";
   } else {
     windowStatus.className = "window-status";
-    windowStatus.textContent = "No window assigned — Claude uses whichever window is active";
+    windowStatus.textContent = "No window assigned";
     btnSet.textContent = "Use this window for Claude";
     btnClear.style.display = "none";
   }
@@ -54,19 +58,12 @@ async function refreshWindowStatus() {
 
 btnSet.addEventListener("click", async () => {
   const currentWindow = await chrome.windows.getCurrent();
-  await chrome.runtime.sendMessage({
-    source: "chromeflow-popup",
-    type: "set_claude_window",
-    windowId: currentWindow.id,
-  });
+  await chrome.storage.local.set({ claudeWindowId: currentWindow.id });
   await refreshWindowStatus();
 });
 
 btnClear.addEventListener("click", async () => {
-  await chrome.runtime.sendMessage({
-    source: "chromeflow-popup",
-    type: "clear_claude_window",
-  });
+  await chrome.storage.local.remove("claudeWindowId");
   await refreshWindowStatus();
 });
 
