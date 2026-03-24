@@ -41,8 +41,9 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
    a. Claude acts directly:
         click_element("Save")               — press buttons/links Claude can press
         get_page_text() or wait_for_selector(".success") — ALWAYS confirm after click; click_element returns after 600ms regardless of outcome
-        fill_input("Product name", "Pro")   — fill fields Claude knows the answer to (works on React, CodeMirror, and contenteditable)
-        clear_overlays()                    — call this immediately after fill_input succeeds
+        fill_form([{label, value}, ...])    — fill multiple fields in one call; prefer over repeated fill_input
+        fill_input("Product name", "Pro")   — fill a single field (works on React, CodeMirror, and contenteditable)
+        clear_overlays()                    — call this immediately after fill_input/fill_form succeeds
         scroll_to_element("label text")     — jump directly to a known field; prefer this over scroll_page when the target is known
         scroll_page("down")                 — reveal off-screen content when target location is unknown
    b. Check results with text, not vision:
@@ -51,8 +52,9 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         execute_script("document.title")    — query DOM state programmatically
    c. When an element can't be found or clicked:
         scroll_page("down") and retry      — always try this first
-        get_elements()                      — get EXACT DOM coords, use these in highlight_region
-        highlight_region(x,y,w,h,msg)       — use exact coords from get_elements
+        get_elements()                      — get EXACT DOM coords when needed
+        highlight_region(selector,msg)      — highlight by CSS selector (preferred; scrolls element into view automatically)
+        highlight_region(x,y,w,h,msg)       — highlight by coords only if no selector available (coords go stale on scroll)
         [absolute last resort] take_screenshot() — only if you genuinely can't identify the element from DOM
    d. Pause for the user when needed:
         find_and_highlight(text, msg)        — show the user what to do
@@ -96,13 +98,25 @@ use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it
 
 ## Working with complex forms
 - Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory
-  of every field (type, label, current value, vertical position). Use `get_elements()` when
-  you need pixel coordinates of visible elements; use `get_form_fields()` when you need to
-  understand the full structure of a form including fields below the fold.
-- `fill_input` works on React-controlled inputs, contenteditable (Stripe, Notion), and
-  **CodeMirror 6 editors** — it auto-detects all three. No `execute_script` workaround needed.
+  of every field (type, label, current value, vertical position, and section heading). Use
+  `get_elements()` when you need pixel coordinates of visible elements; use `get_form_fields()`
+  when you need to understand the full structure of a form including fields below the fold.
+- `get_form_fields()` includes `[type=file]` fields even when they are visually hidden behind
+  custom drag-and-drop zones. File fields are marked "manual only" — highlight them and ask
+  the user to select the file; they cannot be filled programmatically.
+- For forms with multiple fields, use `fill_form([{label, value}, ...])` to fill them all
+  in a single call. It returns a per-field success/failure report so you can immediately see
+  which fields weren't found. Use `fill_input` only for a single field.
+- `fill_input` and `fill_form` work on React-controlled inputs, contenteditable (Stripe,
+  Notion), and **CodeMirror 6 editors** — auto-detected. After filling, the value is read
+  back and a warning is shown if React did not accept it.
+- After any radio/checkbox click that reveals new fields, call `get_form_fields()` again —
+  the inventory will include the new fields and warn if more hidden ones still exist.
+- If a form has collapsible sections, expand them all before calling `get_form_fields()` so
+  the field list is complete. Use the `[under: "section name"]` context in each field's entry
+  to identify fields by section rather than by index — indices shift when sections expand.
 - Prefer `scroll_to_element("label text or #selector")` over `scroll_page` whenever you know
-  which field or section you need — it scrolls precisely without guessing pixel amounts.
+  which field or section you need — it scrolls precisely and confirms the matched element.
 - For multi-session tasks (long forms that may exceed context), call `save_page_state()` as a
   checkpoint. A future session can call `restore_page_state()` to reload all field values.
 
@@ -112,6 +126,8 @@ use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it
 - `open_page(url, new_tab=true)` opens a URL without losing the current tab. Use sparingly —
   prefer switching to an existing tab over opening a new one.
 - `switch_to_tab("1")` switches by tab number; `switch_to_tab("form")` matches by URL or title substring.
+- Before navigating away from a partially-filled form, call `save_page_state()` so the form
+  can be restored if the tab reloads or the page loses its state on return.
 
 ## Error handling
 
