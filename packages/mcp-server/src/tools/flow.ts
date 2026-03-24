@@ -122,8 +122,36 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
       query: z.string().describe("CSS selector (e.g. '#my-input', '.section-header') or visible text / label to search for"),
     },
     async ({ query }) => {
-      await bridge.request({ type: "scroll_to_element", query });
-      return { content: [{ type: "text", text: `Scrolled to element matching "${query}".` }] };
+      const response = await bridge.request({ type: "scroll_to_element", query });
+      const msg = (response as { message?: string }).message ?? `Scrolled to element matching "${query}".`;
+      return { content: [{ type: "text", text: msg }] };
+    }
+  );
+
+  server.tool(
+    "fill_form",
+    `Fill multiple form fields in a single call by targeting each field by its label text.
+Use this instead of calling fill_input repeatedly — it fills all fields in one round trip and returns a per-field success report.
+Ideal for forms with many textareas or inputs where each fill would otherwise require a separate tool call.
+fields is an array of {label, value} pairs. label should match the field's visible label, placeholder, or aria-label.`,
+    {
+      fields: z.array(
+        z.object({
+          label: z.string().describe("Visible label, placeholder, or aria-label of the field"),
+          value: z.string().describe("Value to fill in"),
+        })
+      ).describe("List of fields to fill"),
+    },
+    async ({ fields }) => {
+      const response = await bridge.request({ type: "fill_form", fields });
+      const r = response as { results: Array<{ label: string; success: boolean; message: string }>; succeeded: number; total: number };
+      const lines = r.results.map(f => `${f.success ? "✓" : "✗"} "${f.label}": ${f.message}`);
+      return {
+        content: [{
+          type: "text",
+          text: `Filled ${r.succeeded}/${r.total} fields:\n${lines.join("\n")}`,
+        }],
+      };
     }
   );
 

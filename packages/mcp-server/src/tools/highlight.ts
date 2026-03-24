@@ -49,12 +49,15 @@ export function registerHighlightTools(server: McpServer, bridge: WsBridge) {
 
   server.tool(
     "highlight_region",
-    "Highlight a specific pixel region on the page with an instructional callout. Use the exact coordinates returned by get_elements — do not estimate positions. Only use take_screenshot first if get_elements cannot identify the element.",
+    `Highlight a region on the page with an instructional callout.
+Prefer passing a CSS selector — the extension will find the element, scroll it into view, and highlight its exact bounds automatically. This is more robust than pixel coordinates, which go stale if the user scrolls.
+Only pass x/y/width/height when you have no selector and already have fresh coordinates from get_elements.`,
     {
-      x: z.number().describe("Left edge of the region in CSS pixels"),
-      y: z.number().describe("Top edge of the region in CSS pixels"),
-      width: z.number().describe("Width of the region in CSS pixels"),
-      height: z.number().describe("Height of the region in CSS pixels"),
+      selector: z.string().optional().describe("CSS selector of the element to highlight (e.g. '#upload-zone', '.drop-area'). Preferred over raw coordinates."),
+      x: z.number().optional().describe("Left edge in CSS pixels — only needed if no selector"),
+      y: z.number().optional().describe("Top edge in CSS pixels — only needed if no selector"),
+      width: z.number().optional().describe("Width in CSS pixels — only needed if no selector"),
+      height: z.number().optional().describe("Height in CSS pixels — only needed if no selector"),
       message: z
         .string()
         .describe(
@@ -67,13 +70,15 @@ export function registerHighlightTools(server: McpServer, bridge: WsBridge) {
           "Only use when the user must personally type the value (password, email, personal data). Do NOT use when Claude will auto-fill after the click — in that case, omit this and use message: \"Click here — I'll fill it in\"."
         ),
     },
-    async ({ x, y, width, height, message, valueToType }) => {
-      await bridge.request({ type: "highlight_region", x, y, width, height, message, valueToType });
+    async ({ selector, x, y, width, height, message, valueToType }) => {
+      await bridge.request({ type: "highlight_region", selector, x, y, width, height, message, valueToType });
       return {
         content: [
           {
             type: "text",
-            text: `Region highlighted at (${x}, ${y}) ${width}×${height}.`,
+            text: selector
+              ? `Highlighted element matching "${selector}".`
+              : `Region highlighted at (${x ?? 0}, ${y ?? 0}) ${width ?? 0}×${height ?? 0}.`,
           },
         ],
       };

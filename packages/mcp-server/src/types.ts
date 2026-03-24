@@ -12,10 +12,11 @@ export type ServerMessage =
   | {
       type: "highlight_region";
       requestId: string;
-      x: number;
-      y: number;
-      width: number;
-      height: number;
+      selector?: string;
+      x?: number;
+      y?: number;
+      width?: number;
+      height?: number;
       message: string;
       valueToType?: string;
     }
@@ -41,7 +42,8 @@ export type ServerMessage =
   | { type: "scroll_to_element"; requestId: string; query: string }
   | { type: "save_page_state"; requestId: string }
   | { type: "restore_page_state"; requestId: string; state: PageFieldState[] }
-  | { type: "list_tabs"; requestId: string };
+  | { type: "list_tabs"; requestId: string }
+  | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }> };
 
 export type PageFieldState = {
   selector: string;
@@ -73,4 +75,5 @@ export type ClientMessage =
   | { type: "elements_response"; requestId: string; elements: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> }
   | { type: "form_fields_response"; requestId: string; fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }> }
   | { type: "save_state_response"; requestId: string; state: PageFieldState[] }
-  | { type: "tabs_response"; requestId: string; tabs: Array<{ index: number; title: string; url: string; active: boolean }> };
+  | { type: "tabs_response"; requestId: string; tabs: Array<{ index: number; title: string; url: string; active: boolean }> }
+  | { type: "fill_form_response"; requestId: string; results: Array<{ label: string; success: boolean; message: string }>; succeeded: number; total: number };

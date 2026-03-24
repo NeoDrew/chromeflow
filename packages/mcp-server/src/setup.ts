@@ -176,6 +176,8 @@ const CHROMEFLOW_TOOLS = [
   "save_page_state", "restore_page_state",
   // v0.1.25+
   "take_and_copy_screenshot",
+  // v0.1.32+
+  "fill_form",
 ].map((t) => `mcp__chromeflow__${t}`);
 
 function patchSettingsLocalJson(cwd: string) {

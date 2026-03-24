@@ -27,11 +27,17 @@ export function clickElement(
   }
 
   const label =
-    (el as HTMLElement).innerText?.trim().slice(0, 40) ||
+    (el as HTMLElement).innerText?.trim() ||
     el.getAttribute("aria-label") ||
     textHint;
 
-  return { success: true, message: `Clicked "${label}"` };
+  // For radio buttons and checkboxes, confirm the new checked state
+  let stateNote = "";
+  if (el instanceof HTMLInputElement && (el.type === "radio" || el.type === "checkbox")) {
+    stateNote = ` — now ${el.checked ? "checked" : "unchecked"}`;
+  }
+
+  return { success: true, message: `Clicked "${label}"${stateNote}` };
 }
 
 /**
