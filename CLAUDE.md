@@ -22,11 +22,11 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
    `scroll_page` then retry, or use `highlight_region` to show the user. Never use
    `osascript`, `applescript`, or any shell command to control the browser.
 
-2. **Never use `take_screenshot` to find element positions or confirm actions.**
-   `get_elements` returns exact DOM coordinates — always use that first. `get_page_text`
-   tells you what happened after an action — always use that before reaching for a screenshot.
-   `take_screenshot` is only for when you genuinely have no idea what the page looks like
-   and DOM queries can't help. It is a last resort, not a routine check.
+2. **Never use `take_screenshot` to read page content.** After `scroll_page`, after
+   `click_element`, after navigation — always call `get_page_text`, not `take_screenshot`.
+   `get_page_text` returns up to 20,000 characters; if truncated it tells you the next
+   `startIndex` to paginate. Screenshots are only for locating an element's pixel position
+   when DOM queries have already failed. Never take more than 1–2 screenshots in a row.
 
 3. **Use `wait_for_selector` to wait for async page changes** (build completion, modals,
    toasts). Never poll with repeated `take_screenshot` calls.

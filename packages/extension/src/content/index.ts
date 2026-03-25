@@ -151,6 +151,8 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "get_page_text": {
       const selector = msg.selector as string | undefined;
+      const startIndex = (msg.startIndex as number | undefined) ?? 0;
+      const chunkSize = 20000;
       let root: Element;
       let selectorMissed = false;
       if (selector) {
@@ -174,7 +176,11 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       if (selectorMissed) {
         text = `[Warning: selector "${selector}" not found — returning full page text]\n\n` + text;
       }
-      if (text.length > 4000) text = text.slice(0, 4000) + "\n... (truncated)";
+      const totalLength = text.length;
+      text = text.slice(startIndex, startIndex + chunkSize);
+      if (startIndex + chunkSize < totalLength) {
+        text += `\n\n... (${totalLength - startIndex - chunkSize} more characters — call get_page_text with startIndex=${startIndex + chunkSize} to continue)`;
+      }
       return { type: "page_text_response", requestId: msg.requestId, text };
     }
 
