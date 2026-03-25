@@ -72,7 +72,8 @@ After filling, call wait_for_click only if the user needs to review/confirm; oth
     "get_page_text",
     `Get the visible text content of the current page without taking a screenshot.
 Use this instead of take_screenshot whenever you need to read what's on the page — errors, build status, form labels, confirmation messages, etc.
-Only use take_screenshot when you need to locate an element's pixel position for highlight_region.`,
+Returns up to 20,000 characters at a time. If the response ends with "... (N more characters)", call again with startIndex to read the next chunk.
+Never use take_screenshot just to read page content — paginate with startIndex instead.`,
     {
       selector: z
         .string()
@@ -80,9 +81,15 @@ Only use take_screenshot when you need to locate an element's pixel position for
         .describe(
           "CSS selector to scope the extraction (e.g. 'main', '.error-toast', '[data-testid=\"status\"]'). Omit to auto-extract from the main content area."
         ),
+      startIndex: z
+        .number()
+        .optional()
+        .describe(
+          "Character offset to start from. Use this to read past the first 20,000 characters — the response will tell you the next startIndex when more content exists."
+        ),
     },
-    async ({ selector }) => {
-      const response = await bridge.request({ type: "get_page_text", selector });
+    async ({ selector, startIndex }) => {
+      const response = await bridge.request({ type: "get_page_text", selector, startIndex });
       if (response.type !== "page_text_response") throw new Error("Unexpected response");
       const text = (response as { text: string }).text;
       return {
