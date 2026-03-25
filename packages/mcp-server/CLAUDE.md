@@ -149,4 +149,38 @@ screenshot to check what happened.
 
 **Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots.
 
+**React Select / custom styled dropdowns** (e.g. "Select..." components on DataAnnotation):
+`click_element` and `fill_input` do NOT work on these — they intercept native events. Use
+`execute_script` directly:
+
+```js
+// 1. Open the menu — click the control div (filter by pageY if multiple)
+var controls = document.querySelectorAll('[class*="control"]');
+controls[N].click();
+
+// 2. Pick an option by exact text
+var allEls = document.querySelectorAll('*');
+for (var i = 0; i < allEls.length; i++) {
+  if (allEls[i].textContent.trim() === 'Target Option' && allEls[i].children.length === 0) {
+    allEls[i].dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+    allEls[i].click();
+    break;
+  }
+}
+
+// 3. Verify
+controls[N].textContent.trim(); // should show selected value
+```
+
+**Page content rendered as images** (e.g. qualification "Examples" tabs that show PNG screenshots
+instead of DOM text): `get_page_text()` returns nothing useful. Zoom out and screenshot instead:
+
+```js
+// Shrink to fit wide content, then screenshot
+document.body.style.zoom = '0.4';
+// use take_and_copy_screenshot() to read it
+// restore afterward:
+document.body.style.zoom = '1';
+```
+
 **Never use Bash to work around a stuck browser interaction.**
