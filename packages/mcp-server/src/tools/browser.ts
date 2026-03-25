@@ -9,7 +9,7 @@ import type { WsBridge } from "../ws-bridge.js";
 export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
   server.tool(
     "open_page",
-    "Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it.",
+    "Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it. After navigating, call get_page_text to read the page — do NOT take a screenshot.",
     {
       url: z.string().url().describe("The URL to navigate to"),
       new_tab: z.boolean().optional().describe("Open in a new tab instead of replacing the current one (default false)"),
@@ -55,7 +55,7 @@ Example: switch_to_tab("1") to go to the first tab, switch_to_tab("form") to fin
 
   server.tool(
     "take_screenshot",
-    "Capture a screenshot and return it to Claude only — no file is saved, nothing goes to the clipboard. Use ONLY when you need to visually inspect the page layout or get pixel coordinates for highlight_region. DO NOT use to check page state or confirm actions — use get_page_text for that. To also save or copy the image, use take_and_copy_screenshot instead.",
+    "Capture a screenshot of the current page. IMPORTANT: Do NOT use this to read page content or check what is on the page — call get_page_text instead, which is faster and returns searchable text. Screenshots are ONLY for locating a specific element's pixel coordinates when get_elements has already failed. Never take a screenshot immediately after open_page, scroll_page, or click_element — always use get_page_text after those actions. Never take more than 1-2 screenshots in a row. To also save or copy the image, use take_and_copy_screenshot instead.",
     {},
     async () => {
       const response = await bridge.request({ type: "screenshot" });
