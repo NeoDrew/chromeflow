@@ -5,7 +5,7 @@ import type { WsBridge } from "../ws-bridge.js";
 export function registerFlowTools(server: McpServer, bridge: WsBridge) {
   server.tool(
     "scroll_page",
-    "Scroll the page or the focused panel up or down. Use this when the target location is unknown. If you know which field or element you need, use scroll_to_element instead — it scrolls precisely without guessing. After scrolling, retry click_element or fill_input.",
+    "Scroll the page or the focused panel up or down. Use this when the target location is unknown. If you know which field or element you need, use scroll_to_element instead — it scrolls precisely without guessing. After scrolling, call get_page_text to read the new content — NEVER call take_screenshot after scrolling.",
     {
       direction: z.enum(["down", "up"]).describe("Scroll direction"),
       amount: z.number().optional().describe("Pixels to scroll (default 400)"),
