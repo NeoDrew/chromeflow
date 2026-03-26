@@ -511,6 +511,51 @@ async function handleMcpMessage(msg: {
       return { type: "click_element_response", success: true, message };
     }
 
+    case "set_file_input": {
+      const tab = await getActiveTab();
+
+      // Ask content script to find and tag the file input
+      const tagResult = await forwardToContentScript(tab, {
+        type: "tag_file_input",
+        requestId: msg.requestId,
+        hint: msg.hint,
+      }) as { found: boolean; message?: string };
+
+      if (!tagResult.found) {
+        return { type: "action_done", requestId: msg.requestId, success: false, message: tagResult.message ?? "No file input found" };
+      }
+
+      const tabId = tab.id!;
+
+      // Use Chrome DevTools Protocol to set the file — the only way to bypass
+      // the browser's script restriction on file inputs.
+      await (chrome.debugger as any).attach({ tabId }, "1.3");
+      try {
+        const { root } = await (chrome.debugger as any).sendCommand({ tabId }, "DOM.getDocument", {}) as { root: { nodeId: number } };
+        const { nodeId } = await (chrome.debugger as any).sendCommand({ tabId }, "DOM.querySelector", {
+          nodeId: root.nodeId,
+          selector: '[data-chromeflow-file-target="true"]',
+        }) as { nodeId: number };
+
+        if (!nodeId) throw new Error("Could not locate tagged file input via CDP");
+
+        await (chrome.debugger as any).sendCommand({ tabId }, "DOM.setFileInputFiles", {
+          nodeId,
+          files: [msg.filePath],
+        });
+      } finally {
+        await (chrome.debugger as any).detach({ tabId }).catch(() => {});
+        // Clean up the tag regardless of success/failure
+        await forwardToContentScript(tab, {
+          type: "untag_file_input",
+          requestId: msg.requestId,
+        }).catch(() => {});
+      }
+
+      const filename = (msg.filePath as string).split("/").pop();
+      return { type: "action_done", requestId: msg.requestId, success: true, message: `File "${filename}" set on input` };
+    }
+
     default: {
       // Intercept show_panel to persist its state for re-injection on new pages
       if (msg.type === "show_panel") {

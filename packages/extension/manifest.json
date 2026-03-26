@@ -9,7 +9,8 @@
     "scripting",
     "offscreen",
     "storage",
-    "windows"
+    "windows",
+    "debugger"
   ],
   "host_permissions": [
     "<all_urls>"

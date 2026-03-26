@@ -189,6 +189,26 @@ Unlike get_elements, this includes ALL fields (even far below the fold) and is n
   );
 
   server.tool(
+    "set_file_input",
+    `Upload a file to a file input field. Works even when the input is visually hidden behind a custom drag-and-drop zone.
+Uses Chrome DevTools Protocol to set the file — the only way to bypass the browser's file-input script restriction.
+hint: label text or name of the file input (or empty string to target the first file input on the page).
+file_path: absolute path to the file on the local filesystem (e.g. /Users/you/Downloads/task.zip).
+After calling this, call get_page_text to confirm the file was accepted.`,
+    {
+      hint: z.string().describe("Label text, name, or surrounding text of the file input. Use empty string to target the first file input on the page."),
+      file_path: z.string().describe("Absolute path to the file to upload (e.g. /Users/you/Downloads/task.zip)"),
+    },
+    async ({ hint, file_path }) => {
+      const response = await bridge.request({ type: "set_file_input", hint, filePath: file_path });
+      const r = response as { success?: boolean; message?: string };
+      return {
+        content: [{ type: "text", text: r.message ?? (r.success ? "File set successfully" : "Failed to set file") }],
+      };
+    }
+  );
+
+  server.tool(
     "execute_script",
     `Execute JavaScript in the current page's context and return the result as a string.
 Use this to read framework state, check DOM properties, or interact with page APIs that aren't reachable via text.

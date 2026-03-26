@@ -43,6 +43,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         get_page_text() or wait_for_selector(".success") — ALWAYS confirm after click; click_element returns after 600ms regardless of outcome
         fill_form([{label, value}, ...])    — fill multiple fields in one call; prefer over repeated fill_input
         fill_input("Product name", "Pro")   — fill a single field (works on React, CodeMirror, and contenteditable)
+        set_file_input("Upload", "/abs/path/to/file.zip") — upload a file to a file input (even hidden inputs)
         clear_overlays()                    — call this immediately after fill_input/fill_form succeeds
         scroll_to_element("label text")     — jump directly to a known field; prefer this over scroll_page when the target is known
         scroll_page("down")                 — reveal off-screen content when target location is unknown
@@ -102,8 +103,8 @@ use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it
   `get_elements()` when you need pixel coordinates of visible elements; use `get_form_fields()`
   when you need to understand the full structure of a form including fields below the fold.
 - `get_form_fields()` includes `[type=file]` fields even when they are visually hidden behind
-  custom drag-and-drop zones. File fields are marked "manual only" — highlight them and ask
-  the user to select the file; they cannot be filled programmatically.
+  custom drag-and-drop zones. Use `set_file_input(hint, filePath)` to upload a file — provide
+  the label/hint text and the absolute path to the file on disk.
 - For forms with multiple fields, use `fill_form([{label, value}, ...])` to fill them all
   in a single call. It returns a per-field success/failure report so you can immediately see
   which fields weren't found. Use `fill_input` only for a single field.
