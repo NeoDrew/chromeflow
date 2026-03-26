@@ -43,7 +43,8 @@ export type ServerMessage =
   | { type: "save_page_state"; requestId: string }
   | { type: "restore_page_state"; requestId: string; state: PageFieldState[] }
   | { type: "list_tabs"; requestId: string }
-  | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }> };
+  | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }> }
+  | { type: "set_file_input"; requestId: string; hint: string; filePath: string };
 
 export type PageFieldState = {
   selector: string;
