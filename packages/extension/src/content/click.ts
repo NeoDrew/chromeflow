@@ -93,6 +93,12 @@ function findClickable(lower: string): Element | null {
   );
   if (ariaMatch) return ariaMatch;
 
+  // value attribute (input[type=submit], input[type=button])
+  const valueMatch = Array.from(
+    document.querySelectorAll<HTMLInputElement>("input[type=submit], input[type=button]")
+  ).find((el) => isUsable(el) && el.value.toLowerCase().includes(lower));
+  if (valueMatch) return valueMatch;
+
   // title / data-testid
   const attrMatch = Array.from(
     document.querySelectorAll<Element>("[title], [data-testid]")

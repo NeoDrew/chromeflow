@@ -1,13 +1,13 @@
 # Chromeflow
 
-Browser guidance for Claude Code. When Claude needs you to set up Stripe, grab API keys, configure a third-party service, or do anything in a browser — Chromeflow takes over. It highlights what to click, fills in fields it knows, clicks buttons automatically, and writes captured values straight to your `.env`.
+Browser guidance for Claude Code. When Claude needs you to set up Stripe, grab API keys, configure a third-party service, or do anything in a browser — Chromeflow takes over. It highlights what to click, fills in fields it knows, clicks buttons automatically, uploads files, and writes captured values straight to your `.env`.
 
 ## How it works
 
 Chromeflow is two things that work together:
 
-- **MCP server** — gives Claude Code a set of browser tools (`open_page`, `click_element`, `fill_input`, `read_element`, `write_to_env`, etc.)
-- **Chrome extension** — receives those commands and acts on the active tab (highlights, clicks, fills, captures screenshots)
+- **MCP server** — gives Claude Code a set of browser tools (`open_page`, `click_element`, `fill_form`, `set_file_input`, `read_element`, `write_to_env`, etc.)
+- **Chrome extension** — receives those commands and acts on the active tab (highlights, clicks, fills, uploads files, captures screenshots)
 
 Claude drives the flow. You only touch the browser for things that genuinely need you — login, passwords, payment details, personal choices.
 
@@ -48,6 +48,40 @@ Just ask Claude normally:
 > "Help me configure SendGrid webhooks for this app"
 
 Claude will navigate, highlight steps, click what it can, pause for anything sensitive, and write values to your `.env` automatically.
+
+## What Claude can do
+
+| Capability | Tools |
+|------------|-------|
+| Navigate pages, open new tabs | `open_page`, `list_tabs`, `switch_to_tab` |
+| Click buttons and links | `click_element` |
+| Fill single fields | `fill_input` |
+| Fill multiple fields in one call | `fill_form` |
+| Upload files (even hidden inputs) | `set_file_input` |
+| Read page content as text | `get_page_text` |
+| Inspect all form fields | `get_form_fields` |
+| Scroll to a known element | `scroll_to_element` |
+| Highlight elements for the user | `highlight_region`, `find_and_highlight` |
+| Wait for the user to click | `wait_for_click` |
+| Wait for async changes | `wait_for_selector` |
+| Run arbitrary JS | `execute_script` |
+| Capture credentials to `.env` | `read_element`, `write_to_env` |
+| Screenshot (element location only) | `take_screenshot` |
+| Screenshot + save + copy to clipboard | `take_and_copy_screenshot` |
+| Save/restore form state across tabs | `save_page_state`, `restore_page_state` |
+| Show a step-by-step guide panel | `show_guide_panel`, `mark_step_done` |
+
+### File uploads
+
+`set_file_input` uses Chrome DevTools Protocol to bypass the browser's file-input script restriction — the same mechanism used by Playwright and Puppeteer. It works even when the `<input type=file>` is hidden behind a custom drag-and-drop zone.
+
+```
+set_file_input("Upload", "/Users/you/Downloads/task.zip")
+```
+
+### Dedicated Claude window
+
+Click the Chromeflow extension icon and use **"Use this window for Claude"** to lock Claude's browser operations to a specific Chrome window. This lets you freely use other Chrome windows without Claude interfering.
 
 ## Adding to another project
 
