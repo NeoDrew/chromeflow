@@ -274,7 +274,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         fields.push({
           index: ++idx,
           type: "file",
-          label: (label.replace(/\s+/g, " ").slice(0, 80) || "(unnamed)") + " — manual only, cannot be filled programmatically",
+          label: (label.replace(/\s+/g, " ").slice(0, 80) || "(unnamed)") + " — use set_file_input(hint, filePath) to upload",
           value: el.files?.[0]?.name ?? "",
           y: Math.round(rect.top + window.scrollY),
           selector: el.id ? `#${el.id}` : "input[type=file]",
@@ -497,6 +497,46 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       }
       const succeeded = results.filter((r) => r.success).length;
       return { type: "fill_form_response", requestId: msg.requestId, results, succeeded, total: formFields.length };
+    }
+
+    case "tag_file_input": {
+      const hint = ((msg.hint as string) ?? "").toLowerCase();
+      let found: HTMLInputElement | null = null;
+
+      for (const el of Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"))) {
+        let label = el.getAttribute("aria-label") || el.getAttribute("name") || "";
+        if (!label && el.id) {
+          const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
+          if (lbl) label = (lbl.textContent ?? "").trim();
+        }
+        if (!label) {
+          let node: Element | null = el.parentElement;
+          for (let d = 0; d < 5 && node; d++) {
+            const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+            if (text && text.length < 120) { label = text; break; }
+            node = node.parentElement;
+          }
+        }
+        if (!hint || label.toLowerCase().includes(hint)) { found = el; break; }
+      }
+
+      // Fallback: first file input on the page
+      if (!found) found = document.querySelector<HTMLInputElement>("input[type=file]");
+
+      if (!found) {
+        return { type: "action_done", requestId: msg.requestId, found: false, message: `No file input found matching "${msg.hint}"` };
+      }
+
+      // Tag so CDP can target it by selector
+      found.setAttribute("data-chromeflow-file-target", "true");
+      return { type: "action_done", requestId: msg.requestId, found: true };
+    }
+
+    case "untag_file_input": {
+      document.querySelectorAll("[data-chromeflow-file-target]").forEach((el) => {
+        el.removeAttribute("data-chromeflow-file-target");
+      });
+      return { type: "action_done", requestId: msg.requestId };
     }
 
     case "clear": {
