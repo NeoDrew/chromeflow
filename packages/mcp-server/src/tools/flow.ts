@@ -21,16 +21,23 @@ export function registerFlowTools(server: McpServer, bridge: WsBridge) {
     `Click a button, link, or interactive element on the page by its visible text or aria-label.
 Use this whenever Claude can press a button without needing user input — e.g. "Save", "Continue", "Create product", "Add pricing", "Confirm", "Next".
 After clicking, use get_page_text to check the result — only use take_screenshot if you need pixel positions.
-Do NOT use for: elements that require the user to make a personal choice, consent to terms, or enter sensitive data.`,
+Do NOT use for: elements that require the user to make a personal choice, consent to terms, or enter sensitive data.
+When multiple elements share the same label (e.g. many "Remove" buttons), use nth to target a specific one (1 = first/topmost, 2 = second, etc.).`,
     {
       textHint: z
         .string()
         .describe(
           "The visible label of the button or link (e.g. 'Save product', 'Continue', 'Add a product', 'Create')"
         ),
+      nth: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Which match to click when multiple elements share the same label (1 = first/topmost, default 1)"),
     },
-    async ({ textHint }) => {
-      const response = await bridge.request({ type: "click_element", textHint });
+    async ({ textHint, nth }) => {
+      const response = await bridge.request({ type: "click_element", textHint, nth });
       const r = response as { success: boolean; message: string };
       if (!r.success) {
         return {

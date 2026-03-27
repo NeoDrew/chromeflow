@@ -4,10 +4,11 @@
  * Stripe's drawer panels).
  */
 export function clickElement(
-  textHint: string
+  textHint: string,
+  nth?: number
 ): { success: boolean; message: string } {
   const lower = textHint.toLowerCase().trim();
-  const el = findClickable(lower);
+  const el = findClickable(lower, nth);
 
   if (!el) {
     return { success: false, message: `No clickable element found for "${textHint}"` };
@@ -69,47 +70,49 @@ function scrollSmartIntoView(el: Element) {
   }
 }
 
-function findClickable(lower: string): Element | null {
+function findClickable(lower: string, nth: number = 1): Element | null {
   const interactiveSelectors =
     'button, a, [role="button"], [role="link"], input[type="submit"], input[type="button"], label';
 
   const candidates = Array.from(document.querySelectorAll(interactiveSelectors));
 
-  // Exact text match first (trimmed)
-  const exact = candidates.find(
-    (el) => isUsable(el) && el.textContent?.toLowerCase().trim() === lower
-  );
-  if (exact) return exact;
+  // Collect all usable matches in priority order, then pick the nth
+  const allMatches: Element[] = [];
 
-  // Partial text match — prefer the most specific (shortest text) match
+  // Exact text matches
+  candidates.forEach((el) => {
+    if (isUsable(el) && el.textContent?.toLowerCase().trim() === lower) allMatches.push(el);
+  });
+
+  // Partial text matches (sorted shortest first for specificity), deduplicated
   const partials = candidates
-    .filter((el) => isUsable(el) && el.textContent?.toLowerCase().includes(lower))
+    .filter((el) => isUsable(el) && !allMatches.includes(el) && el.textContent?.toLowerCase().includes(lower))
     .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0));
-  if (partials[0]) return partials[0];
+  allMatches.push(...partials);
 
-  // aria-label
-  const ariaMatch = Array.from(document.querySelectorAll<Element>("[aria-label]")).find(
-    (el) => isUsable(el) && el.getAttribute("aria-label")?.toLowerCase().includes(lower)
-  );
-  if (ariaMatch) return ariaMatch;
+  // aria-label matches
+  Array.from(document.querySelectorAll<Element>("[aria-label]")).forEach((el) => {
+    if (isUsable(el) && !allMatches.includes(el) && el.getAttribute("aria-label")?.toLowerCase().includes(lower))
+      allMatches.push(el);
+  });
 
   // value attribute (input[type=submit], input[type=button])
-  const valueMatch = Array.from(
-    document.querySelectorAll<HTMLInputElement>("input[type=submit], input[type=button]")
-  ).find((el) => isUsable(el) && el.value.toLowerCase().includes(lower));
-  if (valueMatch) return valueMatch;
+  Array.from(document.querySelectorAll<HTMLInputElement>("input[type=submit], input[type=button]")).forEach((el) => {
+    if (isUsable(el) && !allMatches.includes(el) && el.value.toLowerCase().includes(lower))
+      allMatches.push(el);
+  });
 
   // title / data-testid
-  const attrMatch = Array.from(
-    document.querySelectorAll<Element>("[title], [data-testid]")
-  ).find((el) => {
-    const v =
-      el.getAttribute("title") ?? el.getAttribute("data-testid") ?? "";
-    return isUsable(el) && v.toLowerCase().includes(lower);
+  Array.from(document.querySelectorAll<Element>("[title], [data-testid]")).forEach((el) => {
+    const v = el.getAttribute("title") ?? el.getAttribute("data-testid") ?? "";
+    if (isUsable(el) && !allMatches.includes(el) && v.toLowerCase().includes(lower))
+      allMatches.push(el);
   });
-  if (attrMatch) return attrMatch;
 
-  return null;
+  if (allMatches.length === 0) return null;
+
+  const target = allMatches[nth - 1] ?? allMatches[allMatches.length - 1];
+  return target;
 }
 
 /**
