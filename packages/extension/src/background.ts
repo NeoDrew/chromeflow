@@ -531,17 +531,39 @@ async function handleMcpMessage(msg: {
       // the browser's script restriction on file inputs.
       await (chrome.debugger as any).attach({ tabId }, "1.3");
       try {
-        const { root } = await (chrome.debugger as any).sendCommand({ tabId }, "DOM.getDocument", {}) as { root: { nodeId: number } };
-        const { nodeId } = await (chrome.debugger as any).sendCommand({ tabId }, "DOM.querySelector", {
-          nodeId: root.nodeId,
-          selector: '[data-chromeflow-file-target="true"]',
+        // Use Runtime.evaluate to get a live reference — more reliable than DOM.querySelector
+        // because it survives React re-renders that may have discarded the tagged element.
+        const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: `document.querySelector('[data-chromeflow-file-target="true"]')`,
+          returnByValue: false,
+        }) as { result: { objectId?: string } };
+
+        if (!evalResult.result?.objectId) throw new Error("Could not locate tagged file input via CDP");
+
+        // Resolve the live object reference to a stable DOM nodeId
+        const { nodeId } = await (chrome.debugger as any).sendCommand({ tabId }, "DOM.requestNode", {
+          objectId: evalResult.result.objectId,
         }) as { nodeId: number };
 
-        if (!nodeId) throw new Error("Could not locate tagged file input via CDP");
+        if (!nodeId) throw new Error("Could not resolve file input node");
 
         await (chrome.debugger as any).sendCommand({ tabId }, "DOM.setFileInputFiles", {
           nodeId,
           files: [msg.filePath],
+        });
+
+        // Dispatch change/input events so React and other frameworks pick up the new file.
+        // CDP's setFileInputFiles fires a native change event, but React sometimes misses it
+        // due to its synthetic event system. Dispatching explicitly ensures the handler fires.
+        await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: `(function() {
+            var el = document.querySelector('[data-chromeflow-file-target="true"]');
+            if (el) {
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+          })()`,
+          returnByValue: true,
         });
       } finally {
         await (chrome.debugger as any).detach({ tabId }).catch(() => {});

@@ -115,7 +115,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "click_element": {
-      const result = clickElement(msg.textHint as string);
+      const result = clickElement(msg.textHint as string, msg.nth as number | undefined);
       return { type: "click_element_response", requestId: msg.requestId, ...result };
     }
 
@@ -254,9 +254,26 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         return "";
       }
 
+      // Helper: stable document y even for hidden/zero-size elements.
+      // getBoundingClientRect() returns 0 for display:none elements, which combined with
+      // window.scrollY produces the current scroll position for every hidden element — wrong.
+      // Walk offsetParent chain instead, which gives the real document position.
+      function getDocumentY(el: HTMLElement): number {
+        const rect = el.getBoundingClientRect();
+        if (rect.width > 0 || rect.height > 0) {
+          return Math.round(rect.top + window.scrollY);
+        }
+        let top = 0;
+        let node: HTMLElement | null = el;
+        while (node) {
+          top += node.offsetTop;
+          node = node.offsetParent as HTMLElement | null;
+        }
+        return top;
+      }
+
       // File inputs — always include even if visually hidden (commonly 0×0 behind custom drag zones)
       for (const el of Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"))) {
-        const rect = el.getBoundingClientRect();
         let label = el.getAttribute("aria-label") || el.getAttribute("name") || "";
         if (!label && el.id) {
           const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
@@ -276,7 +293,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           type: "file",
           label: (label.replace(/\s+/g, " ").slice(0, 80) || "(unnamed)") + " — use set_file_input(hint, filePath) to upload",
           value: el.files?.[0]?.name ?? "",
-          y: Math.round(rect.top + window.scrollY),
+          y: getDocumentY(el),
           selector: el.id ? `#${el.id}` : "input[type=file]",
           ...(context ? { context } : {}),
         });
@@ -327,7 +344,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           type: el instanceof HTMLInputElement ? (el.type || "text") : el.tagName.toLowerCase(),
           label: label.replace(/\s+/g, " ").slice(0, 80),
           value: value.slice(0, 60),
-          y: Math.round(rect.top + window.scrollY),
+          y: getDocumentY(el as HTMLElement),
           selector,
           ...(context ? { context } : {}),
         });
@@ -406,12 +423,14 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       }
 
       if (!target) return { type: "action_done", requestId: msg.requestId, message: `No element found matching "${msg.query}"` };
+      // Capture stable document y BEFORE scrolling — getBoundingClientRect after smooth scroll
+      // returns a mid-animation value which is inconsistent and confusing.
+      const docY = Math.round(target.getBoundingClientRect().top + window.scrollY);
       target.scrollIntoView({ behavior: "smooth", block: "center" });
-      const rect = target.getBoundingClientRect();
       return {
         type: "action_done",
         requestId: msg.requestId,
-        message: `Scrolled to "${matchedText}" (now at viewport y≈${Math.round(rect.top)})`,
+        message: `Scrolled to "${matchedText}" (document y: ${docY})`,
       };
     }
 
