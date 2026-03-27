@@ -140,6 +140,9 @@ screenshot to check what happened.
 2. `get_elements()` to get exact coords → `highlight_region(x,y,w,h,msg)`
 3. `take_screenshot()` only if you still can't identify the element from DOM queries
 
+**Multiple elements with the same label** (e.g. many "Remove" buttons):
+`click_element("Remove", nth=3)` — use `nth` (1-based) to target the specific one by order top-to-bottom. Check `get_form_fields` or `get_page_text` first to determine which index corresponds to the right section.
+
 **`fill_input` not found:**
 1. `click_element(hint)` to focus the field, then retry `fill_input`
 2. `find_and_highlight(hint, "Click here — I'll fill it in")` (no `valueToType`) then
@@ -172,6 +175,13 @@ for (var i = 0; i < allEls.length; i++) {
 // 3. Verify
 controls[N].textContent.trim(); // should show selected value
 ```
+
+**Page text with large embedded content** (e.g. uploaded log files previewed inline): full-page `get_page_text()` pagination becomes unwieldy. Scope to a specific section instead:
+```
+get_page_text(selector=".section-3")   — scope to a CSS selector
+get_page_text(selector="#upload-form") — scope to an id
+```
+Use `execute_script("document.querySelectorAll('section').length")` to find structural selectors first.
 
 **Page content rendered as images** (e.g. qualification "Examples" tabs that show PNG screenshots
 instead of DOM text): `get_page_text()` returns nothing useful. Zoom out and screenshot instead:

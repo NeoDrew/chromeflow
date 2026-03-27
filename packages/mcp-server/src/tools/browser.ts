@@ -143,7 +143,8 @@ save_to controls where the PNG is saved: "downloads" (default) saves to ~/Downlo
     `Get the exact pixel positions of all visible interactive elements on the page (inputs, buttons, links, selects).
 Use this INSTEAD OF take_screenshot when you need coordinates for highlight_region — the coordinates are exact DOM values, not estimates.
 Returns a numbered list with element type, label, and precise x/y/width/height in CSS pixels.
-After calling this, use those exact coordinates in highlight_region — do NOT adjust them.`,
+IMPORTANT: x/y are VIEWPORT-relative (0,0 = top-left of the visible area). Use these exact values directly in highlight_region — do not add window.scrollY.
+Use get_form_fields instead if you need document y positions or fields below the fold.`,
     {},
     async () => {
       const response = await bridge.request({ type: "get_elements" });
@@ -194,7 +195,7 @@ Unlike get_elements, this includes ALL fields (even far below the fold) and is n
 Uses Chrome DevTools Protocol to set the file — the only way to bypass the browser's file-input script restriction.
 hint: label text or name of the file input (or empty string to target the first file input on the page).
 file_path: absolute path to the file on the local filesystem (e.g. /Users/you/Downloads/task.zip).
-After calling this, call get_page_text to confirm the file was accepted.`,
+After calling this, verify the upload was accepted: use execute_script to check that the input's files.length > 0, or use get_page_text to look for a success indicator (e.g. a Remove button appearing). If not accepted, call set_file_input again — occasional React timing issues may require a retry.`,
     {
       hint: z.string().describe("Label text, name, or surrounding text of the file input. Use empty string to target the first file input on the page."),
       file_path: z.string().describe("Absolute path to the file to upload (e.g. /Users/you/Downloads/task.zip)"),
