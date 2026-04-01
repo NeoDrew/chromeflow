@@ -132,6 +132,29 @@ async function injectAlertCapture(tabId: number): Promise<void> {
           (window as any)._alertCapture = String(msg ?? "");
           return def !== undefined ? def : null;
         };
+
+        // Console capture — stores last 200 messages for get_console_logs
+        if (!(window as any)._consoleLogs) {
+          (window as any)._consoleLogs = [];
+          const MAX = 200;
+          (["log", "warn", "error", "info"] as const).forEach((level) => {
+            const original = (console as any)[level];
+            (console as any)[level] = function (...args: unknown[]) {
+              (window as any)._consoleLogs.push({
+                level,
+                message: args
+                  .map((a) => {
+                    try { return typeof a === "object" ? JSON.stringify(a) : String(a); }
+                    catch { return String(a); }
+                  })
+                  .join(" "),
+                time: Date.now(),
+              });
+              if ((window as any)._consoleLogs.length > MAX) (window as any)._consoleLogs.shift();
+              original.apply(console, args);
+            };
+          });
+        }
       },
     });
   } catch {
@@ -540,15 +563,12 @@ async function handleMcpMessage(msg: {
 
         if (!evalResult.result?.objectId) throw new Error("Could not locate tagged file input via CDP");
 
-        // Resolve the live object reference to a stable DOM nodeId
-        const { nodeId } = await (chrome.debugger as any).sendCommand({ tabId }, "DOM.requestNode", {
-          objectId: evalResult.result.objectId,
-        }) as { nodeId: number };
-
-        if (!nodeId) throw new Error("Could not resolve file input node");
-
+        // Pass objectId directly — DOM.setFileInputFiles accepts objectId, nodeId, or
+        // backendNodeId. Using objectId avoids the need to call DOM.getDocument first
+        // (which was causing "Could not resolve file input node" failures on DataAnnotation
+        // and PingLine forms where the DOM domain wasn't initialized).
         await (chrome.debugger as any).sendCommand({ tabId }, "DOM.setFileInputFiles", {
-          nodeId,
+          objectId: evalResult.result.objectId,
           files: [msg.filePath],
         });
 

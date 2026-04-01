@@ -5,7 +5,8 @@
  */
 export function fillInput(
   textHint: string,
-  value: string
+  value: string,
+  nth: number = 1
 ): { success: boolean; message: string } {
   const lower = textHint.toLowerCase().trim();
 
@@ -31,7 +32,7 @@ export function fillInput(
     return { success: true, message: `Filled "${textHint}" with value` };
   }
 
-  const input = findInput(lower);
+  const input = findInput(lower, nth);
   if (!input) {
     // Last resort: the user may have just clicked/focused the target field via
     // wait_for_click — try to fill whatever is currently focused.
@@ -118,14 +119,21 @@ export function fillInput(
 
 type FillableInput = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 
-function findInput(lower: string): FillableInput | null {
+function findInput(lower: string, nth: number = 1): FillableInput | null {
+  const allMatches: FillableInput[] = [];
+  const seen = new Set<Element>();
+
+  function addMatch(el: FillableInput) {
+    if (!seen.has(el)) { seen.add(el); allMatches.push(el); }
+  }
+
   // 1. <label> whose text matches → use htmlFor to find input
   for (const label of Array.from(document.querySelectorAll<HTMLLabelElement>("label"))) {
     if (label.textContent?.toLowerCase().includes(lower)) {
       const target = label.htmlFor
         ? document.getElementById(label.htmlFor)
         : label.querySelector<FillableInput>("input, textarea, select");
-      if (target && isEditable(target)) return target as FillableInput;
+      if (target && isEditable(target)) addMatch(target as FillableInput);
     }
   }
 
@@ -135,7 +143,7 @@ function findInput(lower: string): FillableInput | null {
       "input[placeholder], textarea[placeholder]"
     )
   )) {
-    if (el.placeholder.toLowerCase().includes(lower) && isEditable(el)) return el;
+    if (el.placeholder.toLowerCase().includes(lower) && isEditable(el)) addMatch(el);
   }
 
   // 3. Input with aria-label matching
@@ -143,7 +151,7 @@ function findInput(lower: string): FillableInput | null {
     document.querySelectorAll<FillableInput>("input[aria-label], textarea[aria-label], select[aria-label]")
   )) {
     const ariaLabel = el.getAttribute("aria-label") ?? "";
-    if (ariaLabel.toLowerCase().includes(lower) && isEditable(el)) return el;
+    if (ariaLabel.toLowerCase().includes(lower) && isEditable(el)) addMatch(el);
   }
 
   // 4. Any text node near an input that contains the hint
@@ -158,37 +166,36 @@ function findInput(lower: string): FillableInput | null {
     },
   });
 
-  const textNode = walker.nextNode();
-  if (textNode) {
+  let textNode: Node | null;
+  while ((textNode = walker.nextNode())) {
     const anchor = (textNode as Text).parentElement!;
-    // Walk up to 6 ancestor levels looking for an input — also check next sibling at each
-    // level (handles layouts where label and input are in separate sibling divs, e.g. Stripe).
     let node: Element | null = anchor;
     for (let depth = 0; depth < 8 && node && node !== document.body; depth++) {
       const input = node.querySelector<FillableInput>("input, textarea, select");
-      if (input && isEditable(input)) return input;
-      // Check both next and previous siblings — React forms often put label and input
-      // in separate sibling branches (e.g. <div>label</div><div><input/></div>)
+      if (input && isEditable(input)) { addMatch(input); break; }
+      let found = false;
       for (const sibling of [node.nextElementSibling, node.previousElementSibling]) {
         if (sibling) {
           const sibInput = sibling.querySelector<FillableInput>("input, textarea, select");
-          if (sibInput && isEditable(sibInput)) return sibInput;
+          if (sibInput && isEditable(sibInput)) { addMatch(sibInput); found = true; break; }
         }
       }
+      if (found) break;
       node = node.parentElement;
     }
   }
 
-  // 5. Input/textarea whose name or id attribute matches the hint (e.g. <input name="name">)
+  // 5. Input/textarea whose name or id attribute matches the hint
   for (const el of Array.from(document.querySelectorAll<FillableInput>("input, textarea"))) {
     const name = (el as HTMLInputElement).name?.toLowerCase() ?? "";
-    if (name === lower && isEditable(el)) return el;
+    if (name === lower && isEditable(el)) addMatch(el);
   }
   for (const el of Array.from(document.querySelectorAll<FillableInput>("input, textarea"))) {
-    if (el.id.toLowerCase() === lower && isEditable(el)) return el;
+    if (el.id.toLowerCase() === lower && isEditable(el)) addMatch(el);
   }
 
-  return null;
+  if (allMatches.length === 0) return null;
+  return allMatches[nth - 1] ?? allMatches[allMatches.length - 1];
 }
 
 /**

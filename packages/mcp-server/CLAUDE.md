@@ -155,14 +155,31 @@ screenshot to check what happened.
 
 **React Select / custom styled dropdowns** (e.g. "Select..." components on DataAnnotation):
 `click_element` and `fill_input` do NOT work on these — they intercept native events. Use
-`execute_script` directly:
+`execute_script` with the hidden combobox input approach (most reliable):
 
 ```js
-// 1. Open the menu — click the control div (filter by pageY if multiple)
+// 1. Find the hidden combobox input (each React Select has one: input[id*="react-select-N-input"])
+var input = document.querySelector('input[id*="react-select-3-input"]');
+input.focus();
+
+// 2. Set value via native setter to trigger React's onChange
+var setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+setter.call(input, 'Target Option');
+input.dispatchEvent(new Event('input', {bubbles: true}));
+
+// 3. Wait 300ms for the dropdown to filter, then click the first matching option
+// (run this as a separate execute_script call after a brief pause)
+var option = document.querySelector('[id*="react-select-3-option-0"]');
+if (option) option.click();
+
+// 4. Verify — the control div should show the selected value
+document.querySelector('[class*="singleValue"]').textContent.trim();
+```
+
+Fallback if the combobox approach doesn't work (older React Select versions):
+```js
 var controls = document.querySelectorAll('[class*="control"]');
 controls[N].click();
-
-// 2. Pick an option by exact text
 var allEls = document.querySelectorAll('*');
 for (var i = 0; i < allEls.length; i++) {
   if (allEls[i].textContent.trim() === 'Target Option' && allEls[i].children.length === 0) {
@@ -171,9 +188,6 @@ for (var i = 0; i < allEls.length; i++) {
     break;
   }
 }
-
-// 3. Verify
-controls[N].textContent.trim(); // should show selected value
 ```
 
 **Page text with large embedded content** (e.g. uploaded log files previewed inline): full-page `get_page_text()` pagination becomes unwieldy. Scope to a specific section instead:

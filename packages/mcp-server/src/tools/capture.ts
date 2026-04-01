@@ -21,9 +21,15 @@ After filling, call wait_for_click only if the user needs to review/confirm; oth
       value: z
         .string()
         .describe("The value to fill in"),
+      nth: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Which match to fill when multiple inputs share the same label (1 = first/topmost, default 1)"),
     },
-    async ({ textHint, value }) => {
-      const response = await bridge.request({ type: "fill_input", textHint, value });
+    async ({ textHint, value, nth }) => {
+      const response = await bridge.request({ type: "fill_input", textHint, value, nth });
       if (response.type !== "fill_response") throw new Error("Unexpected response");
       const r = response as { success: boolean; message: string };
       return {
@@ -135,6 +141,39 @@ The snapshot is read from the local temp file written by save_page_state.`,
       return {
         content: [{ type: "text", text: msg }],
       };
+    }
+  );
+
+  server.tool(
+    "get_console_logs",
+    `Read the browser console output (log, warn, error, info) captured since the page loaded.
+Returns the last 200 messages with their level and timestamp.
+Use this to check for JavaScript errors, debug React issues, or verify that an action produced the expected console output.
+Pass level="error" to see only errors, or omit to see all levels.`,
+    {
+      level: z
+        .enum(["log", "warn", "error", "info"])
+        .optional()
+        .describe('Filter by log level (e.g. "error" to see only errors). Omit for all levels.'),
+    },
+    async ({ level }) => {
+      const response = await bridge.request({ type: "execute_script", code: `JSON.stringify(window._consoleLogs || [])` });
+      if (response.type !== "script_response") throw new Error("Unexpected response");
+      let logs: Array<{ level: string; message: string; time: number }>;
+      try {
+        logs = JSON.parse((response as { result: string }).result);
+      } catch {
+        return { content: [{ type: "text", text: "No console logs captured (console capture may not be injected on this page yet — navigate first)." }] };
+      }
+      if (level) logs = logs.filter(l => l.level === level);
+      if (logs.length === 0) {
+        return { content: [{ type: "text", text: level ? `No ${level}-level console messages.` : "No console messages captured." }] };
+      }
+      const lines = logs.map(l => {
+        const time = new Date(l.time).toISOString().slice(11, 23);
+        return `[${time}] ${l.level.toUpperCase()}: ${l.message.slice(0, 500)}`;
+      });
+      return { content: [{ type: "text", text: `Console logs (${logs.length} entries):\n${lines.join("\n")}` }] };
     }
   );
 
