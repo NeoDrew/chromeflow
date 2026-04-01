@@ -182,6 +182,8 @@ const CHROMEFLOW_TOOLS = [
   "set_file_input",
   // v0.1.39+
   "get_console_logs",
+  // v0.1.40+
+  "capture_terminal",
 ].map((t) => `mcp__chromeflow__${t}`);
 
 function patchSettingsLocalJson(cwd: string) {

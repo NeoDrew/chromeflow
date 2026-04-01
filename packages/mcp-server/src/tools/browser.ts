@@ -1,6 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { writeFileSync, copyFileSync } from "fs";
+import { writeFileSync, copyFileSync, readFileSync } from "fs";
 import { tmpdir, homedir } from "os";
 import { join } from "path";
 import { execSync } from "child_process";
@@ -120,6 +120,83 @@ save_to controls where the PNG is saved: "downloads" (default) saves to ~/Downlo
       return {
         content: [
           { type: "image", data: (response as { image: string }).image, mimeType: "image/png" },
+          { type: "text", text: `${clipboardNote}Saved to ${savePath}` },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "capture_terminal",
+    `Capture a screenshot of the terminal window (Terminal, iTerm2, Warp, VS Code, Ghostty, etc.) and save it as a PNG.
+Use this when you need a screenshot of terminal output — e.g. test results, build logs, or command output — to upload to a form via set_file_input.
+Auto-detects the terminal app. Returns the image to Claude AND saves the PNG file.
+The saved file path can be passed directly to set_file_input(hint, file_path) to upload it.`,
+    {
+      save_to: z
+        .enum(["downloads", "cwd"])
+        .optional()
+        .describe('Where to save the PNG: "downloads" (~/Downloads, default) or "cwd" (working directory)'),
+    },
+    async ({ save_to = "downloads" }) => {
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const filename = `terminal-${timestamp}.png`;
+      const savePath = save_to === "cwd"
+        ? join(process.cwd(), filename)
+        : join(homedir(), "Downloads", filename);
+
+      // Try to find a terminal window and capture just that window's bounds
+      let captured = false;
+      try {
+        const bounds = execSync(`osascript -e '
+          tell application "System Events"
+            set termApps to {"Terminal", "iTerm2", "Warp", "kitty", "Alacritty", "Ghostty", "Code", "Cursor", "Windsurf"}
+            repeat with appName in termApps
+              if exists process (contents of appName) then
+                tell process (contents of appName)
+                  if (count of windows) > 0 then
+                    set win to window 1
+                    set pos to position of win
+                    set sz to size of win
+                    return (item 1 of pos as text) & "," & (item 2 of pos as text) & "," & (item 1 of sz as text) & "," & (item 2 of sz as text)
+                  end if
+                end tell
+              end if
+            end repeat
+            error "No terminal window found"
+          end tell
+        '`, { timeout: 5000 }).toString().trim();
+
+        execSync(`screencapture -x -R${bounds} "${savePath}"`, { timeout: 5000 });
+        captured = true;
+      } catch {
+        // Fallback: capture entire screen
+        try {
+          execSync(`screencapture -x "${savePath}"`, { timeout: 5000 });
+          captured = true;
+        } catch { /* screencapture requires screen recording permission */ }
+      }
+
+      if (!captured) {
+        return {
+          content: [{ type: "text", text: "Failed to capture terminal. Ensure Screen Recording permission is granted to your terminal app in System Settings > Privacy & Security > Screen Recording." }],
+        };
+      }
+
+      // Read the captured image for returning to Claude
+      const imageBuffer = readFileSync(savePath);
+      const base64 = imageBuffer.toString("base64");
+
+      // Copy to clipboard
+      let clipboardNote = "";
+      try {
+        execSync(`osascript -e 'set the clipboard to (read (POSIX file "${savePath}") as «class PNGf»)'`);
+        clipboardNote = "Copied to clipboard. ";
+      } catch { /* ignore */ }
+
+      return {
+        content: [
+          { type: "image", data: base64, mimeType: "image/png" },
           { type: "text", text: `${clipboardNote}Saved to ${savePath}` },
         ],
       };
