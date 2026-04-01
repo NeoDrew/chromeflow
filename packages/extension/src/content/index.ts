@@ -152,7 +152,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     case "get_page_text": {
       const selector = msg.selector as string | undefined;
       const startIndex = (msg.startIndex as number | undefined) ?? 0;
-      const chunkSize = 20000;
+      const chunkSize = 10000;
       let root: Element;
       let selectorMissed = false;
       if (selector) {

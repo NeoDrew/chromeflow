@@ -24,7 +24,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 
 2. **Never use `take_screenshot` to read page content.** After `scroll_page`, after
    `click_element`, after navigation — always call `get_page_text`, not `take_screenshot`.
-   `get_page_text` returns up to 20,000 characters; if truncated it tells you the next
+   `get_page_text` returns up to 10,000 characters; if truncated it tells you the next
    `startIndex` to paginate. Screenshots are only for locating an element's pixel position
    when DOM queries have already failed. Never take more than 1–2 screenshots in a row.
 

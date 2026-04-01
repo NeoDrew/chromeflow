@@ -78,7 +78,8 @@ After filling, call wait_for_click only if the user needs to review/confirm; oth
     "get_page_text",
     `Get the visible text content of the current page without taking a screenshot.
 Use this instead of take_screenshot whenever you need to read what's on the page — errors, build status, form labels, confirmation messages, etc.
-Returns up to 20,000 characters at a time. If the response ends with "... (N more characters)", call again with startIndex to read the next chunk.
+Returns up to 10,000 characters per call (~3k tokens). If the response ends with "... (N more characters)", call again with startIndex to read the next chunk.
+Use the selector parameter to scope extraction to a specific section and avoid pulling unnecessary content.
 Never use take_screenshot just to read page content — paginate with startIndex instead.`,
     {
       selector: z
