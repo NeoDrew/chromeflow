@@ -31,7 +31,7 @@ export type ServerMessage =
   // Flow control — reactive progression
   | { type: "start_click_watch"; requestId: string; timeout: number }
   | { type: "mark_step_done"; requestId: string; stepIndex: number }
-  | { type: "fill_input"; requestId: string; textHint: string; value: string }
+  | { type: "fill_input"; requestId: string; textHint: string; value: string; nth?: number }
   | { type: "click_element"; requestId: string; textHint: string; nth?: number }
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
   | { type: "get_page_text"; requestId: string; selector?: string; startIndex?: number }

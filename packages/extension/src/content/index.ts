@@ -140,7 +140,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "fill_input": {
-      const result = fillInput(msg.textHint as string, msg.value as string);
+      const result = fillInput(msg.textHint as string, msg.value as string, msg.nth as number | undefined);
       return { type: "fill_response", requestId: msg.requestId, ...result };
     }
 
