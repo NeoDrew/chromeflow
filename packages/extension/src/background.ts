@@ -348,16 +348,38 @@ async function handleMcpMessage(msg: {
         ctx.fillText(String(y), 2, y - 2);
       }
 
-      const outBlob = await canvas.convertToBlob({ type: "image/png" });
-      const buf = await outBlob.arrayBuffer();
-      const bytes = new Uint8Array(buf);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i += 8192) {
-        binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
-      }
-      const base64 = btoa(binary);
+      // Encode to PNG, enforcing Claude Code's 3.75MB base64 limit.
+      // If the image is too large, re-render at reduced resolution.
+      const MAX_BASE64_BYTES = 3_500_000; // 3.5MB with margin
+      let scale = 1;
+      let base64 = "";
+      let finalWidth = cssWidth;
+      let finalHeight = cssHeight;
 
-      return { type: "screenshot_response", image: base64, width: cssWidth, height: cssHeight };
+      for (const s of [1, 0.75, 0.5]) {
+        scale = s;
+        finalWidth = Math.round(cssWidth * s);
+        finalHeight = Math.round(cssHeight * s);
+        let outCanvas: OffscreenCanvas;
+        if (s === 1) {
+          outCanvas = canvas;
+        } else {
+          outCanvas = new OffscreenCanvas(finalWidth, finalHeight);
+          const sCtx = outCanvas.getContext("2d")!;
+          sCtx.drawImage(canvas, 0, 0, finalWidth, finalHeight);
+        }
+        const outBlob = await outCanvas.convertToBlob({ type: "image/png" });
+        const buf = await outBlob.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += 8192) {
+          binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+        }
+        base64 = btoa(binary);
+        if (base64.length <= MAX_BASE64_BYTES) break;
+      }
+
+      return { type: "screenshot_response", image: base64, width: finalWidth, height: finalHeight };
     }
 
     case "start_click_watch": {
