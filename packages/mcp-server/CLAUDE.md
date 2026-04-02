@@ -111,6 +111,18 @@ use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it
 - `fill_input` and `fill_form` work on React-controlled inputs, contenteditable (Stripe,
   Notion), and **CodeMirror 6 editors** — auto-detected. After filling, the value is read
   back and a warning is shown if React did not accept it.
+- **Monaco editors** (VS Code-style code editors on DataAnnotation, etc.) appear in
+  `get_form_fields()` as type "monaco". They cannot be filled via `fill_input` — use
+  `execute_script` with the Monaco API instead:
+  ```js
+  // Read content from the first Monaco model
+  monaco.editor.getModels()[0].getValue()
+  // Write content to the first Monaco model
+  monaco.editor.getModels()[0].setValue('new content here')
+  ```
+- `set_file_input` accepts CSS selectors as the hint (e.g. `#import-problem-file`,
+  `.upload-input`) in addition to label text. Use selectors when file inputs are hidden
+  behind custom UIs and have no visible label.
 - After any radio/checkbox click that reveals new fields, call `get_form_fields()` again —
   the inventory will include the new fields and warn if more hidden ones still exist.
 - If a form has collapsible sections, expand them all before calling `get_form_fields()` so
@@ -152,6 +164,14 @@ screenshot to check what happened.
 4. Only use `valueToType` when the user must personally type the value (password, personal data)
 
 **Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots.
+
+**Pre-filling `prompt()` and `confirm()` dialogs**: When a page action will trigger a JS
+dialog (e.g. "Save As" calling `prompt()`), call `set_dialog_response` BEFORE the action:
+```
+set_dialog_response(type="prompt", value="my-filename")   — next prompt() returns "my-filename"
+set_dialog_response(type="confirm", value="true")          — next confirm() returns true
+```
+Then trigger the action (e.g. `click_element("Save As")`). The response is consumed once.
 
 **React Select / custom styled dropdowns** (e.g. "Select..." components on DataAnnotation):
 `click_element` and `fill_input` do NOT work on these — they intercept native events. Use
@@ -207,5 +227,10 @@ document.body.style.zoom = '0.4';
 // restore afterward:
 document.body.style.zoom = '1';
 ```
+
+**Downloads via `execute_script`**: Creating a Blob URL and clicking an anchor via
+`execute_script` sometimes fails due to CSP or timing. If a download doesn't trigger:
+1. Retry the exact same `execute_script` call
+2. If still failing, use `find_and_highlight` to show the user a download button to click manually
 
 **Never use Bash to work around a stuck browser interaction.**
