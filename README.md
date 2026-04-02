@@ -1,6 +1,10 @@
-# Chromeflow
+<p align="center">
+  <img src="assets/icon.png" width="120" alt="Chromeflow" />
+</p>
 
-Browser guidance for Claude Code. When Claude needs you to set up Stripe, grab API keys, configure a third-party service, or do anything in a browser — Chromeflow takes over. It highlights what to click, fills in fields it knows, clicks buttons automatically, uploads files, and writes captured values straight to your `.env`.
+<h1 align="center">Chromeflow</h1>
+
+When Claude needs you to set up Stripe, grab API keys, configure a third-party service, or do anything in a browser — Chromeflow takes over. It highlights what to click, fills in fields it knows, clicks buttons automatically, uploads files, and writes captured values straight to your `.env`.
 
 ## Why Chromeflow?
 
