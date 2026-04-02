@@ -121,15 +121,29 @@ async function injectAlertCapture(tabId: number): Promise<void> {
       world: "MAIN",
       func: () => {
         (window as any)._alertCapture = (window as any)._alertCapture ?? null;
+        // Pre-set dialog responses: set via set_dialog_response tool, consumed once
+        (window as any)._chromeflowDialogResponse = (window as any)._chromeflowDialogResponse ?? { prompt: undefined, confirm: undefined };
         window.alert = (msg?: unknown) => {
           (window as any)._alertCapture = String(msg ?? "");
         };
         window.confirm = (msg?: string) => {
           (window as any)._alertCapture = String(msg ?? "");
+          const preset = (window as any)._chromeflowDialogResponse;
+          if (preset.confirm !== undefined) {
+            const val = preset.confirm;
+            preset.confirm = undefined;
+            return val;
+          }
           return true;
         };
         window.prompt = (msg?: string, def?: string) => {
           (window as any)._alertCapture = String(msg ?? "");
+          const preset = (window as any)._chromeflowDialogResponse;
+          if (preset.prompt !== undefined) {
+            const val = preset.prompt;
+            preset.prompt = undefined;
+            return val;
+          }
           return def !== undefined ? def : null;
         };
 

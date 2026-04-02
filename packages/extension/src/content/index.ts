@@ -378,6 +378,36 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         });
       }
 
+      // Monaco editors (VS Code-style code editors used by DataAnnotation, etc.)
+      for (const editor of Array.from(document.querySelectorAll<HTMLElement>(".monaco-editor"))) {
+        const s = getComputedStyle(editor);
+        if (s.display === "none" || s.visibility === "hidden") continue;
+        const rect = editor.getBoundingClientRect();
+
+        let label = editor.getAttribute("aria-label") ?? "";
+        if (!label) {
+          const container = editor.closest("div[class], section, fieldset, li") ?? editor.parentElement;
+          if (container) {
+            const heading = container.querySelector("label, h1, h2, h3, h4, h5, legend, [class*='label'], [class*='title']");
+            if (heading && !editor.contains(heading)) label = (heading.textContent ?? "").trim();
+          }
+        }
+
+        // Read first 60 chars from the visible lines
+        const lines = editor.querySelectorAll(".view-line");
+        const currentText = Array.from(lines).slice(0, 3).map(l => (l.textContent ?? "").trim()).join(" ").slice(0, 60);
+        const context = getNearestHeading(editor);
+        fields.push({
+          index: ++idx,
+          type: "monaco — use execute_script with monaco.editor.getModels() to read/write",
+          label: label.replace(/\s+/g, " ").slice(0, 80),
+          value: currentText,
+          y: getDocumentY(editor),
+          selector: ".monaco-editor",
+          ...(context ? { context } : {}),
+        });
+      }
+
       // Sort by vertical position on page
       fields.sort((a, b) => a.y - b.y);
       fields.forEach((f, i) => { f.index = i + 1; });
@@ -519,24 +549,42 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "tag_file_input": {
-      const hint = ((msg.hint as string) ?? "").toLowerCase();
+      const hint = ((msg.hint as string) ?? "").trim();
+      const hintLower = hint.toLowerCase();
       let found: HTMLInputElement | null = null;
 
-      for (const el of Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"))) {
-        let label = el.getAttribute("aria-label") || el.getAttribute("name") || "";
-        if (!label && el.id) {
-          const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
-          if (lbl) label = (lbl.textContent ?? "").trim();
-        }
-        if (!label) {
-          let node: Element | null = el.parentElement;
-          for (let d = 0; d < 5 && node; d++) {
-            const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
-            if (text && text.length < 120) { label = text; break; }
-            node = node.parentElement;
+      // Try hint as a CSS selector first (e.g. "#import-problem-file", "input[name=upload]")
+      if (hint && (hint.startsWith("#") || hint.startsWith(".") || hint.startsWith("input") || hint.startsWith("["))) {
+        try {
+          const el = document.querySelector<HTMLInputElement>(hint);
+          if (el && el.type === "file") found = el;
+        } catch { /* invalid selector, continue to label matching */ }
+      }
+
+      // Try matching by ID directly (e.g. hint="import-problem-file" matches id="import-problem-file")
+      if (!found && hint) {
+        const byId = document.getElementById(hint) as HTMLInputElement | null;
+        if (byId && byId.type === "file") found = byId;
+      }
+
+      // Label/text matching
+      if (!found) {
+        for (const el of Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"))) {
+          let label = el.getAttribute("aria-label") || el.getAttribute("name") || el.id || "";
+          if (!label && el.id) {
+            const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
+            if (lbl) label = (lbl.textContent ?? "").trim();
           }
+          if (!label) {
+            let node: Element | null = el.parentElement;
+            for (let d = 0; d < 5 && node; d++) {
+              const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
+              if (text && text.length < 120) { label = text; break; }
+              node = node.parentElement;
+            }
+          }
+          if (!hintLower || label.toLowerCase().includes(hintLower)) { found = el; break; }
         }
-        if (!hint || label.toLowerCase().includes(hint)) { found = el; break; }
       }
 
       // Fallback: first file input on the page
