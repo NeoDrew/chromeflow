@@ -204,6 +204,26 @@ The saved file path can be passed directly to set_file_input(hint, file_path) to
   );
 
   server.tool(
+    "set_dialog_response",
+    `Pre-set the return value for the next window.prompt() or window.confirm() dialog.
+Call this BEFORE triggering an action that will show a dialog (e.g. a "Save As" button that calls prompt()).
+The response is consumed once — after the dialog fires, it resets to default behavior.
+For prompt: the value string is returned to the page. For confirm: true/false is returned.`,
+    {
+      type: z.enum(["prompt", "confirm"]).describe('Which dialog type to pre-fill: "prompt" or "confirm"'),
+      value: z.string().describe('For prompt: the string to return. For confirm: "true" or "false"'),
+    },
+    async ({ type, value }) => {
+      const jsValue = type === "confirm" ? (value === "true") : value;
+      const code = `window._chromeflowDialogResponse = window._chromeflowDialogResponse || {}; window._chromeflowDialogResponse.${type} = ${JSON.stringify(jsValue)}; "set"`;
+      await bridge.request({ type: "execute_script", code });
+      return {
+        content: [{ type: "text", text: `Next ${type}() will return ${JSON.stringify(jsValue)}. Now trigger the action that shows the dialog.` }],
+      };
+    }
+  );
+
+  server.tool(
     "clear_overlays",
     "Remove all highlights and callout annotations from the current page. Does NOT remove the guide panel — the guide panel persists until the next flow starts.",
     {},
