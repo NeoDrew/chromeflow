@@ -30,7 +30,7 @@ export default function Privacy() {
           Privacy Policy
         </h1>
         <p style={{ color: 'var(--muted)', fontSize: '0.9rem', marginBottom: '3rem' }}>
-          Last updated: March 4, 2026
+          Last updated: April 2, 2026
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem', color: 'var(--text)', lineHeight: 1.7 }}>
@@ -93,7 +93,10 @@ export default function Privacy() {
             <ul style={ul}>
               <li><strong>tabs / activeTab</strong> — to read the URL and interact with the active tab</li>
               <li><strong>scripting</strong> — to inject content scripts that carry out automation actions</li>
-              <li><strong>offscreen</strong> — to capture screenshots off-screen for visual analysis</li>
+              <li><strong>offscreen</strong> — to maintain a persistent WebSocket connection to the local MCP server</li>
+              <li><strong>storage</strong> — to persist the user's Claude window assignment preference (which Chrome window chromeflow should control). Stored locally via <code>chrome.storage.local</code> — no data is transmitted externally</li>
+              <li><strong>windows</strong> — to query and identify the assigned Claude window so browser actions target the correct window</li>
+              <li><strong>debugger</strong> — used by the <code>set_file_input</code> feature to upload files to file input elements via Chrome DevTools Protocol (<code>DOM.setFileInputFiles</code>). This is the only way to programmatically set files on <code>&lt;input type=file&gt;</code> elements, which browsers block from script access for security. The debugger attaches briefly to set the file, then immediately detaches</li>
               <li><strong>host permissions (&lt;all_urls&gt;)</strong> — to operate on any site the user navigates to, since Claude Code workflows can target any URL</li>
             </ul>
           </section>
