@@ -38,6 +38,12 @@ export function clickElement(
     stateNote = ` — now ${el.checked ? "checked" : "unchecked"}`;
   }
 
+  // Warn if element has zero dimensions (likely inside a collapsed panel)
+  const rect = el.getBoundingClientRect();
+  if (rect.width === 0 && rect.height === 0) {
+    stateNote += " — WARNING: element has 0×0 dimensions (likely inside a collapsed or hidden panel). The click may not have had any effect. Try expanding the parent panel first.";
+  }
+
   return { success: true, message: `Clicked "${label}"${stateNote}` };
 }
 
@@ -72,7 +78,7 @@ function scrollSmartIntoView(el: Element) {
 
 function findClickable(lower: string, nth: number = 1): Element | null {
   const interactiveSelectors =
-    'button, a, [role="button"], [role="link"], input[type="submit"], input[type="button"], label';
+    'button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], input[type="submit"], input[type="button"], label, [onclick], [tabindex]';
 
   const candidates = Array.from(document.querySelectorAll(interactiveSelectors));
 
