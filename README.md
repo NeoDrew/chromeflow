@@ -2,6 +2,21 @@
 
 Browser guidance for Claude Code. When Claude needs you to set up Stripe, grab API keys, configure a third-party service, or do anything in a browser — Chromeflow takes over. It highlights what to click, fills in fields it knows, clicks buttons automatically, uploads files, and writes captured values straight to your `.env`.
 
+## Why Chromeflow?
+
+Existing browser automation tools (Playwright, Browser Use, Puppeteer) launch a **fresh, empty browser** — no cookies, no sessions, no extensions. Every time they start, you're logged out of everything and can't handle 2FA.
+
+Chromeflow works in **your actual Chrome browser**, where you're already logged into Stripe, AWS, Supabase, and everything else. Claude automates what it can (clicking buttons, filling forms, uploading files) and pauses for anything that needs you (passwords, 2FA, payment details).
+
+| | Chromeflow | Playwright / Browser Use |
+|---|---|---|
+| **Browser** | Your real Chrome (sessions intact) | Fresh instance, logged out of everything |
+| **Auth / 2FA** | Already handled — pauses when needed | Can't handle — blocks completely |
+| **Page understanding** | DOM queries (fast, cheap, reliable) | Screenshots + vision model (slow, expensive) |
+| **Human-in-the-loop** | Built-in guide panel, highlights, pauses | Fully autonomous, no interaction |
+| **Integration** | MCP server for Claude Code | Standalone, not Claude Code aware |
+| **Credential capture** | Reads API keys → writes to `.env` | Not designed for this |
+
 ## How it works
 
 Chromeflow is two things that work together:
@@ -54,20 +69,22 @@ Claude will navigate, highlight steps, click what it can, pause for anything sen
 | Capability | Tools |
 |------------|-------|
 | Navigate pages, open new tabs | `open_page`, `list_tabs`, `switch_to_tab` |
-| Click buttons and links | `click_element` |
-| Fill single fields | `fill_input` |
+| Click buttons and links | `click_element` (with `nth` for duplicates) |
+| Fill single fields | `fill_input` (with `nth` for duplicates) |
 | Fill multiple fields in one call | `fill_form` |
 | Upload files (even hidden inputs) | `set_file_input` |
-| Read page content as text | `get_page_text` |
+| Read page content as text | `get_page_text` (with `selector` scoping) |
 | Inspect all form fields | `get_form_fields` |
 | Scroll to a known element | `scroll_to_element` |
 | Highlight elements for the user | `highlight_region`, `find_and_highlight` |
 | Wait for the user to click | `wait_for_click` |
 | Wait for async changes | `wait_for_selector` |
 | Run arbitrary JS | `execute_script` |
+| Read browser console output | `get_console_logs` |
 | Capture credentials to `.env` | `read_element`, `write_to_env` |
 | Screenshot (element location only) | `take_screenshot` |
 | Screenshot + save + copy to clipboard | `take_and_copy_screenshot` |
+| Screenshot the terminal window | `capture_terminal` |
 | Save/restore form state across tabs | `save_page_state`, `restore_page_state` |
 | Show a step-by-step guide panel | `show_guide_panel`, `mark_step_done` |
 
@@ -78,6 +95,10 @@ Claude will navigate, highlight steps, click what it can, pause for anything sen
 ```
 set_file_input("Upload", "/Users/you/Downloads/task.zip")
 ```
+
+### Terminal screenshots
+
+`capture_terminal` screenshots the terminal window (Terminal, iTerm2, Warp, VS Code, Ghostty, etc.) and saves it as a PNG. Use this with `set_file_input` to upload terminal output to a web form.
 
 ### Dedicated Claude window
 
