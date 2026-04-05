@@ -7,15 +7,18 @@
  */
 
 const WS_URL = "ws://localhost:7878";
-const RECONNECT_DELAY_MS = 3000;
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 30000;
 
 let ws: WebSocket | null = null;
+let reconnectDelay = RECONNECT_BASE_MS;
 
 function connect() {
   ws = new WebSocket(WS_URL);
 
   ws.onopen = () => {
     console.log("[chromeflow offscreen] Connected to MCP server");
+    reconnectDelay = RECONNECT_BASE_MS; // reset backoff on successful connection
     ws!.send(JSON.stringify({ type: "ready" }));
     updateStatus("connected");
   };
@@ -50,9 +53,10 @@ function connect() {
   };
 
   ws.onclose = () => {
-    console.log("[chromeflow offscreen] Disconnected. Reconnecting...");
+    console.log(`[chromeflow offscreen] Disconnected. Reconnecting in ${reconnectDelay}ms...`);
     updateStatus("disconnected");
-    setTimeout(connect, RECONNECT_DELAY_MS);
+    setTimeout(connect, reconnectDelay);
+    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS); // exponential backoff
   };
 
   ws.onerror = (err) => {
