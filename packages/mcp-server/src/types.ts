@@ -44,7 +44,8 @@ export type ServerMessage =
   | { type: "restore_page_state"; requestId: string; state: PageFieldState[] }
   | { type: "list_tabs"; requestId: string }
   | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }> }
-  | { type: "set_file_input"; requestId: string; hint: string; filePath: string };
+  | { type: "set_file_input"; requestId: string; hint: string; filePath: string }
+  | { type: "type_text"; requestId: string; text: string };
 
 export type PageFieldState = {
   selector: string;

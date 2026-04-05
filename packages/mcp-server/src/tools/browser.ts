@@ -287,6 +287,28 @@ Unlike get_elements, this includes ALL fields (even far below the fold) and is n
   );
 
   server.tool(
+    "type_text",
+    `Type text into the currently focused element using trusted keyboard events via Chrome DevTools Protocol.
+Unlike fill_input (which sets .value programmatically), this produces real keystrokes that pass isTrusted checks. Use this when:
+- fill_input fails because the site validates event.isTrusted (e.g. Outlier, DataAnnotation code editors)
+- The target is a shadow DOM input, custom web component, or heavily guarded editor
+- You need to type into a CodeMirror/Monaco/Ace editor that rejects programmatic value changes
+
+Usage: first click_element or execute_script to focus the target field, then call type_text with the content.
+To clear existing content before typing, use execute_script("document.execCommand('selectAll')") first.`,
+    {
+      text: z.string().describe("The text to type into the focused element"),
+    },
+    async ({ text }) => {
+      const response = await bridge.request({ type: "type_text", text });
+      const r = response as { success?: boolean; message?: string };
+      return {
+        content: [{ type: "text", text: r.message ?? (r.success ? "Text typed successfully" : "Failed to type text") }],
+      };
+    }
+  );
+
+  server.tool(
     "set_file_input",
     `Upload a file to a file input field. Works even when the input is visually hidden behind a custom drag-and-drop zone.
 Uses Chrome DevTools Protocol to set the file — the only way to bypass the browser's file-input script restriction.

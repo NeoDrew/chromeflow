@@ -43,6 +43,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         get_page_text() or wait_for_selector(".success") — ALWAYS confirm after click; click_element returns after 600ms regardless of outcome
         fill_form([{label, value}, ...])    — fill multiple fields in one call; prefer over repeated fill_input
         fill_input("Product name", "Pro")   — fill a single field (works on React, CodeMirror, and contenteditable)
+        type_text("hello world")            — type via trusted keyboard events (use when fill_input fails isTrusted checks)
         set_file_input("Upload", "/abs/path/to/file.zip") — upload a file to a file input (even hidden inputs)
         clear_overlays()                    — call this immediately after fill_input/fill_form succeeds
         scroll_to_element("label text")     — jump directly to a known field; prefer this over scroll_page when the target is known
@@ -155,13 +156,17 @@ screenshot to check what happened.
 **Multiple elements with the same label** (e.g. many "Remove" buttons):
 `click_element("Remove", nth=3)` — use `nth` (1-based) to target the specific one by order top-to-bottom. Check `get_form_fields` or `get_page_text` first to determine which index corresponds to the right section.
 
-**`fill_input` not found:**
+**`fill_input` not found or rejected by the page:**
 1. `click_element(hint)` to focus the field, then retry `fill_input`
-2. `find_and_highlight(hint, "Click here — I'll fill it in")` (no `valueToType`) then
+2. If the site rejects programmatic input (isTrusted check, shadow DOM, custom editors):
+   - `click_element(hint)` to focus the field
+   - `execute_script("document.execCommand('selectAll')")` to clear existing content
+   - `type_text("new value")` — uses CDP trusted keyboard events that pass isTrusted checks
+3. `find_and_highlight(hint, "Click here — I'll fill it in")` (no `valueToType`) then
    `wait_for_click()` — the user's click focuses the field and `fill_input`'s active-element
    fallback fills it automatically
-3. Call `clear_overlays()` after `fill_input` succeeds
-4. Only use `valueToType` when the user must personally type the value (password, personal data)
+4. Call `clear_overlays()` after `fill_input` succeeds
+5. Only use `valueToType` when the user must personally type the value (password, personal data)
 
 **Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots.
 
