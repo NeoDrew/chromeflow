@@ -637,12 +637,46 @@ async function handleMcpMessage(msg: {
       const tabId = tab.id!;
       const text = msg.text as string;
 
-      // Use CDP Input.insertText to produce trusted keyboard events.
-      // This bypasses isTrusted checks and works on shadow DOM, contenteditable,
-      // CodeMirror, Monaco, React inputs, and CSP-strict sites.
+      // Type character-by-character with individual keyDown/char/keyUp events
+      // and randomized delays to produce input indistinguishable from real typing.
       await (chrome.debugger as any).attach({ tabId }, "1.3");
       try {
-        await (chrome.debugger as any).sendCommand({ tabId }, "Input.insertText", { text });
+        for (let i = 0; i < text.length; i++) {
+          const char = text[i];
+
+          if (char === "\n") {
+            // Enter key
+            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+              type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
+            });
+            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+              type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
+            });
+          } else if (char === "\t") {
+            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+              type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9,
+            });
+            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+              type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9,
+            });
+          } else {
+            // Regular character: keyDown → char → keyUp
+            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+              type: "keyDown", key: char, text: char,
+            });
+            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+              type: "char", key: char, text: char,
+            });
+            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+              type: "keyUp", key: char,
+            });
+          }
+
+          // Randomized delay between keystrokes: 30-90ms base, occasional longer pauses
+          const baseDelay = 30 + Math.random() * 60;
+          const pause = Math.random() < 0.05 ? 200 + Math.random() * 300 : baseDelay;
+          await new Promise((r) => setTimeout(r, pause));
+        }
       } finally {
         await (chrome.debugger as any).detach({ tabId }).catch(() => {});
       }
@@ -651,7 +685,7 @@ async function handleMcpMessage(msg: {
         type: "action_done",
         requestId: msg.requestId,
         success: true,
-        message: `Typed ${text.length} characters via trusted keyboard input`,
+        message: `Typed ${text.length} characters via individual keystrokes`,
       };
     }
 
