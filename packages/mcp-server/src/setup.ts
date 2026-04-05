@@ -186,6 +186,8 @@ const CHROMEFLOW_TOOLS = [
   "capture_terminal",
   // v0.1.42+
   "set_dialog_response",
+  // v0.1.46+
+  "type_text",
 ].map((t) => `mcp__chromeflow__${t}`);
 
 function patchSettingsLocalJson(cwd: string) {

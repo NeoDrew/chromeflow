@@ -632,6 +632,29 @@ async function handleMcpMessage(msg: {
       return { type: "click_element_response", success: true, message };
     }
 
+    case "type_text": {
+      const tab = await getActiveTab();
+      const tabId = tab.id!;
+      const text = msg.text as string;
+
+      // Use CDP Input.insertText to produce trusted keyboard events.
+      // This bypasses isTrusted checks and works on shadow DOM, contenteditable,
+      // CodeMirror, Monaco, React inputs, and CSP-strict sites.
+      await (chrome.debugger as any).attach({ tabId }, "1.3");
+      try {
+        await (chrome.debugger as any).sendCommand({ tabId }, "Input.insertText", { text });
+      } finally {
+        await (chrome.debugger as any).detach({ tabId }).catch(() => {});
+      }
+
+      return {
+        type: "action_done",
+        requestId: msg.requestId,
+        success: true,
+        message: `Typed ${text.length} characters via trusted keyboard input`,
+      };
+    }
+
     case "set_file_input": {
       const tab = await getActiveTab();
 
