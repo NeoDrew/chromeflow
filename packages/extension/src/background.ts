@@ -492,41 +492,94 @@ async function handleMcpMessage(msg: {
       if (!isScriptableUrl(tab.url)) {
         throw new Error(`Cannot execute script on ${tab.url}`);
       }
-      const results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id! },
-        world: "MAIN",
-        func: (code: string) => {
-          let result: unknown;
-          try {
-            result = (0, eval)(code);
-          } catch (e) {
-            // Top-level `return` statements are illegal outside a function.
-            // Retry wrapped in an IIFE so they work as expected.
-            if (String(e).includes("Illegal return")) {
-              try {
-                result = (0, eval)(`(function() { ${code} })()`);
-              } catch (e2) {
-                result = `Error: ${e2}`;
-              }
-            } else {
-              result = `Error: ${e}`;
-            }
-          }
-          const captured = (window as any)._alertCapture ?? null;
-          if (captured) (window as any)._alertCapture = null;
-          return JSON.stringify({ result: String(result ?? "undefined"), alert: captured });
-        },
-        args: [msg.code as string],
-      });
+      const code = msg.code as string;
+      const tabId = tab.id!;
+
+      // Try normal content-script injection first
       let result = "undefined";
       let alertMsg: string | null = null;
+      let cspBlocked = false;
+
       try {
-        const parsed = JSON.parse(String(results[0]?.result ?? "{}"));
-        result = parsed.result ?? "undefined";
-        alertMsg = parsed.alert ?? null;
-      } catch {
-        result = String(results[0]?.result ?? "undefined");
+        const results = await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          func: (code: string) => {
+            let result: unknown;
+            try {
+              result = (0, eval)(code);
+            } catch (e) {
+              if (String(e).includes("Illegal return")) {
+                try {
+                  result = (0, eval)(`(function() { ${code} })()`);
+                } catch (e2) {
+                  result = `Error: ${e2}`;
+                }
+              } else {
+                result = `Error: ${e}`;
+              }
+            }
+            const captured = (window as any)._alertCapture ?? null;
+            if (captured) (window as any)._alertCapture = null;
+            return JSON.stringify({ result: String(result ?? "undefined"), alert: captured });
+          },
+          args: [code],
+        });
+        try {
+          const parsed = JSON.parse(String(results[0]?.result ?? "{}"));
+          result = parsed.result ?? "undefined";
+          alertMsg = parsed.alert ?? null;
+        } catch {
+          result = String(results[0]?.result ?? "undefined");
+        }
+        // Check if the result indicates CSP blocked eval
+        if (result.includes("EvalError") || result.includes("Content Security Policy") || result.includes("unsafe-eval")) {
+          cspBlocked = true;
+        }
+      } catch (e) {
+        const errStr = String(e);
+        if (errStr.includes("EvalError") || errStr.includes("Content Security Policy") || errStr.includes("unsafe-eval")) {
+          cspBlocked = true;
+        } else {
+          throw e;
+        }
       }
+
+      // CSP blocked eval — fall back to CDP Runtime.evaluate which bypasses CSP
+      if (cspBlocked) {
+        await (chrome.debugger as any).attach({ tabId }, "1.3");
+        try {
+          // Wrap in IIFE to support return statements; capture alert
+          const wrappedCode = `(function() {
+            var __result;
+            try { __result = (0, eval)(${JSON.stringify(code)}); }
+            catch(e) {
+              if (String(e).includes("Illegal return")) {
+                try { __result = (0, eval)("(function() { " + ${JSON.stringify(code)} + " })()"); }
+                catch(e2) { __result = "Error: " + e2; }
+              } else { __result = "Error: " + e; }
+            }
+            var __alert = window._alertCapture || null;
+            if (__alert) window._alertCapture = null;
+            return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
+          })()`;
+          const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
+            expression: wrappedCode,
+            returnByValue: true,
+            allowUnsafeEvalBlockedByCSP: true,
+          }) as { result: { value?: string }; exceptionDetails?: unknown };
+          try {
+            const parsed = JSON.parse(evalResult.result.value ?? "{}");
+            result = parsed.result ?? "undefined";
+            alertMsg = parsed.alert ?? null;
+          } catch {
+            result = String(evalResult.result.value ?? "undefined");
+          }
+        } finally {
+          await (chrome.debugger as any).detach({ tabId }).catch(() => {});
+        }
+      }
+
       return {
         type: "script_response",
         requestId: msg.requestId,
