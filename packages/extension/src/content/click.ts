@@ -38,10 +38,17 @@ export function clickElement(
     stateNote = ` — now ${el.checked ? "checked" : "unchecked"}`;
   }
 
-  // Warn if element has zero dimensions (likely inside a collapsed panel)
+  // Warn if element is truly invisible (0x0 bounding rect AND no offset dimensions
+  // AND no client rects). This avoids false warnings on elements that are clipped
+  // but still receive click events fine (e.g. hidden checkboxes with label proxies).
   const rect = el.getBoundingClientRect();
-  if (rect.width === 0 && rect.height === 0) {
-    stateNote += " — WARNING: element has 0×0 dimensions (likely inside a collapsed or hidden panel). The click may not have had any effect. Try expanding the parent panel first.";
+  const htmlEl = el as HTMLElement;
+  if (
+    rect.width === 0 && rect.height === 0 &&
+    !htmlEl.offsetWidth && !htmlEl.offsetHeight &&
+    el.getClientRects().length === 0
+  ) {
+    stateNote += " — WARNING: element has 0×0 dimensions (likely inside a collapsed or hidden panel). The click may not have had any effect. Try expanding the parent panel first, or use execute_script to click directly.";
   }
 
   return { success: true, message: `Clicked "${label}"${stateNote}` };

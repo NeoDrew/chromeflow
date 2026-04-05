@@ -185,13 +185,13 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "get_elements": {
-      const SELECTORS = "input:not([type=hidden]), textarea, select, button, a[href], [role=button], [role=link]";
+      const SELECTORS = 'input:not([type=hidden]), textarea, select, button, a[href], [role=button], [role=link], [role=menuitem], [role=option], [role=tab], [onclick], [tabindex]';
       const results: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> = [];
       let idx = 0;
       for (const el of Array.from(document.querySelectorAll<HTMLElement>(SELECTORS))) {
         const rect = el.getBoundingClientRect();
         if (rect.width === 0 || rect.height === 0) continue;
-        if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+        // No viewport filter — include off-screen elements so Claude can see the full page
         const s = getComputedStyle(el);
         if (s.visibility === "hidden" || s.display === "none" || s.opacity === "0") continue;
 
@@ -466,14 +466,24 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "save_page_state": {
       const state: Array<{ selector: string; type: string; value: string; checked?: boolean }> = [];
+      // Track positional counters per tag for fallback selectors
+      const tagCounts: Record<string, number> = {};
       for (const el of Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("input, textarea, select"))) {
-        if (!el.id && !el.name) continue; // skip unadressable elements
+        const tag = el.tagName.toLowerCase();
+        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
         const isCheckable = el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio");
-        const selector = el.id
-          ? `#${el.id}`
-          : isCheckable
-          ? `[name="${el.name}"][value="${(el as HTMLInputElement).value}"]`
-          : `[name="${el.name}"]`;
+        // Build selector: prefer id > name > positional nth-of-type fallback
+        let selector: string;
+        if (el.id) {
+          selector = `#${CSS.escape(el.id)}`;
+        } else if (el.name) {
+          selector = isCheckable
+            ? `[name="${el.name}"][value="${(el as HTMLInputElement).value}"]`
+            : `[name="${el.name}"]`;
+        } else {
+          // Fallback: use tag + nth-of-type for elements with no id or name
+          selector = `${tag}:nth-of-type(${tagCounts[tag]})`;
+        }
         if (isCheckable) {
           state.push({ selector, type: (el as HTMLInputElement).type, value: (el as HTMLInputElement).value, checked: (el as HTMLInputElement).checked });
         } else {
@@ -486,6 +496,16 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         const content = editor.querySelector(".cm-content")?.textContent ?? "";
         if (content.trim()) state.push({ selector: `.cm-editor:nth-of-type(${i + 1})`, type: "codemirror", value: content });
       });
+      // Monaco editors — save via model value if available
+      try {
+        const monacoModels = (window as any).monaco?.editor?.getModels?.() as any[] | undefined;
+        if (monacoModels) {
+          monacoModels.forEach((model: any, i: number) => {
+            const content = model.getValue?.() ?? "";
+            if (content.trim()) state.push({ selector: `monaco-model-${i}`, type: "monaco", value: content });
+          });
+        }
+      } catch { /* monaco not available */ }
       return { type: "save_state_response", requestId: msg.requestId, state };
     }
 
@@ -494,7 +514,6 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       let restored = 0;
       for (const item of stateItems) {
         if (item.type === "codemirror") {
-          // Find the nth .cm-editor by parsing the selector
           const match = item.selector.match(/:nth-of-type\((\d+)\)/);
           const n = match ? parseInt(match[1], 10) - 1 : 0;
           const editors = document.querySelectorAll<HTMLElement>(".cm-editor");
@@ -508,6 +527,15 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
               restored++;
             }
           }
+          continue;
+        }
+        if (item.type === "monaco") {
+          try {
+            const match = item.selector.match(/monaco-model-(\d+)/);
+            const i = match ? parseInt(match[1], 10) : 0;
+            const models = (window as any).monaco?.editor?.getModels?.();
+            if (models?.[i]) { models[i].setValue(item.value); restored++; }
+          } catch { /* monaco not available */ }
           continue;
         }
         try {
