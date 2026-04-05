@@ -181,8 +181,17 @@ async function getActiveTab(): Promise<chrome.tabs.Tab> {
     ? { active: true, windowId: claudeWindowId }
     : { active: true, currentWindow: true };
   const [tab] = await chrome.tabs.query(query);
-  if (!tab?.id) throw new Error("No active tab found");
-  return tab;
+  if (tab?.id) return tab;
+
+  // No active tab — create a new Chrome window and assign it
+  const win = await chrome.windows.create({ focused: true });
+  if (win?.id) {
+    claudeWindowId = win.id;
+    await chrome.storage.local.set({ claudeWindowId: win.id });
+  }
+  const [newTab] = await chrome.tabs.query({ active: true, windowId: win?.id });
+  if (!newTab?.id) throw new Error("Failed to create new Chrome window");
+  return newTab;
 }
 
 function isScriptableUrl(url: string | undefined): boolean {
