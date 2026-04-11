@@ -1,29 +1,49 @@
 /**
- * Offscreen document — maintains a persistent WebSocket connection to the
- * chromeflow MCP server and relays messages to/from the background service worker.
+ * Offscreen document — maintains persistent WebSocket connections to one or
+ * more chromeflow MCP servers (one per port in the range 7878-7888).
  *
- * This runs in a hidden document that Chrome keeps alive, avoiding the
- * service worker sleep limitation.
+ * Each connection represents a separate Claude Code instance. Messages from
+ * each connection are tagged with the source port so the background script
+ * can route them to the correct assigned Chrome window.
  */
 
-const WS_URL = "ws://localhost:7878";
+const PORT_BASE = 7878;
+const PORT_MAX = 7888;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 
-let ws: WebSocket | null = null;
-let reconnectDelay = RECONNECT_BASE_MS;
+type Conn = {
+  port: number;
+  ws: WebSocket | null;
+  reconnectDelay: number;
+  connected: boolean;
+};
 
-function connect() {
-  ws = new WebSocket(WS_URL);
+const connections: Conn[] = [];
 
-  ws.onopen = () => {
-    console.log("[chromeflow offscreen] Connected to MCP server");
-    reconnectDelay = RECONNECT_BASE_MS; // reset backoff on successful connection
-    ws!.send(JSON.stringify({ type: "ready" }));
-    updateStatus("connected");
+for (let p = PORT_BASE; p <= PORT_MAX; p++) {
+  const conn: Conn = { port: p, ws: null, reconnectDelay: RECONNECT_BASE_MS, connected: false };
+  connections.push(conn);
+  connect(conn);
+}
+
+function connect(conn: Conn) {
+  try {
+    conn.ws = new WebSocket(`ws://localhost:${conn.port}`);
+  } catch {
+    scheduleReconnect(conn);
+    return;
+  }
+
+  conn.ws.onopen = () => {
+    console.log(`[chromeflow offscreen] Connected to MCP server on port ${conn.port}`);
+    conn.reconnectDelay = RECONNECT_BASE_MS;
+    conn.connected = true;
+    conn.ws!.send(JSON.stringify({ type: "ready" }));
+    publishLivePorts();
   };
 
-  ws.onmessage = async (event) => {
+  conn.ws.onmessage = (event) => {
     let msg: { type: string; requestId: string; [key: string]: unknown };
     try {
       msg = JSON.parse(event.data);
@@ -31,48 +51,54 @@ function connect() {
       return;
     }
 
-    // Forward to background, get response
+    // Forward to background, get response. Tag with source port so background
+    // can route to the right Claude window assignment.
     chrome.runtime.sendMessage(
-      { source: "chromeflow-offscreen", payload: msg },
+      { source: "chromeflow-offscreen", port: conn.port, payload: msg },
       (response: { ok: boolean; result?: unknown; error?: string }) => {
         if (chrome.runtime.lastError) {
-          sendError(msg.requestId, chrome.runtime.lastError.message ?? "Unknown error");
+          sendError(conn, msg.requestId, chrome.runtime.lastError.message ?? "Unknown error");
           return;
         }
         if (!response.ok) {
-          sendError(msg.requestId, response.error ?? "Unknown error");
+          sendError(conn, msg.requestId, response.error ?? "Unknown error");
           return;
         }
-        // Send the result back to the MCP server with the requestId
         const result = response.result as Record<string, unknown>;
-        ws?.send(
-          JSON.stringify({ ...result, requestId: msg.requestId })
-        );
+        conn.ws?.send(JSON.stringify({ ...result, requestId: msg.requestId }));
       }
     );
   };
 
-  ws.onclose = () => {
-    console.log(`[chromeflow offscreen] Disconnected. Reconnecting in ${reconnectDelay}ms...`);
-    updateStatus("disconnected");
-    setTimeout(connect, reconnectDelay);
-    reconnectDelay = Math.min(reconnectDelay * 2, RECONNECT_MAX_MS); // exponential backoff
+  conn.ws.onclose = () => {
+    if (conn.connected) {
+      console.log(`[chromeflow offscreen] Disconnected from port ${conn.port}`);
+    }
+    conn.connected = false;
+    conn.ws = null;
+    publishLivePorts();
+    scheduleReconnect(conn);
   };
 
-  ws.onerror = (err) => {
-    console.error("[chromeflow offscreen] WS error", err);
+  conn.ws.onerror = () => {
+    // Errors are followed by onclose, which handles reconnect.
   };
 }
 
-function sendError(requestId: string, message: string) {
-  ws?.send(JSON.stringify({ type: "error", requestId, message }));
+function scheduleReconnect(conn: Conn) {
+  setTimeout(() => connect(conn), conn.reconnectDelay);
+  conn.reconnectDelay = Math.min(conn.reconnectDelay * 2, RECONNECT_MAX_MS);
 }
 
-function updateStatus(status: "connected" | "disconnected") {
-  // Notify popup if open
-  chrome.runtime.sendMessage({ source: "chromeflow-offscreen", type: "status", status }).catch(() => {
+function sendError(conn: Conn, requestId: string, message: string) {
+  conn.ws?.send(JSON.stringify({ type: "error", requestId, message }));
+}
+
+async function publishLivePorts() {
+  const livePorts = connections.filter((c) => c.connected).map((c) => c.port);
+  await chrome.storage.local.set({ chromeflowLivePorts: livePorts });
+  // Also notify popup if open
+  chrome.runtime.sendMessage({ source: "chromeflow-offscreen", type: "status", livePorts }).catch(() => {
     // Popup may not be open, ignore
   });
 }
-
-connect();
