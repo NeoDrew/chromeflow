@@ -108,6 +108,26 @@ set_file_input("Upload", "/Users/you/Downloads/task.zip")
 
 Click the Chromeflow extension icon and use **"Use this window for Claude"** to lock Claude's browser operations to a specific Chrome window. This lets you freely use other Chrome windows without Claude interfering.
 
+### Running multiple Claude Code instances in parallel
+
+Chromeflow supports up to 11 Claude Code sessions running in parallel, each automating a different Chrome window without touching the others.
+
+**How it works:**
+- Each CC session spawns its own Chromeflow MCP server, which auto-discovers a free port in the range `7878-7888` (first session gets 7878, second gets 7879, etc.).
+- The Chrome extension maintains one WebSocket connection per port and tracks per-port window assignments.
+- Every browser tool call is routed to the Chrome window assigned to the port the request came in on.
+
+**Setup:**
+1. Start your first Claude Code session as normal — its Chromeflow will claim port 7878.
+2. Start a second CC session in another terminal — its Chromeflow auto-falls-back to 7879.
+3. Click the Chromeflow extension icon. The popup now shows **one row per instance** (Port 7878, Port 7879, ...) each with a green dot when live.
+4. In Chrome **window A**, open the popup and click **"Use this window"** next to Port 7878.
+5. Switch to **window B**, open the popup, and click **"Use this window"** next to Port 7879.
+
+That's it. Each CC session now drives its own Chrome window — you can run a DataAnnotation task in one window while the other session fills out a Stripe dashboard in another, with zero collision.
+
+Single-instance usage is unchanged and fully backwards compatible — the old per-window assignment is auto-migrated on first load.
+
 ## Adding to another project
 
 Run setup from the new project's directory — the MCP server is already registered globally, this just drops `CLAUDE.md` and tool permissions into the project:
