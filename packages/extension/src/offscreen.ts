@@ -94,11 +94,12 @@ function sendError(conn: Conn, requestId: string, message: string) {
   conn.ws?.send(JSON.stringify({ type: "error", requestId, message }));
 }
 
-async function publishLivePorts() {
+function publishLivePorts() {
+  // Offscreen documents cannot access chrome.storage directly — forward the
+  // live ports to the background worker via runtime messaging, and let it
+  // persist to storage and broadcast to the popup.
   const livePorts = connections.filter((c) => c.connected).map((c) => c.port);
-  await chrome.storage.local.set({ chromeflowLivePorts: livePorts });
-  // Also notify popup if open
   chrome.runtime.sendMessage({ source: "chromeflow-offscreen", type: "status", livePorts }).catch(() => {
-    // Popup may not be open, ignore
+    // Background may be starting up, ignore
   });
 }
