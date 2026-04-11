@@ -1,10 +1,10 @@
-import { execSync } from "child_process";
 import { WebSocketServer, WebSocket } from "ws";
 import type { ClientMessage, DistributiveOmit, ServerMessage } from "./types.js";
 
 type ServerMessagePayload = DistributiveOmit<ServerMessage, "requestId">;
 
-const WS_PORT = 7878;
+const WS_PORT_BASE = 7878;
+const WS_PORT_MAX = 7888;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 type PendingRequest = {
@@ -17,25 +17,26 @@ export class WsBridge {
   private wss!: WebSocketServer;
   private client: WebSocket | null = null;
   private pending = new Map<string, PendingRequest>();
+  private port: number = WS_PORT_BASE;
 
   constructor() {
-    this.bind();
+    this.bind(WS_PORT_BASE);
   }
 
-  private bind() {
-    const wss = new WebSocketServer({ port: WS_PORT });
+  private bind(tryPort: number) {
+    if (tryPort > WS_PORT_MAX) {
+      console.error(
+        `[chromeflow] All ports ${WS_PORT_BASE}-${WS_PORT_MAX} are in use. Cannot start MCP server.`
+      );
+      return;
+    }
+
+    const wss = new WebSocketServer({ port: tryPort });
 
     wss.on("error", (err: Error & { code?: string }) => {
       if (err.code === "EADDRINUSE") {
-        console.error(
-          `[chromeflow] Port ${WS_PORT} in use — killing stale process and retrying...`
-        );
-        try {
-          execSync(`lsof -ti:${WS_PORT} | xargs kill -9`, { stdio: "ignore" });
-        } catch {
-          // Nothing holding the port, or kill failed — wait and retry anyway
-        }
-        setTimeout(() => this.bind(), 800);
+        console.error(`[chromeflow] Port ${tryPort} in use, trying ${tryPort + 1}...`);
+        this.bind(tryPort + 1);
       } else {
         console.error("[chromeflow] WS server error:", err);
       }
@@ -43,7 +44,8 @@ export class WsBridge {
 
     wss.on("listening", () => {
       this.wss = wss;
-      console.error(`[chromeflow] WS bridge listening on ws://localhost:${WS_PORT}`);
+      this.port = tryPort;
+      console.error(`[chromeflow] WS bridge listening on ws://localhost:${tryPort}`);
     });
 
     wss.on("connection", (ws) => {

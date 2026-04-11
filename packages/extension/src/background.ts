@@ -9,24 +9,41 @@
 
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 
-// ─── Claude window assignment ───────────────────────────────────────────────
-// When set, all tab operations target this specific window so the user can
-// freely use other Chrome windows without Claude hijacking them.
-let claudeWindowId: number | null = null;
+// ─── Per-instance Claude window assignments ────────────────────────────────
+// Each Claude Code instance is identified by the WebSocket port it connects on
+// (7878-7888). Each instance can be assigned its own Chrome window so multiple
+// CC instances can run automations in parallel without colliding.
+let claudeInstances: Record<string, number> = {};
 
-chrome.storage.local.get("claudeWindowId").then(({ claudeWindowId: id }) => {
-  claudeWindowId = (id as number) ?? null;
+chrome.storage.local.get(["claudeInstances", "claudeWindowId"]).then(async ({ claudeInstances: stored, claudeWindowId: legacy }) => {
+  claudeInstances = (stored as Record<string, number>) ?? {};
+  // Migrate legacy single-window storage → port 7878 instance
+  if (typeof legacy === "number" && claudeInstances["7878"] === undefined) {
+    claudeInstances["7878"] = legacy;
+    await chrome.storage.local.set({ claudeInstances });
+    await chrome.storage.local.remove("claudeWindowId");
+  }
 });
 chrome.storage.onChanged.addListener((changes) => {
-  if ("claudeWindowId" in changes) {
-    claudeWindowId = (changes.claudeWindowId.newValue as number) ?? null;
+  if ("claudeInstances" in changes) {
+    claudeInstances = (changes.claudeInstances.newValue as Record<string, number>) ?? {};
   }
 });
 
-// Pending click-watch callbacks keyed by requestId
+function getWindowId(port: number): number | null {
+  return claudeInstances[String(port)] ?? null;
+}
+
+async function setWindowId(port: number, windowId: number): Promise<void> {
+  claudeInstances[String(port)] = windowId;
+  await chrome.storage.local.set({ claudeInstances });
+}
+
+// Pending click-watch callbacks keyed by requestId. Each entry tracks the
+// source port so we know which Claude window's tabs to watch.
 const pendingClicks = new Map<
   string,
-  (result: { type: string; url?: string }) => void
+  { port: number; cb: (result: { type: string; url?: string }) => void }
 >();
 
 // Recent navigation completions per tab — used to resolve click-watches that
@@ -55,7 +72,13 @@ chrome.runtime.onStartup.addListener(async () => { await ensureOffscreen(); });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.source === "chromeflow-offscreen") {
-    handleMcpMessage(msg.payload)
+    // Handle status broadcasts that don't need a response
+    if (msg.type === "status") {
+      sendResponse({ ok: true });
+      return true;
+    }
+    const port: number = typeof msg.port === "number" ? msg.port : 7878;
+    handleMcpMessage(msg.payload, port)
       .then((result) => sendResponse({ ok: true, result }))
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true;
@@ -63,10 +86,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   if (msg.source === "chromeflow-content") {
     if (msg.type === "click_detected") {
-      const cb = pendingClicks.get(msg.requestId);
-      if (cb) {
+      const entry = pendingClicks.get(msg.requestId);
+      if (entry) {
         pendingClicks.delete(msg.requestId);
-        cb({ type: "click_detected" });
+        entry.cb({ type: "click_detected" });
       }
     }
     if (msg.type === "get_state") {
@@ -90,13 +113,15 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   const url = tab.url ?? "";
   recentNavigations.set(tabId, { url, time: Date.now() });
 
-  for (const [requestId, cb] of pendingClicks) {
-    // Any navigation on the active tab in Claude's window resolves the pending click-watch
-    const windowQuery = claudeWindowId ? { active: true, windowId: claudeWindowId } : { active: true, currentWindow: true };
+  for (const [requestId, entry] of pendingClicks) {
+    // Resolve the pending click-watch only for navigations in the watching
+    // instance's assigned Chrome window.
+    const wid = getWindowId(entry.port);
+    const windowQuery = wid ? { active: true, windowId: wid } : { active: true, currentWindow: true };
     chrome.tabs.query(windowQuery, ([activeTab]) => {
       if (activeTab?.id === tabId) {
         pendingClicks.delete(requestId);
-        cb({ type: "navigation_complete", url });
+        entry.cb({ type: "navigation_complete", url });
       }
     });
   }
@@ -176,18 +201,18 @@ async function injectAlertCapture(tabId: number): Promise<void> {
   }
 }
 
-async function getActiveTab(): Promise<chrome.tabs.Tab> {
-  const query = claudeWindowId
-    ? { active: true, windowId: claudeWindowId }
+async function getActiveTab(port: number): Promise<chrome.tabs.Tab> {
+  const wid = getWindowId(port);
+  const query = wid
+    ? { active: true, windowId: wid }
     : { active: true, currentWindow: true };
   const [tab] = await chrome.tabs.query(query);
   if (tab?.id) return tab;
 
-  // No active tab — create a new Chrome window and assign it
+  // No active tab — create a new Chrome window and assign it to this instance
   const win = await chrome.windows.create({ focused: true });
   if (win?.id) {
-    claudeWindowId = win.id;
-    await chrome.storage.local.set({ claudeWindowId: win.id });
+    await setWindowId(port, win.id);
   }
   const [newTab] = await chrome.tabs.query({ active: true, windowId: win?.id });
   if (!newTab?.id) throw new Error("Failed to create new Chrome window");
@@ -264,17 +289,18 @@ async function handleMcpMessage(msg: {
   type: string;
   requestId: string;
   [key: string]: unknown;
-}): Promise<unknown> {
+}, port: number): Promise<unknown> {
   switch (msg.type) {
     case "navigate": {
       let targetTab: chrome.tabs.Tab;
       if (msg.newTab) {
         const createProps: chrome.tabs.CreateProperties = { url: msg.url as string, active: true };
-        if (claudeWindowId) createProps.windowId = claudeWindowId;
+        const wid = getWindowId(port);
+        if (wid) createProps.windowId = wid;
         targetTab = await chrome.tabs.create(createProps);
       } else {
         // Reuse active tab
-        const active = await getActiveTab();
+        const active = await getActiveTab(port);
         await chrome.tabs.update(active.id!, { url: msg.url as string });
         targetTab = { ...active, id: active.id };
       }
@@ -293,7 +319,8 @@ async function handleMcpMessage(msg: {
 
     case "switch_to_tab": {
       const query = (msg.query as string).toLowerCase();
-      const allTabs = await chrome.tabs.query(claudeWindowId ? { windowId: claudeWindowId } : { currentWindow: true });
+      const wid = getWindowId(port);
+      const allTabs = await chrome.tabs.query(wid ? { windowId: wid } : { currentWindow: true });
       // Match by 1-based index, URL substring, or title substring
       const byIndex = parseInt(query, 10);
       let target: chrome.tabs.Tab | undefined;
@@ -315,7 +342,8 @@ async function handleMcpMessage(msg: {
     }
 
     case "list_tabs": {
-      const allTabs = await chrome.tabs.query(claudeWindowId ? { windowId: claudeWindowId } : { currentWindow: true });
+      const wid = getWindowId(port);
+      const allTabs = await chrome.tabs.query(wid ? { windowId: wid } : { currentWindow: true });
       const tabs = allTabs.map((t, i) => ({
         index: i + 1,
         title: t.title ?? "",
@@ -326,7 +354,7 @@ async function handleMcpMessage(msg: {
     }
 
     case "screenshot": {
-      const tab = await getActiveTab();
+      const tab = await getActiveTab(port);
       // Use window.innerWidth/Height from the page — these are always in CSS pixels.
       // tab.width/height can return physical pixels on some HiDPI systems, which would
       // cause the downscaled image to use the wrong coordinate space.
@@ -407,7 +435,7 @@ async function handleMcpMessage(msg: {
 
     case "start_click_watch": {
       const timeout = (msg.timeout as number) ?? 120_000;
-      const tab = await getActiveTab();
+      const tab = await getActiveTab(port);
 
       // Tell content script to start watching for a click on the highlight
       if (isScriptableUrl(tab.url)) {
@@ -440,12 +468,13 @@ async function handleMcpMessage(msg: {
           }
         }, timeout);
 
-        pendingClicks.set(msg.requestId, finish);
+        pendingClicks.set(msg.requestId, { port, cb: finish });
 
         // Race condition guard: if the user clicked a link and the page finished
         // loading before this handler ran, onUpdated already fired with no pending
         // clicks. Check recentNavigations and resolve immediately if so.
-        const wq = claudeWindowId ? { active: true, windowId: claudeWindowId } : { active: true, currentWindow: true };
+        const widWatch = getWindowId(port);
+        const wq = widWatch ? { active: true, windowId: widWatch } : { active: true, currentWindow: true };
         chrome.tabs.query(wq, ([activeTab]) => {
           if (!activeTab?.id) return;
           const nav = recentNavigations.get(activeTab.id);
@@ -460,7 +489,7 @@ async function handleMcpMessage(msg: {
       const selector = msg.selector as string;
       const timeout = (msg.timeout as number) ?? 30_000;
       const pollMs = (msg.refresh as number | undefined) ?? 500;
-      const tab = await getActiveTab();
+      const tab = await getActiveTab(port);
       return new Promise((resolve, reject) => {
         const start = Date.now();
         const check = async () => {
@@ -488,7 +517,7 @@ async function handleMcpMessage(msg: {
     }
 
     case "execute_script": {
-      const tab = await getActiveTab();
+      const tab = await getActiveTab(port);
       if (!isScriptableUrl(tab.url)) {
         throw new Error(`Cannot execute script on ${tab.url}`);
       }
@@ -589,7 +618,7 @@ async function handleMcpMessage(msg: {
     }
 
     case "click_element": {
-      const tab = await getActiveTab();
+      const tab = await getActiveTab(port);
       const result = await forwardToContentScript(tab, msg) as { success: boolean; message: string };
 
       if (!result.success) {
@@ -633,7 +662,7 @@ async function handleMcpMessage(msg: {
     }
 
     case "type_text": {
-      const tab = await getActiveTab();
+      const tab = await getActiveTab(port);
       const tabId = tab.id!;
       const text = msg.text as string;
 
@@ -690,7 +719,7 @@ async function handleMcpMessage(msg: {
     }
 
     case "set_file_input": {
-      const tab = await getActiveTab();
+      const tab = await getActiveTab(port);
 
       // Ask content script to find and tag the file input
       const tagResult = await forwardToContentScript(tab, {
@@ -770,7 +799,7 @@ async function handleMcpMessage(msg: {
       }
 
 
-      const tab = await getActiveTab();
+      const tab = await getActiveTab(port);
       return forwardToContentScript(tab, msg);
     }
   }

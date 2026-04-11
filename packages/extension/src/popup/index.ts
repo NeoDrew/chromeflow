@@ -1,70 +1,131 @@
-const dot = document.getElementById("dot")!;
-const statusText = document.getElementById("status-text")!;
-const windowStatus = document.getElementById("window-status")!;
-const btnSet = document.getElementById("btn-set") as HTMLButtonElement;
-const btnClear = document.getElementById("btn-clear") as HTMLButtonElement;
+/**
+ * Popup UI — shows all detected Claude Code instances (one per WS port)
+ * and lets the user assign a Chrome window to each.
+ */
 
-function setConnected(connected: boolean) {
-  dot.className = "dot" + (connected ? " connected" : "");
-  statusText.innerHTML = connected
-    ? "<span>MCP server connected</span>"
-    : "MCP server not found — start <code>chromeflow-mcp</code>";
-}
+const instancesEl = document.getElementById("instances")!;
 
-// Try connecting to WS to check status
-try {
-  const ws = new WebSocket("ws://localhost:7878");
-  ws.onopen = () => {
-    setConnected(true);
-    ws.close();
+type State = {
+  livePorts: number[];
+  instances: Record<string, number>; // port → windowId
+  currentWindowId: number;
+  validWindowIds: Set<number>;
+};
+
+async function loadState(): Promise<State> {
+  const [storage, currentWindow, allWindows] = await Promise.all([
+    chrome.storage.local.get(["chromeflowLivePorts", "claudeInstances"]),
+    chrome.windows.getCurrent(),
+    chrome.windows.getAll(),
+  ]);
+
+  const livePorts = (storage.chromeflowLivePorts as number[]) ?? [];
+  const instances = (storage.claudeInstances as Record<string, number>) ?? {};
+  const validWindowIds = new Set(allWindows.map((w) => w.id!).filter(Boolean));
+
+  // Clear assignments to closed windows
+  let dirty = false;
+  for (const port of Object.keys(instances)) {
+    if (!validWindowIds.has(instances[port])) {
+      delete instances[port];
+      dirty = true;
+    }
+  }
+  if (dirty) {
+    await chrome.storage.local.set({ claudeInstances: instances });
+  }
+
+  return {
+    livePorts,
+    instances,
+    currentWindowId: currentWindow.id!,
+    validWindowIds,
   };
-  ws.onerror = () => setConnected(false);
-  setTimeout(() => {
-    if (ws.readyState !== WebSocket.OPEN) setConnected(false);
-  }, 2000);
-} catch {
-  setConnected(false);
 }
 
-// ─── Window assignment ──────────────────────────────────────────────────────
-// Read/write chrome.storage.local directly — no background roundtrip needed.
+function render(state: State) {
+  // Show all live ports plus any ports that have assignments (even if disconnected)
+  const allPorts = new Set<number>([
+    ...state.livePorts,
+    ...Object.keys(state.instances).map(Number),
+  ]);
+  const sortedPorts = Array.from(allPorts).sort((a, b) => a - b);
 
-async function refreshWindowStatus() {
-  const currentWindow = await chrome.windows.getCurrent();
-  const { claudeWindowId } = await chrome.storage.local.get("claudeWindowId");
-
-  // Validate stored windowId is still open
-  let assignedId: number | null = claudeWindowId ?? null;
-  if (assignedId) {
-    try { await chrome.windows.get(assignedId); }
-    catch { await chrome.storage.local.remove("claudeWindowId"); assignedId = null; }
+  if (sortedPorts.length === 0) {
+    instancesEl.innerHTML = `
+      <div class="empty">
+        No Claude Code instances detected.<br>
+        Start chromeflow MCP in your project to begin.
+      </div>
+    `;
+    return;
   }
 
-  if (assignedId) {
-    const isThisWindow = assignedId === currentWindow.id;
-    windowStatus.className = "window-status assigned";
-    windowStatus.textContent = isThisWindow
-      ? "✓ This window is assigned"
-      : `Assigned to window #${assignedId} (not this one)`;
-    btnSet.textContent = isThisWindow ? "Reassign to this window" : "Use this window instead";
-    btnClear.style.display = "block";
-  } else {
-    windowStatus.className = "window-status";
-    windowStatus.textContent = "No window assigned";
-    btnSet.textContent = "Use this window for Claude";
-    btnClear.style.display = "none";
+  instancesEl.innerHTML = "";
+  for (const port of sortedPorts) {
+    const isLive = state.livePorts.includes(port);
+    const assignedWindowId = state.instances[String(port)];
+    const isThisWindow = assignedWindowId === state.currentWindowId;
+
+    const div = document.createElement("div");
+    div.className = "instance";
+
+    let statusText: string;
+    let statusClass = "instance-status";
+    let primaryBtnText: string;
+    let showClearBtn = false;
+
+    if (assignedWindowId) {
+      statusClass += " assigned";
+      statusText = isThisWindow
+        ? "✓ This window assigned"
+        : `Window #${assignedWindowId} (not this one)`;
+      primaryBtnText = isThisWindow ? "Reassign to this window" : "Use this window instead";
+      showClearBtn = true;
+    } else {
+      statusText = "No window assigned";
+      primaryBtnText = "Use this window";
+    }
+
+    div.innerHTML = `
+      <div class="instance-header">
+        <div class="dot ${isLive ? "connected" : ""}"></div>
+        <div class="instance-port">Port ${port}${isLive ? "" : " (offline)"}</div>
+      </div>
+      <div class="${statusClass}">${statusText}</div>
+      <button class="btn btn-primary" data-action="set" data-port="${port}">${primaryBtnText}</button>
+      ${showClearBtn ? `<button class="btn btn-secondary" data-action="clear" data-port="${port}">Clear assignment</button>` : ""}
+    `;
+    instancesEl.appendChild(div);
   }
 }
 
-btnSet.addEventListener("click", async () => {
-  const currentWindow = await chrome.windows.getCurrent();
-  await chrome.storage.local.set({ claudeWindowId: currentWindow.id });
-  await refreshWindowStatus();
+instancesEl.addEventListener("click", async (e) => {
+  const target = e.target as HTMLElement;
+  const action = target.getAttribute("data-action");
+  const portStr = target.getAttribute("data-port");
+  if (!action || !portStr) return;
+
+  const port = portStr;
+  const { claudeInstances } = await chrome.storage.local.get("claudeInstances");
+  const instances = (claudeInstances as Record<string, number>) ?? {};
+
+  if (action === "set") {
+    const currentWindow = await chrome.windows.getCurrent();
+    instances[port] = currentWindow.id!;
+  } else if (action === "clear") {
+    delete instances[port];
+  }
+
+  await chrome.storage.local.set({ claudeInstances: instances });
+  render(await loadState());
 });
 
-btnClear.addEventListener("click", async () => {
-  await chrome.storage.local.remove("claudeWindowId");
-  await refreshWindowStatus();
+// Listen for live-port changes from the offscreen document
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.source === "chromeflow-offscreen" && msg.type === "status") {
+    loadState().then(render);
+  }
 });
 
-refreshWindowStatus();
+loadState().then(render);
