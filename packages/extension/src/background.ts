@@ -204,6 +204,45 @@ async function injectAlertCapture(tabId: number): Promise<void> {
   }
 }
 
+// ─── Debugger mutex ────────────────────────────────────────────────────────
+// Chrome allows only one debugger client per tab. If execute_script (CSP
+// bypass path), type_text, and set_file_input all want to attach to the same
+// tab, concurrent calls would race and the second attach fails with
+// "Another debugger is already attached." This serializes all debugger
+// operations per tab — each call waits for the previous one to detach.
+const tabDebuggerLocks = new Map<number, Promise<void>>();
+
+async function withDebugger<T>(tabId: number, fn: () => Promise<T>): Promise<T> {
+  const prev = tabDebuggerLocks.get(tabId);
+  if (prev) await prev.catch(() => {});
+
+  let release!: () => void;
+  const lock = new Promise<void>((r) => { release = r; });
+  tabDebuggerLocks.set(tabId, lock);
+
+  try {
+    try {
+      await (chrome.debugger as any).attach({ tabId }, "1.3");
+    } catch (err) {
+      const msg = String((err as Error).message ?? err);
+      if (msg.includes("Another debugger is already attached")) {
+        throw new Error(
+          "Another debugger is already attached to this tab. Close Chrome DevTools on this tab (Cmd+Opt+I) and retry."
+        );
+      }
+      throw err;
+    }
+    try {
+      return await fn();
+    } finally {
+      await (chrome.debugger as any).detach({ tabId }).catch(() => {});
+    }
+  } finally {
+    release();
+    if (tabDebuggerLocks.get(tabId) === lock) tabDebuggerLocks.delete(tabId);
+  }
+}
+
 async function getActiveTab(port: number): Promise<chrome.tabs.Tab> {
   const wid = getWindowId(port);
   const query = wid
@@ -579,9 +618,7 @@ async function handleMcpMessage(msg: {
 
       // CSP blocked eval — fall back to CDP Runtime.evaluate which bypasses CSP
       if (cspBlocked) {
-        await (chrome.debugger as any).attach({ tabId }, "1.3");
-        try {
-          // Wrap in IIFE to support return statements; capture alert
+        await withDebugger(tabId, async () => {
           const wrappedCode = `(function() {
             var __result;
             try { __result = (0, eval)(${JSON.stringify(code)}); }
@@ -607,9 +644,7 @@ async function handleMcpMessage(msg: {
           } catch {
             result = String(evalResult.result.value ?? "undefined");
           }
-        } finally {
-          await (chrome.debugger as any).detach({ tabId }).catch(() => {});
-        }
+        });
       }
 
       return {
@@ -669,15 +704,13 @@ async function handleMcpMessage(msg: {
       const tabId = tab.id!;
       const text = msg.text as string;
 
-      // Type character-by-character with individual keyDown/char/keyUp events
+      // Type character-by-character with individual keyDown/keyUp events
       // and randomized delays to produce input indistinguishable from real typing.
-      await (chrome.debugger as any).attach({ tabId }, "1.3");
-      try {
+      await withDebugger(tabId, async () => {
         for (let i = 0; i < text.length; i++) {
           const char = text[i];
 
           if (char === "\n") {
-            // Enter key
             await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
               type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
             });
@@ -692,9 +725,6 @@ async function handleMcpMessage(msg: {
               type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9,
             });
           } else {
-            // Regular character: keyDown (with text, which produces the character)
-            // + keyUp. Adding a separate "char" event would double-input the
-            // character because keyDown-with-text already dispatches it.
             await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
               type: "keyDown", key: char, text: char, unmodifiedText: char,
             });
@@ -703,14 +733,11 @@ async function handleMcpMessage(msg: {
             });
           }
 
-          // Randomized delay between keystrokes: 30-90ms base, occasional longer pauses
           const baseDelay = 30 + Math.random() * 60;
           const pause = Math.random() < 0.05 ? 200 + Math.random() * 300 : baseDelay;
           await new Promise((r) => setTimeout(r, pause));
         }
-      } finally {
-        await (chrome.debugger as any).detach({ tabId }).catch(() => {});
-      }
+      });
 
       return {
         type: "action_done",
@@ -738,41 +765,32 @@ async function handleMcpMessage(msg: {
 
       // Use Chrome DevTools Protocol to set the file — the only way to bypass
       // the browser's script restriction on file inputs.
-      await (chrome.debugger as any).attach({ tabId }, "1.3");
       try {
-        // Use Runtime.evaluate to get a live reference — more reliable than DOM.querySelector
-        // because it survives React re-renders that may have discarded the tagged element.
-        const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
-          expression: `document.querySelector('[data-chromeflow-file-target="true"]')`,
-          returnByValue: false,
-        }) as { result: { objectId?: string } };
+        await withDebugger(tabId, async () => {
+          const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
+            expression: `document.querySelector('[data-chromeflow-file-target="true"]')`,
+            returnByValue: false,
+          }) as { result: { objectId?: string } };
 
-        if (!evalResult.result?.objectId) throw new Error("Could not locate tagged file input via CDP");
+          if (!evalResult.result?.objectId) throw new Error("Could not locate tagged file input via CDP");
 
-        // Pass objectId directly — DOM.setFileInputFiles accepts objectId, nodeId, or
-        // backendNodeId. Using objectId avoids the need to call DOM.getDocument first
-        // (which was causing "Could not resolve file input node" failures on DataAnnotation
-        // and PingLine forms where the DOM domain wasn't initialized).
-        await (chrome.debugger as any).sendCommand({ tabId }, "DOM.setFileInputFiles", {
-          objectId: evalResult.result.objectId,
-          files: [msg.filePath],
-        });
+          await (chrome.debugger as any).sendCommand({ tabId }, "DOM.setFileInputFiles", {
+            objectId: evalResult.result.objectId,
+            files: [msg.filePath],
+          });
 
-        // Dispatch change/input events so React and other frameworks pick up the new file.
-        // CDP's setFileInputFiles fires a native change event, but React sometimes misses it
-        // due to its synthetic event system. Dispatching explicitly ensures the handler fires.
-        await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
-          expression: `(function() {
-            var el = document.querySelector('[data-chromeflow-file-target="true"]');
-            if (el) {
-              el.dispatchEvent(new Event('change', { bubbles: true }));
-              el.dispatchEvent(new Event('input', { bubbles: true }));
-            }
-          })()`,
-          returnByValue: true,
+          await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
+            expression: `(function() {
+              var el = document.querySelector('[data-chromeflow-file-target="true"]');
+              if (el) {
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+              }
+            })()`,
+            returnByValue: true,
+          });
         });
       } finally {
-        await (chrome.debugger as any).detach({ tabId }).catch(() => {});
         // Clean up the tag regardless of success/failure
         await forwardToContentScript(tab, {
           type: "untag_file_input",
