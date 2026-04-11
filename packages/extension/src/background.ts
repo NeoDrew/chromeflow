@@ -72,8 +72,11 @@ chrome.runtime.onStartup.addListener(async () => { await ensureOffscreen(); });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.source === "chromeflow-offscreen") {
-    // Handle status broadcasts that don't need a response
+    // Status broadcasts carry the list of currently-connected WS ports.
+    // Persist to chrome.storage.local so the popup can render them.
     if (msg.type === "status") {
+      const livePorts = (msg.livePorts as number[]) ?? [];
+      chrome.storage.local.set({ chromeflowLivePorts: livePorts }).catch(() => {});
       sendResponse({ ok: true });
       return true;
     }
