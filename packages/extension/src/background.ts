@@ -692,12 +692,11 @@ async function handleMcpMessage(msg: {
               type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9,
             });
           } else {
-            // Regular character: keyDown → char → keyUp
+            // Regular character: keyDown (with text, which produces the character)
+            // + keyUp. Adding a separate "char" event would double-input the
+            // character because keyDown-with-text already dispatches it.
             await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
-              type: "keyDown", key: char, text: char,
-            });
-            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
-              type: "char", key: char, text: char,
+              type: "keyDown", key: char, text: char, unmodifiedText: char,
             });
             await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
               type: "keyUp", key: char,
