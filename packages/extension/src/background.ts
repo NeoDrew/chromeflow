@@ -221,17 +221,31 @@ async function withDebugger<T>(tabId: number, fn: () => Promise<T>): Promise<T> 
   tabDebuggerLocks.set(tabId, lock);
 
   try {
-    try {
-      await (chrome.debugger as any).attach({ tabId }, "1.3");
-    } catch (err) {
-      const msg = String((err as Error).message ?? err);
-      if (msg.includes("Another debugger is already attached")) {
-        throw new Error(
-          "Another debugger is already attached to this tab. Close Chrome DevTools on this tab (Cmd+Opt+I) and retry."
-        );
+    // Retry attach up to 3 times with 500ms backoff — another chromeflow
+    // instance (or DevTools) may briefly hold the debugger and release it.
+    let lastErr: Error | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await (chrome.debugger as any).attach({ tabId }, "1.3");
+        lastErr = null;
+        break;
+      } catch (err) {
+        lastErr = err as Error;
+        const msg = String(lastErr.message ?? err);
+        if (msg.includes("Another debugger is already attached") && attempt < 2) {
+          await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+          continue;
+        }
+        if (msg.includes("Another debugger is already attached")) {
+          throw new Error(
+            "Another debugger is already attached to this tab after 3 retries. Close Chrome DevTools (Cmd+Opt+I) or ensure the other chromeflow instance is using a separate Chrome window."
+          );
+        }
+        throw err;
       }
-      throw err;
     }
+    if (lastErr) throw lastErr;
+
     try {
       return await fn();
     } finally {
@@ -737,6 +751,22 @@ async function handleMcpMessage(msg: {
           const pause = Math.random() < 0.05 ? 200 + Math.random() * 300 : baseDelay;
           await new Promise((r) => setTimeout(r, pause));
         }
+
+        // After typing, dispatch an input event on the focused element to nudge
+        // React's internal state reconciliation. Without this, React-controlled
+        // textareas (especially inside shadow DOM) can show the text visually but
+        // report the field as empty in form validation.
+        await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: `(function() {
+            var el = document.activeElement;
+            if (el && el.shadowRoot) el = el.shadowRoot.activeElement || el;
+            if (el) {
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          })()`,
+          returnByValue: true,
+        });
       });
 
       return {
