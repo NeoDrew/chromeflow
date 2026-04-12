@@ -300,7 +300,10 @@ To clear existing content before typing, use execute_script("document.execComman
       text: z.string().describe("The text to type into the focused element"),
     },
     async ({ text }) => {
-      const response = await bridge.request({ type: "type_text", text });
+      // Average ~90ms per char (60ms avg delay + overhead) + 15s buffer for
+      // debugger attach/detach and the post-typing input event dispatch.
+      const timeoutMs = Math.max(30_000, text.length * 90 + 15_000);
+      const response = await bridge.request({ type: "type_text", text }, timeoutMs);
       const r = response as { success?: boolean; message?: string };
       return {
         content: [{ type: "text", text: r.message ?? (r.success ? "Text typed successfully" : "Failed to type text") }],
