@@ -1,4 +1,5 @@
 import { WebSocketServer, WebSocket } from "ws";
+import path from "path";
 import type { ClientMessage, DistributiveOmit, ServerMessage } from "./types.js";
 
 type ServerMessagePayload = DistributiveOmit<ServerMessage, "requestId">;
@@ -64,6 +65,14 @@ export class WsBridge {
         }
         if (msg.type === "ready") {
           console.error("[chromeflow] Extension ready");
+          // Send identity so the extension knows which project this server belongs to
+          const cwd = process.cwd();
+          ws.send(JSON.stringify({
+            type: "identity",
+            cwd,
+            label: path.basename(cwd),
+            port: this.port,
+          }));
           return;
         }
         const pending = this.pending.get(msg.requestId);

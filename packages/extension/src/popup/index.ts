@@ -5,8 +5,10 @@
 
 const instancesEl = document.getElementById("instances")!;
 
+type PortInfo = { port: number; label?: string };
+
 type State = {
-  livePorts: number[];
+  livePorts: PortInfo[];
   instances: Record<string, number>; // port → windowId
   currentWindowId: number;
   validWindowIds: Set<number>;
@@ -19,7 +21,11 @@ async function loadState(): Promise<State> {
     chrome.windows.getAll(),
   ]);
 
-  const livePorts = (storage.chromeflowLivePorts as number[]) ?? [];
+  // Support both old format (number[]) and new format ({port, label}[])
+  const rawPorts = (storage.chromeflowLivePorts as (number | PortInfo)[]) ?? [];
+  const livePorts: PortInfo[] = rawPorts.map((p) =>
+    typeof p === "number" ? { port: p } : p
+  );
   const instances = (storage.claudeInstances as Record<string, number>) ?? {};
   const validWindowIds = new Set(allWindows.map((w) => w.id!).filter(Boolean));
 
@@ -45,8 +51,14 @@ async function loadState(): Promise<State> {
 
 function render(state: State) {
   // Show all live ports plus any ports that have assignments (even if disconnected)
+  // Build a map of port → label from live data
+  const labelMap = new Map<number, string>();
+  for (const p of state.livePorts) {
+    if (p.label) labelMap.set(p.port, p.label);
+  }
+
   const allPorts = new Set<number>([
-    ...state.livePorts,
+    ...state.livePorts.map((p) => p.port),
     ...Object.keys(state.instances).map(Number),
   ]);
   const sortedPorts = Array.from(allPorts).sort((a, b) => a - b);
@@ -63,7 +75,8 @@ function render(state: State) {
 
   instancesEl.innerHTML = "";
   for (const port of sortedPorts) {
-    const isLive = state.livePorts.includes(port);
+    const isLive = state.livePorts.some((p) => p.port === port);
+    const label = labelMap.get(port);
     const assignedWindowId = state.instances[String(port)];
     const isThisWindow = assignedWindowId === state.currentWindowId;
 
@@ -90,7 +103,7 @@ function render(state: State) {
     div.innerHTML = `
       <div class="instance-header">
         <div class="dot ${isLive ? "connected" : ""}"></div>
-        <div class="instance-port">Port ${port}${isLive ? "" : " (offline)"}</div>
+        <div class="instance-port">${label ? `${label} ` : ""}(Port ${port})${isLive ? "" : " — offline"}</div>
       </div>
       <div class="${statusClass}">${statusText}</div>
       <button class="btn btn-primary" data-action="set" data-port="${port}">${primaryBtnText}</button>

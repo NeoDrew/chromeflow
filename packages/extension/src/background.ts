@@ -75,7 +75,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // Status broadcasts carry the list of currently-connected WS ports.
     // Persist to chrome.storage.local so the popup can render them.
     if (msg.type === "status") {
-      const livePorts = (msg.livePorts as number[]) ?? [];
+      const livePorts = (msg.livePorts as Array<{ port: number; label?: string }>) ?? [];
       chrome.storage.local.set({ chromeflowLivePorts: livePorts }).catch(() => {});
       sendResponse({ ok: true });
       return true;
