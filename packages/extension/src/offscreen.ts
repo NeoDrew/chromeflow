@@ -17,6 +17,7 @@ type Conn = {
   ws: WebSocket | null;
   reconnectDelay: number;
   connected: boolean;
+  label?: string;
 };
 
 const connections: Conn[] = [];
@@ -44,10 +45,17 @@ function connect(conn: Conn) {
   };
 
   conn.ws.onmessage = (event) => {
-    let msg: { type: string; requestId: string; [key: string]: unknown };
+    let msg: { type: string; requestId?: string; [key: string]: unknown };
     try {
       msg = JSON.parse(event.data);
     } catch {
+      return;
+    }
+
+    // Identity message — store label and re-publish so popup can show project name
+    if (msg.type === "identity") {
+      conn.label = (msg.label as string) || undefined;
+      publishLivePorts();
       return;
     }
 
@@ -98,7 +106,9 @@ function publishLivePorts() {
   // Offscreen documents cannot access chrome.storage directly — forward the
   // live ports to the background worker via runtime messaging, and let it
   // persist to storage and broadcast to the popup.
-  const livePorts = connections.filter((c) => c.connected).map((c) => c.port);
+  const livePorts = connections
+    .filter((c) => c.connected)
+    .map((c) => ({ port: c.port, label: c.label }));
   chrome.runtime.sendMessage({ source: "chromeflow-offscreen", type: "status", livePorts }).catch(() => {
     // Background may be starting up, ignore
   });
