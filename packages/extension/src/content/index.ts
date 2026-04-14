@@ -169,6 +169,10 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       ["nav", "header", "footer", "script", "style", "noscript"].forEach((tag) => {
         clone.querySelectorAll(tag).forEach((el) => el.remove());
       });
+      // Hydrate empty content-visibility spans from React fiber props (Whitebeard
+      // renders LaTeX/math into such spans whose innerHTML is empty but whose
+      // React fiber holds the source markdown at __reactProps.children.props.markdown).
+      hydrateContentVisibilityFromFiber(root, clone);
       let text = (clone.textContent ?? "")
         .replace(/[ \t]+/g, " ")
         .replace(/\n\s*\n+/g, "\n\n")
@@ -654,6 +658,37 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
 let pendingPreClick = false;
 let preClickCleanup: (() => void) | null = null;
+
+/**
+ * Walks `orig` and `clone` in tandem (they share structure). For any empty
+ * content-visibility span in the original whose React fiber props carry a
+ * `markdown` string, writes that markdown into the clone's corresponding node
+ * so textContent extraction picks it up.
+ */
+function hydrateContentVisibilityFromFiber(orig: Element, clone: Element) {
+  const origWalker = document.createTreeWalker(orig, NodeFilter.SHOW_ELEMENT);
+  const cloneWalker = document.createTreeWalker(clone, NodeFilter.SHOW_ELEMENT);
+  let o = origWalker.currentNode as Element | null;
+  let c = cloneWalker.currentNode as Element | null;
+  while (o && c) {
+    const htmlEl = o as HTMLElement;
+    const cv = htmlEl.style?.contentVisibility;
+    if ((cv === "auto" || cv === "hidden") && (o.textContent ?? "").trim() === "") {
+      const propsKey = Object.keys(o).find((k) => k.startsWith("__reactProps"));
+      if (propsKey) {
+        const props = (o as unknown as Record<string, unknown>)[propsKey] as
+          | { children?: { props?: { markdown?: unknown } } }
+          | undefined;
+        const markdown = props?.children?.props?.markdown;
+        if (typeof markdown === "string" && markdown.length > 0) {
+          c.textContent = markdown;
+        }
+      }
+    }
+    o = origWalker.nextNode() as Element | null;
+    c = cloneWalker.nextNode() as Element | null;
+  }
+}
 
 function armClickBuffer() {
   // Reset any previous buffer
