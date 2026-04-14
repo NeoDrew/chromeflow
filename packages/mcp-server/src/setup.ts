@@ -405,8 +405,13 @@ export async function runUpdate() {
     const existing = readFileSync(claudeMdPath, "utf8");
     if (existing.includes("# Chromeflow")) {
       const before = existing.slice(0, existing.indexOf("# Chromeflow")).trimEnd();
-      writeFileSync(claudeMdPath, (before ? before + "\n\n" : "") + freshContent);
-      mdResult = "updated";
+      const newContent = (before ? before + "\n\n" : "") + freshContent;
+      if (newContent === existing) {
+        mdResult = "unchanged";
+      } else {
+        writeFileSync(claudeMdPath, newContent);
+        mdResult = "updated";
+      }
     } else {
       writeFileSync(claudeMdPath, existing.trimEnd() + "\n\n" + freshContent);
       mdResult = "appended";
@@ -416,7 +421,9 @@ export async function runUpdate() {
     mdResult = "created";
   }
 
-  if (mdResult === "updated") {
+  if (mdResult === "unchanged") {
+    console.log(`✓ ${claudeMdPath} already up to date`);
+  } else if (mdResult === "updated") {
     console.log(`✓ Updated chromeflow instructions in ${claudeMdPath}`);
   } else if (mdResult === "appended") {
     console.log(`✓ Appended chromeflow instructions to ${claudeMdPath}`);
