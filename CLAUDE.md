@@ -238,4 +238,30 @@ document.body.style.zoom = '1';
 1. Retry the exact same `execute_script` call
 2. If still failing, use `find_and_highlight` to show the user a download button to click manually
 
+**Shadow DOM `[role=radio]` / custom radios silently no-op**: On sites like Outlier,
+`element.click()` on a shadow-DOM radio often doesn't flip `aria-checked`. Two things
+must be true: (a) the element must be scrolled into view FIRST (`scrollIntoView({block:'center'})`),
+and (b) the full pointer-event chain must fire — not just `click()`:
+```js
+['pointerdown','mousedown','pointerup','mouseup','click'].forEach(t =>
+  el.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true}))
+);
+```
+After scroll, re-query the radio list — its length may change as more content becomes
+visible. Then verify `aria-checked === "true"` before moving on.
+
+**Visibility-detection overlays** (e.g. Multimango's "Content Hidden" black overlay):
+Some sites render a full-screen overlay when the tab loses focus, triggered by
+`document.visibilityState` / `document.hidden`. Chromeflow tab-switching triggers it.
+Workaround — remove the overlay and patch the APIs:
+```js
+document.querySelectorAll('[style*="z-index: 99999"]').forEach(el => el.remove());
+Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+['visibilitychange','blur'].forEach(t =>
+  document.addEventListener(t, e => e.stopImmediatePropagation(), true)
+);
+```
+Re-apply after every navigation.
+
 **Never use Bash to work around a stuck browser interaction.**
