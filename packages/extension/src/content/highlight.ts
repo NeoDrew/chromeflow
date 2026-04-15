@@ -82,31 +82,42 @@ export function getHighlightedViewportRect(): {
   };
 }
 
-/** Find an element whose visible text contains the given string. */
+/** Find an element whose visible text contains the given string.
+ *  Pierces open shadow roots so chat/form widgets (Outlier chat-lite,
+ *  Radix UI, web components) are searchable too. */
 export function findElementByText(text: string): Element | null {
   const lower = text.toLowerCase().trim();
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.textContent?.toLowerCase().includes(lower)) return NodeFilter.FILTER_REJECT;
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      const style = getComputedStyle(parent);
-      if (style.display === "none" || style.visibility === "hidden") return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
 
   let best: Element | null = null;
   let bestLen = Infinity;
-  let node: Text | null;
-  while ((node = walker.nextNode() as Text | null)) {
-    const el = node.parentElement!;
+
+  function consider(el: Element) {
     const len = (el.textContent ?? "").length;
-    if (len < bestLen) {
-      best = el;
-      bestLen = len;
-    }
+    if (len < bestLen) { best = el; bestLen = len; }
   }
+
+  function walk(node: Node) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const t = node.textContent;
+      if (!t || !t.toLowerCase().includes(lower)) return;
+      const parent = (node as Text).parentElement;
+      if (!parent) return;
+      const style = getComputedStyle(parent);
+      if (style.display === "none" || style.visibility === "hidden") return;
+      consider(parent);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return;
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const tag = (node as Element).tagName;
+      if (tag === "SCRIPT" || tag === "STYLE" || tag === "NOSCRIPT") return;
+      const sr = (node as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+      if (sr) walk(sr);
+    }
+    for (const c of Array.from(node.childNodes)) walk(c);
+  }
+
+  walk(document.body);
 
   if (!best) return null;
 
