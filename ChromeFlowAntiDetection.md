@@ -32,13 +32,13 @@ read the values.
 
 | Property                                                | Default for chromeflow          | Real Chrome value | Status |
 |---------------------------------------------------------|----------------------------------|-------------------|--------|
-| `navigator.webdriver`                                   | `false` (good) but extensions can flip it | `false` / `undefined` | TODO |
-| `navigator.permissions.query({name:'notifications'})`   | `"denied"` when debugger attached headless | `"default"` | TODO |
-| `navigator.plugins.length`                              | Sometimes 0 in test contexts    | >= 3 | TODO |
-| `navigator.languages`                                   | Empty array possible            | Non-empty array | TODO |
-| `window.chrome.runtime`                                 | Sometimes leaked from extension | Present, shaped like normal Chrome | TODO |
-| `Function.prototype.toString` wrapping                  | Reveals our patches             | Should look native | TODO |
-| `WebGLRenderingContext.prototype.getParameter`          | Returns swiftshader / Mesa for headless | Real GPU vendor strings | TODO (high value) |
+| `navigator.webdriver`                                   | `false` (good) but extensions can flip it | `false` / `undefined` | SHIPPED v0.1.60 |
+| `navigator.permissions.query({name:'notifications'})`   | `"denied"` when debugger attached headless | `"default"` | SHIPPED v0.1.60 |
+| `navigator.plugins.length`                              | Sometimes 0 in test contexts    | >= 3 | SHIPPED v0.1.60 |
+| `navigator.languages`                                   | Empty array possible            | Non-empty array | SHIPPED v0.1.60 |
+| `window.chrome.runtime`                                 | Sometimes leaked from extension | Present, shaped like normal Chrome | SHIPPED v0.1.60 |
+| `Function.prototype.toString` wrapping                  | Reveals our patches             | Should look native | SHIPPED v0.1.60 |
+| `WebGLRenderingContext.prototype.getParameter`          | Returns swiftshader / Mesa for headless | Real GPU vendor strings | SHIPPED v0.1.61 |
 
 
 Tier 2 — Behavioral humanization
@@ -46,13 +46,13 @@ Tier 2 — Behavioral humanization
 
 | Behavior                       | Detection vector                                      | Status |
 |--------------------------------|-------------------------------------------------------|--------|
-| Mouse movement before click    | Bots teleport; real users move                        | TODO |
-| Random mousedown→mouseup delay | Constant delay = bot                                  | TODO |
-| Click coordinate jitter        | Always-perfect-center clicks = bot                    | TODO |
+| Mouse movement before click    | Bots teleport; real users move                        | SHIPPED v0.1.60 (synthetic), v0.1.61 (CDP) |
+| Random mousedown→mouseup delay | Constant delay = bot                                  | SHIPPED v0.1.60 (synthetic), v0.1.61 (CDP) |
+| Click coordinate jitter        | Always-perfect-center clicks = bot                    | SHIPPED v0.1.60 (synthetic), v0.1.61 (CDP) |
 | Type_text variable cadence     | Constant interval = bot; humans burst with pauses     | PARTIAL — has jitter, no thinking pauses |
 | Scroll speed / acceleration    | Linear scroll = bot; humans have momentum/easing     | TODO |
 | Focus blur events on clicks    | Real clicks blur previous focused element             | TODO |
-| `isTrusted` on mouse events    | element.click() → isTrusted=false; CDP click → true | TODO (need CDP-based click) |
+| `isTrusted` on mouse events    | element.click() → isTrusted=false; CDP click → true | SHIPPED v0.1.61 — tries CDP `Input.dispatchMouseEvent` first, synthetic fallback |
 
 
 Tier 3 — Footprint reduction
@@ -60,10 +60,10 @@ Tier 3 — Footprint reduction
 
 | Item                                                  | Status |
 |-------------------------------------------------------|--------|
-| Randomize `__chromeflow_*` DOM IDs per session        | TODO |
-| Remove persistent overlays when not actively used     | TODO |
-| Lazy content script injection (programmatic, not manifest) | TODO — bigger refactor |
-| Don't leave `data-chromeflow-*` attributes after use  | PARTIAL — `data-chromeflow-file-target` cleaned up |
+| Randomize `__chromeflow_*` DOM IDs per session        | SHIPPED v0.1.61 — per-install 6-char random prefix via `chrome.storage.local` |
+| Remove persistent overlays when not actively used     | SHIPPED — `clear_overlays` removes container; overlays only exist during active highlights |
+| Lazy content script injection (programmatic, not manifest) | TODO — bigger refactor; low ROI now that markers are randomized |
+| Don't leave `data-chromeflow-*` attributes after use  | SHIPPED v0.1.61 — all tags use random prefix and are removed in their respective untag/post-inspect phases |
 
 
 Tier 4 — Observability for arms race

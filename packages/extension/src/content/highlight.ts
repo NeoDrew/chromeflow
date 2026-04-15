@@ -1,4 +1,5 @@
-const CONTAINER_ID = "__chromeflow_overlays__";
+import { markerIds } from "../markers.js";
+
 const CALLOUT_HEIGHT = 52;
 const CALLOUT_OFFSET = 8;
 
@@ -20,15 +21,18 @@ let tracked: TrackedHighlight[] = [];
 let scrollListenerAttached = false;
 
 function ensureStyles() {
-  if (document.getElementById("__chromeflow_styles__")) return;
+  const styleId = markerIds.styleElement();
+  if (document.getElementById(styleId)) return;
   const style = document.createElement("style");
-  style.id = "__chromeflow_styles__";
+  style.id = styleId;
+  const pulseName = markerIds.animationPulse();
+  const fadeName = markerIds.animationFade();
   style.textContent = `
-    @keyframes chromeflow-pulse {
+    @keyframes ${pulseName} {
       0%, 100% { box-shadow: 0 0 0 4px rgba(124,58,237,0.25), 0 0 12px rgba(124,58,237,0.4); }
       50%       { box-shadow: 0 0 0 6px rgba(124,58,237,0.4), 0 0 20px rgba(124,58,237,0.6); }
     }
-    @keyframes chromeflow-fadein {
+    @keyframes ${fadeName} {
       from { opacity: 0; transform: translateY(-4px); }
       to   { opacity: 1; transform: translateY(0); }
     }
@@ -37,10 +41,11 @@ function ensureStyles() {
 }
 
 function getOrCreateContainer(): HTMLDivElement {
-  let c = document.getElementById(CONTAINER_ID) as HTMLDivElement | null;
+  const id = markerIds.overlayContainer();
+  let c = document.getElementById(id) as HTMLDivElement | null;
   if (!c) {
     c = document.createElement("div");
-    c.id = CONTAINER_ID;
+    c.id = id;
     // Fixed container covering the viewport — children use position:fixed too
     c.style.cssText = `
       position: fixed; top: 0; left: 0;
@@ -55,7 +60,7 @@ function getOrCreateContainer(): HTMLDivElement {
 
 export function clearAllOverlays() {
   tracked = [];
-  document.getElementById(CONTAINER_ID)?.remove();
+  document.getElementById(markerIds.overlayContainer())?.remove();
 }
 
 /**
@@ -190,7 +195,7 @@ function createHighlightElements(message: string, color: string, valueToType?: s
     border: 2px solid ${color};
     border-radius: 4px;
     pointer-events: none;
-    animation: chromeflow-pulse 1.5s ease-in-out infinite;
+    animation: ${markerIds.animationPulse()} 1.5s ease-in-out infinite;
     background: transparent;
   `;
 
@@ -210,7 +215,7 @@ function createHighlightElements(message: string, color: string, valueToType?: s
     pointer-events: none;
     white-space: pre-wrap;
     box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-    animation: chromeflow-fadein 0.2s ease;
+    animation: ${markerIds.animationFade()} 0.2s ease;
     z-index: 1;
   `;
 
