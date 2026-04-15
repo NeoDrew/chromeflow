@@ -20,13 +20,15 @@ export function clickElement(
   // Scroll the element into view, including nested scroll containers
   scrollSmartIntoView(el);
 
-  // Use the native DOM .click() — most compatible with React/Stripe
+  // Humanize the click: dispatch mousemove → mousedown → small delay → mouseup → click,
+  // with coord jitter, before falling back to native .click(). Sites doing
+  // behavioral fingerprinting (LinkedIn, Akamai) flag teleport-clicks as bots.
+  // We also still call .click() at the end so React/Stripe-style handlers fire reliably.
+  dispatchHumanClickEvents(el);
   if (typeof (el as HTMLElement).click === "function") {
     (el as HTMLElement).click();
   } else {
     const opts = { bubbles: true, cancelable: true };
-    el.dispatchEvent(new MouseEvent("mousedown", opts));
-    el.dispatchEvent(new MouseEvent("mouseup", opts));
     el.dispatchEvent(new MouseEvent("click", opts));
   }
 
@@ -143,4 +145,45 @@ function isUsable(el: Element): boolean {
   if (style.opacity === "0") return false;
   if ((el as HTMLButtonElement).disabled) return false;
   return true;
+}
+
+/**
+ * Dispatch a sequence of mouse events (mousemove → mouseover → mousedown → mouseup)
+ * with humanlike coordinate jitter, before the actual .click() call. Anti-bot
+ * systems flag elements that receive isolated click events with no preceding
+ * pointer movement.
+ *
+ * NOTE: these events are still isTrusted=false. Sites that check isTrusted
+ * (which is the strongest signal) won't be fooled — only behavioral-pattern
+ * detectors. For full bypass we'd need CDP Input.dispatchMouseEvent.
+ */
+function dispatchHumanClickEvents(el: Element) {
+  try {
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    // Random point within central 60% of the element (avoid edges)
+    const cx = rect.left + rect.width * (0.2 + Math.random() * 0.6);
+    const cy = rect.top + rect.height * (0.2 + Math.random() * 0.6);
+    // Start point: a few px away to simulate approach
+    const sx = cx + (Math.random() - 0.5) * 40;
+    const sy = cy + (Math.random() - 0.5) * 40;
+
+    const mkEvent = (type: string, x: number, y: number) => new MouseEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      view: window,
+      clientX: Math.round(x),
+      clientY: Math.round(y),
+      button: 0,
+      buttons: type === "mousedown" || type === "mouseup" ? 1 : 0,
+    });
+
+    el.dispatchEvent(mkEvent("mousemove", sx, sy));
+    el.dispatchEvent(mkEvent("mouseover", cx, cy));
+    el.dispatchEvent(mkEvent("mousemove", cx, cy));
+    el.dispatchEvent(mkEvent("mousedown", cx, cy));
+    el.dispatchEvent(mkEvent("mouseup", cx, cy));
+  } catch {
+    // Behavioral humanization is best-effort; never block the click.
+  }
 }
