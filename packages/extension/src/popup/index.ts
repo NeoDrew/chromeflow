@@ -1,9 +1,14 @@
 /**
- * Popup UI — shows all detected Claude Code instances (one per WS port)
- * and lets the user assign a Chrome window to each.
+ * Popup UI — shows all detected Claude Code instances grouped by:
+ *   1. THIS WINDOW   — instances assigned to the currently-focused window
+ *   2. OTHER WINDOWS — instances assigned to a different Chrome window (collapsible)
+ *   3. UNASSIGNED    — live instances with no window yet (collapsible)
+ *
+ * Each instance card shows the project name (large), with port + window status (small).
+ * Falls back to "Port 7878" if no project label has been received yet.
  */
 
-const instancesEl = document.getElementById("instances")!;
+const groupsEl = document.getElementById("groups")!;
 
 type PortInfo = { port: number; label?: string };
 
@@ -13,6 +18,8 @@ type State = {
   currentWindowId: number;
   validWindowIds: Set<number>;
 };
+
+const collapsedGroups = new Set<string>();
 
 async function loadState(): Promise<State> {
   const [storage, currentWindow, allWindows] = await Promise.all([
@@ -41,22 +48,102 @@ async function loadState(): Promise<State> {
     await chrome.storage.local.set({ claudeInstances: instances });
   }
 
-  return {
-    livePorts,
-    instances,
-    currentWindowId: currentWindow.id!,
-    validWindowIds,
-  };
+  return { livePorts, instances, currentWindowId: currentWindow.id!, validWindowIds };
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+}
+
+function renderInstanceCard(
+  port: number,
+  label: string | undefined,
+  isLive: boolean,
+  assignedWindowId: number | undefined,
+  currentWindowId: number,
+): string {
+  const isThisWindow = assignedWindowId === currentWindowId;
+  const cardClass = ["instance"];
+  if (isThisWindow) cardClass.push("this-window");
+  if (!isLive) cardClass.push("offline");
+
+  const displayName = label ?? `Port ${port}`;
+  const nameClass = label ? "instance-name" : "instance-name unlabeled";
+
+  const metaPieces: string[] = [];
+  if (label) metaPieces.push(`Port ${port}`);
+  if (!isLive) metaPieces.push(`<span class="meta-tag unassigned">offline</span>`);
+  if (assignedWindowId) {
+    metaPieces.push(
+      isThisWindow
+        ? `<span class="meta-tag">✓ this window</span>`
+        : `<span class="meta-tag elsewhere">window #${assignedWindowId}</span>`
+    );
+  } else {
+    metaPieces.push(`<span class="meta-tag unassigned">unassigned</span>`);
+  }
+  const metaHtml = metaPieces.join('<span class="meta-sep">·</span>');
+
+  const primaryBtn = assignedWindowId
+    ? (isThisWindow ? "Reassign to this window" : "Use this window instead")
+    : "Use this window";
+
+  const buttons = `
+    <div class="btn-row">
+      <button class="btn btn-primary" data-action="set" data-port="${port}">${primaryBtn}</button>
+      ${assignedWindowId ? `<button class="btn btn-secondary" data-action="clear" data-port="${port}">Clear</button>` : ""}
+    </div>
+  `;
+
+  return `
+    <div class="${cardClass.join(" ")}">
+      <div class="instance-row">
+        <div class="dot ${isLive ? "connected" : ""}"></div>
+        <div class="${nameClass}">${escapeHtml(displayName)}</div>
+      </div>
+      <div class="instance-meta">${metaHtml}</div>
+      ${buttons}
+    </div>
+  `;
+}
+
+function renderGroup(
+  key: string,
+  title: string,
+  cards: string[],
+  collapsible: boolean,
+  emptyMessage?: string,
+): string {
+  if (cards.length === 0 && !emptyMessage) return "";
+  const collapsed = collapsible && collapsedGroups.has(key);
+  const groupClass = ["group"];
+  if (collapsed) groupClass.push("collapsed");
+  const headerClass = collapsible ? "group-header" : "group-header static";
+  const toggle = collapsible ? `<span class="group-toggle">▾</span>` : "";
+
+  const body = cards.length > 0
+    ? `<div class="group-body">${cards.join("")}</div>`
+    : `<div class="group-body"><div class="empty">${emptyMessage}</div></div>`;
+
+  return `
+    <div class="${groupClass.join(" ")}" data-group="${key}">
+      <div class="${headerClass}" data-toggle-group="${collapsible ? key : ""}">
+        <span>${toggle}${title}</span>
+        ${cards.length > 0 ? `<span class="group-count">${cards.length}</span>` : ""}
+      </div>
+      ${body}
+    </div>
+  `;
 }
 
 function render(state: State) {
-  // Show all live ports plus any ports that have assignments (even if disconnected)
-  // Build a map of port → label from live data
+  // Build label map
   const labelMap = new Map<number, string>();
   for (const p of state.livePorts) {
     if (p.label) labelMap.set(p.port, p.label);
   }
 
+  // All known ports = live + assigned (even if offline)
   const allPorts = new Set<number>([
     ...state.livePorts.map((p) => p.port),
     ...Object.keys(state.instances).map(Number),
@@ -64,7 +151,7 @@ function render(state: State) {
   const sortedPorts = Array.from(allPorts).sort((a, b) => a - b);
 
   if (sortedPorts.length === 0) {
-    instancesEl.innerHTML = `
+    groupsEl.innerHTML = `
       <div class="empty">
         No Claude Code instances detected.<br>
         Start chromeflow MCP in your project to begin.
@@ -73,66 +160,78 @@ function render(state: State) {
     return;
   }
 
-  instancesEl.innerHTML = "";
+  const thisWindow: string[] = [];
+  const otherWindows: string[] = [];
+  const unassigned: string[] = [];
+
   for (const port of sortedPorts) {
     const isLive = state.livePorts.some((p) => p.port === port);
     const label = labelMap.get(port);
     const assignedWindowId = state.instances[String(port)];
-    const isThisWindow = assignedWindowId === state.currentWindowId;
-
-    const div = document.createElement("div");
-    div.className = "instance";
-
-    let statusText: string;
-    let statusClass = "instance-status";
-    let primaryBtnText: string;
-    let showClearBtn = false;
-
-    if (assignedWindowId) {
-      statusClass += " assigned";
-      statusText = isThisWindow
-        ? "✓ This window assigned"
-        : `Window #${assignedWindowId} (not this one)`;
-      primaryBtnText = isThisWindow ? "Reassign to this window" : "Use this window instead";
-      showClearBtn = true;
+    const card = renderInstanceCard(port, label, isLive, assignedWindowId, state.currentWindowId);
+    if (assignedWindowId === state.currentWindowId) {
+      thisWindow.push(card);
+    } else if (assignedWindowId) {
+      otherWindows.push(card);
     } else {
-      statusText = "No window assigned";
-      primaryBtnText = "Use this window";
+      unassigned.push(card);
     }
-
-    div.innerHTML = `
-      <div class="instance-header">
-        <div class="dot ${isLive ? "connected" : ""}"></div>
-        <div class="instance-port">${label ? `${label} ` : ""}(Port ${port})${isLive ? "" : " — offline"}</div>
-      </div>
-      <div class="${statusClass}">${statusText}</div>
-      <button class="btn btn-primary" data-action="set" data-port="${port}">${primaryBtnText}</button>
-      ${showClearBtn ? `<button class="btn btn-secondary" data-action="clear" data-port="${port}">Clear assignment</button>` : ""}
-    `;
-    instancesEl.appendChild(div);
   }
+
+  const groups: string[] = [];
+  groups.push(
+    renderGroup(
+      "this",
+      "This window",
+      thisWindow,
+      false,
+      "No session assigned to this window yet — use a card below."
+    )
+  );
+  if (otherWindows.length > 0) {
+    groups.push(renderGroup("others", "Other windows", otherWindows, true));
+  }
+  if (unassigned.length > 0) {
+    groups.push(renderGroup("unassigned", "Unassigned", unassigned, true));
+  }
+
+  groupsEl.innerHTML = groups.join("");
 }
 
-instancesEl.addEventListener("click", async (e) => {
+groupsEl.addEventListener("click", async (e) => {
   const target = e.target as HTMLElement;
+
+  // Group toggle
+  const toggleKey = target.closest<HTMLElement>("[data-toggle-group]")?.getAttribute("data-toggle-group");
+  if (toggleKey) {
+    if (collapsedGroups.has(toggleKey)) collapsedGroups.delete(toggleKey);
+    else collapsedGroups.add(toggleKey);
+    render(await loadState());
+    return;
+  }
+
+  // Card buttons
   const action = target.getAttribute("data-action");
   const portStr = target.getAttribute("data-port");
   if (!action || !portStr) return;
 
-  const port = portStr;
   const { claudeInstances } = await chrome.storage.local.get("claudeInstances");
   const instances = (claudeInstances as Record<string, number>) ?? {};
 
   if (action === "set") {
     const currentWindow = await chrome.windows.getCurrent();
-    instances[port] = currentWindow.id!;
+    instances[portStr] = currentWindow.id!;
   } else if (action === "clear") {
-    delete instances[port];
+    delete instances[portStr];
   }
 
   await chrome.storage.local.set({ claudeInstances: instances });
   render(await loadState());
 });
+
+// Default: collapse the bigger groups so "this window" stands out
+collapsedGroups.add("others");
+collapsedGroups.add("unassigned");
 
 // Listen for live-port changes from the offscreen document
 chrome.runtime.onMessage.addListener((msg) => {
