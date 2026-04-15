@@ -164,6 +164,66 @@
       patchGetParameter((window as unknown as { WebGLRenderingContext?: { prototype: { getParameter: (p: number) => unknown } } }).WebGLRenderingContext ?? null);
       patchGetParameter((window as unknown as { WebGL2RenderingContext?: { prototype: { getParameter: (p: number) => unknown } } }).WebGL2RenderingContext ?? null);
     } catch { /* ignore — WebGL not available or proto locked */ }
+
+    // WebRTC IP leak — RTCPeerConnection surfaces ICE candidates that include
+    // the client's local private IP addresses (typ host candidates). Many
+    // fingerprinters use this to correlate users across public-IP changes
+    // and to detect VPN/proxy. We strip host candidates and mDNS
+    // candidates, leaving only srflx (server reflexive / public IP) and
+    // relay (TURN-relayed), which are the information the remote peer
+    // legitimately needs for a connection.
+    try {
+      const RTCPC = (window as unknown as { RTCPeerConnection?: typeof RTCPeerConnection }).RTCPeerConnection;
+      if (RTCPC && RTCPC.prototype) {
+        // Filter an ICE candidate string. Returns null if it should be dropped.
+        const filterCandidate = (candidate: string): boolean => {
+          // candidate:<foundation> <component> <protocol> <priority> <ip> <port> typ <type> ...
+          // Drop if typ is "host" (local interface) or if IP ends in .local (mDNS).
+          const typMatch = candidate.match(/\btyp\s+(\w+)/);
+          if (typMatch && typMatch[1] === "host") return false;
+          if (/\s[\w-]+\.local\s/i.test(candidate)) return false;
+          return true;
+        };
+
+        const origAddIceCandidate = RTCPC.prototype.addIceCandidate;
+        if (origAddIceCandidate) {
+          const patched = fakeNative(function (this: RTCPeerConnection, candidate?: RTCIceCandidateInit | RTCIceCandidate) {
+            try {
+              const str = (candidate as RTCIceCandidateInit)?.candidate;
+              if (typeof str === "string" && str && !filterCandidate(str)) {
+                // Swallow the candidate silently (return a resolved promise).
+                return Promise.resolve();
+              }
+            } catch { /* fall through */ }
+            return origAddIceCandidate.apply(this, arguments as unknown as [RTCIceCandidateInit]);
+          }, "addIceCandidate");
+          RTCPC.prototype.addIceCandidate = patched;
+        }
+
+        // Also patch the onicecandidate event path: sites that fingerprint
+        // via onicecandidate enumerate all candidates. Wrap the setter so
+        // delivered events only contain filtered candidates.
+        const origSetter = Object.getOwnPropertyDescriptor(RTCPC.prototype, "onicecandidate")?.set;
+        if (origSetter) {
+          Object.defineProperty(RTCPC.prototype, "onicecandidate", {
+            configurable: true,
+            enumerable: true,
+            get: fakeNative(function () { return (this as Record<string, unknown>).__cfOnIceCandidate ?? null; }, "get onicecandidate"),
+            set: fakeNative(function (this: RTCPeerConnection, handler: ((ev: RTCPeerConnectionIceEvent) => void) | null) {
+              (this as Record<string, unknown>).__cfOnIceCandidate = handler;
+              const wrapped = handler
+                ? (ev: RTCPeerConnectionIceEvent) => {
+                    const str = ev.candidate?.candidate;
+                    if (typeof str === "string" && str && !filterCandidate(str)) return;
+                    handler(ev);
+                  }
+                : null;
+              origSetter.call(this, wrapped);
+            }, "set onicecandidate"),
+          });
+        }
+      }
+    } catch { /* ignore — WebRTC not available */ }
   } catch {
     // Stealth patches must NEVER break the page. Silently swallow any error.
   }

@@ -2,7 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { appendFileSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, resolve, relative, isAbsolute } from "path";
 import type { WsBridge } from "../ws-bridge.js";
 
 const PAGE_STATE_FILE = join(tmpdir(), "chromeflow_page_state.json");
@@ -192,6 +192,27 @@ Pass level="error" to see only errors, or omit to see all levels.`,
     },
     async ({ key, value, envPath }) => {
       try {
+        // Security: restrict writes to paths under the MCP server's working
+        // directory (the Claude Code project root). Prevents accidental or
+        // adversarial writes to sensitive locations like ~/.ssh/config,
+        // ~/.zshrc, or other dotfiles outside the project.
+        const cwd = process.cwd();
+        const resolved = isAbsolute(envPath) ? envPath : resolve(cwd, envPath);
+        const rel = relative(cwd, resolved);
+        if (rel.startsWith("..") || isAbsolute(rel)) {
+          throw new Error(
+            `Refusing to write .env outside the project directory. Target "${resolved}" is not under "${cwd}". If this is intentional, move the project to include the target path.`
+          );
+        }
+        // Additional safety: filename must look like a .env file (.env, .env.local, .env.production etc.)
+        const filename = resolved.split("/").pop() ?? "";
+        if (!/^\.env(\.[\w-]+)?$/.test(filename)) {
+          throw new Error(
+            `Refusing to write: "${filename}" doesn't look like an env file. Expected .env, .env.local, .env.<name>, etc.`
+          );
+        }
+        envPath = resolved;
+
         // Read existing content and update in-place if key exists, else append
         let existing = "";
         try {
