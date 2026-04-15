@@ -62,6 +62,25 @@ async function ensureOffscreen() {
   }
 }
 
+// Ensure the per-install DOM marker prefix is generated before any content
+// script runs. Tag/ID names use this prefix so chromeflow doesn't leave a
+// consistent "chromeflow" fingerprint on every page it touches. Generated
+// once per install, persisted in chrome.storage.local.
+async function ensureMarkerPrefix() {
+  try {
+    const { cfMarkerPrefix } = await chrome.storage.local.get("cfMarkerPrefix");
+    if (typeof cfMarkerPrefix === "string" && cfMarkerPrefix.length >= 3) return;
+    const chars = "abcdefghijkmnpqrstuvwxyz23456789";
+    let p = "";
+    for (let i = 0; i < 6; i++) p += chars[Math.floor(Math.random() * chars.length)];
+    await chrome.storage.local.set({ cfMarkerPrefix: p });
+  } catch { /* non-fatal */ }
+}
+chrome.runtime.onInstalled.addListener(ensureMarkerPrefix);
+chrome.runtime.onStartup.addListener(ensureMarkerPrefix);
+// Also kick once on service-worker boot, in case neither event fires soon.
+ensureMarkerPrefix();
+
 chrome.runtime.onInstalled.addListener(async () => { await ensureOffscreen(); });
 chrome.runtime.onStartup.addListener(async () => { await ensureOffscreen(); });
 
@@ -686,10 +705,82 @@ async function handleMcpMessage(msg: {
 
     case "click_element": {
       const tab = await getActiveTab(port);
-      const result = await forwardToContentScript(tab, msg) as { success: boolean; message: string };
+      const tabId = tab.id!;
 
-      if (!result.success) {
-        return { type: "click_element_response", success: false, message: result.message };
+      // Phase 1: ask content script to find, scroll, and tag the element,
+      // returning its viewport coordinates (with small jitter).
+      const prep = await forwardToContentScript(tab, {
+        type: "prepare_click_target",
+        requestId: msg.requestId,
+        textHint: msg.textHint,
+        nth: msg.nth,
+      }) as { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string };
+
+      if (!prep.success) {
+        return { type: "click_element_response", success: false, message: prep.message };
+      }
+
+      // Phase 2: dispatch the click via CDP (isTrusted=true events) if possible.
+      // On sites with strict isTrusted checks (Outlier-tier), synthetic clicks
+      // are ignored but CDP-dispatched events pass. Falls back to the content
+      // script's synthetic-click path on chrome:// pages or debugger failure.
+      let result: { success: boolean; message: string };
+      let usedCdp = false;
+
+      const canCdp = isScriptableUrl(tab.url) && typeof prep.x === "number" && typeof prep.y === "number";
+      if (canCdp) {
+        try {
+          await withDebugger(tabId, async () => {
+            const dbg = chrome.debugger as unknown as {
+              sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
+            };
+            const cx = Math.round(prep.x!);
+            const cy = Math.round(prep.y!);
+            // Approach: a short move from a nearby offset toward the target,
+            // then press/release. Humanlike, and produces isTrusted=true events.
+            const ax = cx + Math.round((Math.random() - 0.5) * 40);
+            const ay = cy + Math.round((Math.random() - 0.5) * 40);
+            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+              type: "mouseMoved", x: ax, y: ay, button: "none", clickCount: 0,
+            });
+            await new Promise((r) => setTimeout(r, 30 + Math.random() * 40));
+            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+              type: "mouseMoved", x: cx, y: cy, button: "none", clickCount: 0,
+            });
+            await new Promise((r) => setTimeout(r, 20 + Math.random() * 40));
+            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+              type: "mousePressed", x: cx, y: cy, button: "left", clickCount: 1,
+            });
+            await new Promise((r) => setTimeout(r, 40 + Math.random() * 60));
+            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+              type: "mouseReleased", x: cx, y: cy, button: "left", clickCount: 1,
+            });
+          });
+          usedCdp = true;
+        } catch {
+          // CDP path failed — fall through to synthetic click.
+        }
+      }
+
+      // Phase 3: inspect post-click state (radio/checkbox check state, 0×0 warnings)
+      // and untag. Best-effort — skip if the click caused navigation.
+      let postNote = "";
+      try {
+        const post = await forwardToContentScript(tab, {
+          type: "post_click_inspect",
+          requestId: msg.requestId + "-post",
+        }) as { message?: string };
+        postNote = post.message ?? "";
+      } catch { /* page may have navigated away */ }
+
+      if (usedCdp) {
+        result = { success: true, message: `Clicked "${prep.label ?? msg.textHint}"${postNote}` };
+      } else {
+        // Fallback: content-script synthetic click (isTrusted=false).
+        result = await forwardToContentScript(tab, msg) as { success: boolean; message: string };
+        if (!result.success) {
+          return { type: "click_element_response", success: false, message: result.message };
+        }
       }
 
       // Wait for the click to take effect — navigation, modal open, re-render etc.
@@ -800,20 +891,21 @@ async function handleMcpMessage(msg: {
         type: "tag_file_input",
         requestId: msg.requestId,
         hint: msg.hint,
-      }) as { found: boolean; message?: string };
+      }) as { found: boolean; message?: string; attr?: string };
 
       if (!tagResult.found) {
         return { type: "action_done", requestId: msg.requestId, success: false, message: tagResult.message ?? "No file input found" };
       }
 
       const tabId = tab.id!;
+      const fileAttr = tagResult.attr ?? "data-cf-file";
 
       // Use Chrome DevTools Protocol to set the file — the only way to bypass
       // the browser's script restriction on file inputs.
       try {
         await withDebugger(tabId, async () => {
           const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
-            expression: `document.querySelector('[data-chromeflow-file-target="true"]')`,
+            expression: `document.querySelector('[${fileAttr}="true"]')`,
             returnByValue: false,
           }) as { result: { objectId?: string } };
 
@@ -826,7 +918,7 @@ async function handleMcpMessage(msg: {
 
           await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
             expression: `(function() {
-              var el = document.querySelector('[data-chromeflow-file-target="true"]');
+              var el = document.querySelector('[${fileAttr}="true"]');
               if (el) {
                 el.dispatchEvent(new Event('change', { bubbles: true }));
                 el.dispatchEvent(new Event('input', { bubbles: true }));

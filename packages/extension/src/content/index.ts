@@ -6,8 +6,9 @@ import {
 } from "./highlight.js";
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
-import { clickElement } from "./click.js";
+import { clickElement, prepareClickTarget, postClickInspect } from "./click.js";
 import { extractTextDeep } from "./shadow.js";
+import { markerIds } from "../markers.js";
 
 type IncomingMessage = {
   type: string;
@@ -93,6 +94,16 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     case "click_element": {
       const result = clickElement(msg.textHint as string, msg.nth as number | undefined);
       return { type: "click_element_response", requestId: msg.requestId, ...result };
+    }
+
+    case "prepare_click_target": {
+      const result = prepareClickTarget(msg.textHint as string, msg.nth as number | undefined);
+      return { type: "action_done", requestId: msg.requestId, ...result };
+    }
+
+    case "post_click_inspect": {
+      const result = postClickInspect();
+      return { type: "action_done", requestId: msg.requestId, ...result };
     }
 
     case "scroll_page": {
@@ -610,13 +621,15 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       }
 
       // Tag so CDP can target it by selector
-      found.setAttribute("data-chromeflow-file-target", "true");
-      return { type: "action_done", requestId: msg.requestId, found: true };
+      const attr = markerIds.fileTargetAttr();
+      found.setAttribute(attr, "true");
+      return { type: "action_done", requestId: msg.requestId, found: true, attr };
     }
 
     case "untag_file_input": {
-      document.querySelectorAll("[data-chromeflow-file-target]").forEach((el) => {
-        el.removeAttribute("data-chromeflow-file-target");
+      const attr = markerIds.fileTargetAttr();
+      document.querySelectorAll(`[${attr}]`).forEach((el) => {
+        el.removeAttribute(attr);
       });
       return { type: "action_done", requestId: msg.requestId };
     }
