@@ -26,6 +26,8 @@ export type ServerMessage =
   | { type: "start_click_watch"; requestId: string; timeout: number }
   | { type: "fill_input"; requestId: string; textHint: string; value: string; nth?: number }
   | { type: "click_element"; requestId: string; textHint: string; nth?: number }
+  | { type: "prepare_click_target"; requestId: string; textHint: string; nth?: number }
+  | { type: "post_click_inspect"; requestId: string }
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
   | { type: "get_page_text"; requestId: string; selector?: string; startIndex?: number }
   | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number; refresh?: number }

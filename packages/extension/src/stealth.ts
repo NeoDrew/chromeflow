@@ -117,6 +117,53 @@
         };
       }
     } catch { /* ignore */ }
+
+    // WebGLRenderingContext.getParameter — headless Chrome returns "Google Inc."
+    // and "ANGLE (Apple, Apple M1 Pro, ...) SwiftShader" or similar tells.
+    // Real Chrome on a machine with a GPU returns the actual vendor/renderer.
+    // We don't know the real GPU, so only patch if the strings LOOK like headless
+    // tells — don't clobber legitimate values. Common headless strings:
+    //   - "Google Inc." / "Google Inc. (Google)"
+    //   - "Brian Paul" / "Mesa OffScreen"
+    //   - any "SwiftShader" in renderer
+    try {
+      const GL_VENDOR = 0x1F00;
+      const GL_RENDERER = 0x1F01;
+      const UNMASKED_VENDOR_WEBGL = 0x9245;
+      const UNMASKED_RENDERER_WEBGL = 0x9246;
+
+      const replacementVendor = "Intel Inc.";
+      const replacementRenderer = "Intel Iris OpenGL Engine";
+
+      const shouldReplace = (v: unknown): boolean => {
+        if (typeof v !== "string") return false;
+        if (v.toLowerCase().includes("swiftshader")) return true;
+        if (v.toLowerCase().includes("llvmpipe")) return true;
+        if (v.toLowerCase().includes("mesa offscreen")) return true;
+        if (v === "Google Inc." || v === "Google Inc. (Google)") return true;
+        return false;
+      };
+
+      const patchGetParameter = (proto: { prototype: { getParameter: (this: unknown, p: number) => unknown } } | null) => {
+        if (!proto) return;
+        const orig = proto.prototype.getParameter;
+        if (!orig) return;
+        const patched = fakeNative(function (this: unknown, parameter: number) {
+          const raw = orig.call(this, parameter);
+          if (parameter === GL_VENDOR || parameter === UNMASKED_VENDOR_WEBGL) {
+            return shouldReplace(raw) ? replacementVendor : raw;
+          }
+          if (parameter === GL_RENDERER || parameter === UNMASKED_RENDERER_WEBGL) {
+            return shouldReplace(raw) ? replacementRenderer : raw;
+          }
+          return raw;
+        }, "getParameter");
+        proto.prototype.getParameter = patched;
+      };
+
+      patchGetParameter((window as unknown as { WebGLRenderingContext?: { prototype: { getParameter: (p: number) => unknown } } }).WebGLRenderingContext ?? null);
+      patchGetParameter((window as unknown as { WebGL2RenderingContext?: { prototype: { getParameter: (p: number) => unknown } } }).WebGL2RenderingContext ?? null);
+    } catch { /* ignore — WebGL not available or proto locked */ }
   } catch {
     // Stealth patches must NEVER break the page. Silently swallow any error.
   }

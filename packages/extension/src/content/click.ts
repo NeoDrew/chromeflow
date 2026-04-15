@@ -1,10 +1,80 @@
 import { queryAllDeep } from "./shadow.js";
+import { markerIds } from "../markers.js";
+
+/**
+ * Phase 1 of the CDP click flow. Find the clickable element, scroll it into
+ * view, tag it with a data attribute so the background worker can look it up
+ * later via Runtime.evaluate, and return the viewport-centered coordinates
+ * (with small jitter) for CDP Input.dispatchMouseEvent. Returns the element
+ * label and a state note; leaves the element tagged for post-click inspection.
+ */
+export function prepareClickTarget(
+  textHint: string,
+  nth?: number
+): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string } {
+  // Clear any stale tag from a previous click
+  document.querySelectorAll(`[${markerIds.clickTargetAttr()}]`).forEach((el) => el.removeAttribute(markerIds.clickTargetAttr()));
+
+  const lower = textHint.toLowerCase().trim();
+  const el = findClickable(lower, nth);
+
+  if (!el) {
+    return { success: false, message: `No clickable element found for "${textHint}"` };
+  }
+
+  scrollSmartIntoView(el);
+  el.setAttribute(markerIds.clickTargetAttr(), "true");
+
+  const rect = el.getBoundingClientRect();
+  // Random point in central 60% of the element (avoid edges — humans aim
+  // roughly at the middle, not perfect-center).
+  const x = rect.left + rect.width * (0.2 + Math.random() * 0.6);
+  const y = rect.top + rect.height * (0.2 + Math.random() * 0.6);
+
+  const label =
+    (el as HTMLElement).innerText?.trim() ||
+    el.getAttribute("aria-label") ||
+    textHint;
+
+  return { success: true, message: `Target prepared: "${label}"`, x, y, width: rect.width, height: rect.height, label };
+}
+
+/**
+ * Phase 3 of the CDP click flow. After the CDP mouse event has fired, read
+ * the tagged element's post-click state (radio/checkbox check state, 0×0
+ * warning) and untag it.
+ */
+export function postClickInspect(): { message: string } {
+  const el = document.querySelector<HTMLElement>(`[${markerIds.clickTargetAttr()}]`);
+  if (!el) return { message: "" };
+
+  let stateNote = "";
+  if (el instanceof HTMLInputElement && (el.type === "radio" || el.type === "checkbox")) {
+    stateNote = ` — now ${el.checked ? "checked" : "unchecked"}`;
+  }
+
+  const rect = el.getBoundingClientRect();
+  if (
+    rect.width === 0 && rect.height === 0 &&
+    !el.offsetWidth && !el.offsetHeight &&
+    el.getClientRects().length === 0
+  ) {
+    stateNote += " — WARNING: element has 0×0 dimensions (likely inside a collapsed or hidden panel). The click may not have had any effect.";
+  }
+
+  el.removeAttribute(markerIds.clickTargetAttr());
+  return { message: stateNote };
+}
 
 /**
  * Find a clickable element by text/aria-label and programmatically click it.
  * Handles elements that are off-screen inside nested scroll containers (e.g.
  * Stripe's drawer panels) and elements inside open shadow roots (Outlier chat,
  * Radix UI components, etc.).
+ *
+ * This is the fallback path when CDP Input.dispatchMouseEvent isn't available
+ * (chrome:// pages, debugger attach fails). The CDP path produces isTrusted=true
+ * clicks; this path produces isTrusted=false synthetic clicks.
  */
 export function clickElement(
   textHint: string,
