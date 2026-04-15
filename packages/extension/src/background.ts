@@ -51,9 +51,6 @@ const pendingClicks = new Map<
 // clicks a link and the page loads before wait_for_click is processed).
 const recentNavigations = new Map<number, { url: string; time: number }>();
 
-// Persisted panel state — re-injected on every new page load
-let lastPanelState: { title: string; steps: Array<{ text: string; done?: boolean }> } | null = null;
-
 async function ensureOffscreen() {
   const existing = await chrome.offscreen.hasDocument?.();
   if (!existing) {
@@ -94,11 +91,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         pendingClicks.delete(msg.requestId);
         entry.cb({ type: "click_detected" });
       }
-    }
-    if (msg.type === "get_state") {
-      // New content script asking for current guide panel state to re-inject it
-      sendResponse({ panel: lastPanelState });
-      return true;
     }
     sendResponse({ ok: true });
     return true;
@@ -832,23 +824,93 @@ async function handleMcpMessage(msg: {
       return { type: "action_done", requestId: msg.requestId, success: true, message: `File "${filename}" set on input` };
     }
 
-    default: {
-      // Intercept show_panel to persist its state for re-injection on new pages
-      if (msg.type === "show_panel") {
-        lastPanelState = {
-          title: msg.title as string,
-          steps: msg.steps as Array<{ text: string; done?: boolean }>,
+    case "inspect_request_headers": {
+      const tab = await getActiveTab(port);
+      const tabId = tab.id!;
+      const targetUrl = msg.url as string;
+
+      const captured = await withDebugger(tabId, async () => {
+        const dbg = chrome.debugger as unknown as {
+          sendCommand: (target: { tabId: number }, method: string, params?: object) => Promise<unknown>;
         };
-      }
-      // Intercept mark_step_done to keep persisted panel in sync
-      if (msg.type === "mark_step_done") {
-        const idx = msg.stepIndex as number;
-        if (lastPanelState?.steps[idx]) {
-          lastPanelState.steps[idx].done = true;
-        }
-      }
 
+        await dbg.sendCommand({ tabId }, "Network.enable", {});
 
+        // Buffer extraInfo events by requestId — per CDP spec they can arrive
+        // before or after Network.requestWillBeSent.
+        const extraInfoByReqId = new Map<string, Record<string, string>>();
+        let pendingRequestId: string | null = null;
+        let pendingMeta: { url: string; method: string } | null = null;
+
+        const captureProm = new Promise<{ url: string; method: string; headers: Record<string, string> }>((resolve, reject) => {
+          const finish = () => {
+            if (!pendingRequestId || !pendingMeta) return;
+            const headers = extraInfoByReqId.get(pendingRequestId);
+            if (!headers) return;
+            clearTimeout(timeout);
+            chrome.debugger.onEvent.removeListener(listener);
+            resolve({ ...pendingMeta, headers });
+          };
+
+          const listener = (source: chrome.debugger.Debuggee, method: string, params?: object) => {
+            if (source.tabId !== tabId) return;
+            const p = (params ?? {}) as Record<string, unknown>;
+
+            if (method === "Network.requestWillBeSent") {
+              const req = p.request as { url: string; method: string } | undefined;
+              if (!req) return;
+              const type = p.type as string | undefined;
+              // Match the main document request to targetUrl. Prefer type==="Document";
+              // fall back to first URL-match if type is missing (edge cases).
+              if ((req.url === targetUrl || req.url.startsWith(targetUrl)) && !pendingRequestId) {
+                if (type === "Document" || !type) {
+                  pendingRequestId = p.requestId as string;
+                  pendingMeta = { url: req.url, method: req.method };
+                  finish();
+                }
+              }
+            }
+
+            if (method === "Network.requestWillBeSentExtraInfo") {
+              const reqId = p.requestId as string;
+              const headers = p.headers as Record<string, string>;
+              extraInfoByReqId.set(reqId, headers);
+              finish();
+            }
+          };
+
+          const timeout = setTimeout(() => {
+            chrome.debugger.onEvent.removeListener(listener);
+            if (pendingMeta && pendingRequestId) {
+              // We saw the request but never got extra-info; return whatever we have.
+              resolve({ ...pendingMeta, headers: extraInfoByReqId.get(pendingRequestId) ?? {} });
+            } else {
+              reject(new Error(`Timed out waiting for request to ${targetUrl}`));
+            }
+          }, 15000);
+
+          chrome.debugger.onEvent.addListener(listener);
+        });
+
+        // Trigger navigation via CDP — works even when already on targetUrl,
+        // unlike chrome.tabs.update which may silently no-op.
+        await dbg.sendCommand({ tabId }, "Page.navigate", { url: targetUrl });
+
+        return await captureProm;
+      });
+
+      const lines = [`${captured.method} ${captured.url}`, ""];
+      const sortedKeys = Object.keys(captured.headers).sort();
+      for (const k of sortedKeys) {
+        lines.push(`${k}: ${captured.headers[k]}`);
+      }
+      if (sortedKeys.length === 0) {
+        lines.push("(no headers captured — extra-info event never fired; try again)");
+      }
+      return { type: "action_done", requestId: msg.requestId, message: lines.join("\n") };
+    }
+
+    default: {
       const tab = await getActiveTab(port);
       return forwardToContentScript(tab, msg);
     }

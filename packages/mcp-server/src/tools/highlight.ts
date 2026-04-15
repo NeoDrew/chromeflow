@@ -85,33 +85,4 @@ Only pass x/y/width/height when you have no selector and already have fresh coor
     }
   );
 
-  server.tool(
-    "show_guide_panel",
-    "Show a floating step-by-step guide panel on the page to help the user understand what they need to do",
-    {
-      title: z.string().describe("Title of the guide (e.g. 'Set up Stripe API keys')"),
-      steps: z
-        .array(
-          z.object({
-            text: z.string().describe("Step instruction text"),
-            done: z
-              .boolean()
-              .optional()
-              .describe("Whether this step is already completed"),
-          })
-        )
-        .describe("Ordered list of steps"),
-    },
-    async ({ title, steps }) => {
-      await bridge.request({ type: "show_panel", title, steps });
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Guide panel shown: "${title}" with ${steps.length} steps.`,
-          },
-        ],
-      };
-    }
-  );
 }

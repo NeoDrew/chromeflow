@@ -59,9 +59,8 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 ## Guided flow pattern
 
 \`\`\`
-1. show_guide_panel(title, steps[])          — show the full plan upfront
-2. open_page(url)                            — navigate to the right page
-3. For each step:
+1. open_page(url)                            — navigate to the right page
+2. For each step:
    a. [if needed] take_screenshot()          — only when you need to locate something
    b. Claude acts directly:
         click_element("Save")               — press buttons/links Claude can press
@@ -70,8 +69,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
       Or pause for the user:
         find_and_highlight(text, msg)        — show the user what to do
         wait_for_click()                    — wait for user interaction
-   c. mark_step_done(i)                      — check off the step
-4. clear_overlays()                          — clean up when done
+3. clear_overlays()                          — clean up when done
 \`\`\`
 
 **Default to automation.** Only pause for human input when the step genuinely requires
@@ -169,8 +167,8 @@ function patchProjectClaudeMd(cwd: string, force = false) {
 const CHROMEFLOW_TOOLS = [
   "open_page", "take_screenshot", "clear_overlays", "get_elements", "execute_script",
   "fill_input", "read_element", "get_page_text", "write_to_env",
-  "scroll_page", "click_element", "wait_for_click", "wait_for_selector", "mark_step_done",
-  "find_and_highlight", "highlight_region", "show_guide_panel",
+  "scroll_page", "click_element", "wait_for_click", "wait_for_selector",
+  "find_and_highlight", "highlight_region",
   // v0.1.23+
   "switch_to_tab", "list_tabs", "get_form_fields", "scroll_to_element",
   "save_page_state", "restore_page_state",
@@ -188,6 +186,8 @@ const CHROMEFLOW_TOOLS = [
   "set_dialog_response",
   // v0.1.46+
   "type_text",
+  // v0.1.57+
+  "inspect_request_headers",
 ].map((t) => `mcp__chromeflow__${t}`);
 
 function patchSettingsLocalJson(cwd: string) {

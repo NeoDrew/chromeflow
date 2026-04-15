@@ -225,7 +225,7 @@ For prompt: the value string is returned to the page. For confirm: true/false is
 
   server.tool(
     "clear_overlays",
-    "Remove all highlights and callout annotations from the current page. Does NOT remove the guide panel — the guide panel persists until the next flow starts.",
+    "Remove all highlights and callout annotations from the current page.",
     {},
     async () => {
       await bridge.request({ type: "clear" });
@@ -356,6 +356,24 @@ NOTE: Pages with strict Content Security Policy (e.g. Stripe, GitHub) will block
       }
       return {
         content: [{ type: "text", text }],
+      };
+    }
+  );
+
+  server.tool(
+    "inspect_request_headers",
+    `Navigate to a URL and capture the exact HTTP request headers Chrome sends for the main document request.
+Use this to diagnose server-side bot detection — e.g. when a site returns a "mobile" or "switch devices" page despite the client reporting desktop.
+Returns the request method, URL, and all headers including Sec-CH-UA-* client hints.
+This tool DOES navigate the active tab to the URL.`,
+    {
+      url: z.string().url().describe("URL to navigate to and capture headers for"),
+    },
+    async ({ url }) => {
+      const response = await bridge.request({ type: "inspect_request_headers", url }, 20_000);
+      const r = response as { message?: string };
+      return {
+        content: [{ type: "text", text: r.message ?? "(no headers captured)" }],
       };
     }
   );

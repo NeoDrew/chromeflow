@@ -4,21 +4,9 @@ import {
   highlightElement,
   renderHighlight,
 } from "./highlight.js";
-import { clearPanel, markStepDone, showGuidePanel } from "./panel.js";
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
 import { clickElement } from "./click.js";
-
-// On load: ask background for any active guide panel state and re-inject it.
-chrome.runtime.sendMessage(
-  { source: "chromeflow-content", type: "get_state" },
-  (response: { panel?: { title: string; steps: Array<{ text: string; done?: boolean }> } | null }) => {
-    if (chrome.runtime.lastError) return; // background not ready yet
-    if (response?.panel) {
-      showGuidePanel(response.panel.title, response.panel.steps);
-    }
-  }
-);
 
 type IncomingMessage = {
   type: string;
@@ -79,19 +67,6 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         valueToType: msg.valueToType as string | undefined,
       });
       armClickBuffer();
-      return { type: "action_done", requestId: msg.requestId };
-    }
-
-    case "show_panel": {
-      showGuidePanel(
-        msg.title as string,
-        msg.steps as Array<{ text: string; done?: boolean }>
-      );
-      return { type: "action_done", requestId: msg.requestId };
-    }
-
-    case "mark_step_done": {
-      markStepDone(msg.stepIndex as number);
       return { type: "action_done", requestId: msg.requestId };
     }
 

@@ -17,7 +17,7 @@ Chromeflow works in **your actual Chrome browser**, where you're already logged 
 | **Browser** | Your real Chrome (sessions intact) | Fresh instance, logged out of everything |
 | **Auth / 2FA** | Already handled — pauses when needed | Can't handle — blocks completely |
 | **Page understanding** | DOM queries (fast, cheap, reliable) | Screenshots + vision model (slow, expensive) |
-| **Human-in-the-loop** | Built-in guide panel, highlights, pauses | Fully autonomous, no interaction |
+| **Human-in-the-loop** | Highlights, pauses on sensitive input | Fully autonomous, no interaction |
 | **Integration** | MCP server for Claude Code | Standalone, not Claude Code aware |
 | **Credential capture** | Reads API keys → writes to `.env` | Not designed for this |
 
@@ -90,7 +90,6 @@ Claude will navigate, highlight steps, click what it can, pause for anything sen
 | Screenshot + save + copy to clipboard | `take_and_copy_screenshot` |
 | Screenshot the terminal window | `capture_terminal` |
 | Save/restore form state across tabs | `save_page_state`, `restore_page_state` |
-| Show a step-by-step guide panel | `show_guide_panel`, `mark_step_done` |
 
 ### File uploads
 

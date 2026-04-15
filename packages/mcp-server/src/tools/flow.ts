@@ -162,17 +162,4 @@ fields is an array of {label, value} pairs. label should match the field's visib
     }
   );
 
-  server.tool(
-    "mark_step_done",
-    "Mark a step in the guide panel as completed (shows a green check). Call this after any step finishes — whether Claude acted autonomously or the user completed a highlighted step via wait_for_click.",
-    {
-      stepIndex: z.number().int().describe("0-based index of the step to mark done"),
-    },
-    async ({ stepIndex }) => {
-      await bridge.request({ type: "mark_step_done", stepIndex });
-      return {
-        content: [{ type: "text", text: `Step ${stepIndex + 1} marked as done.` }],
-      };
-    }
-  );
 }
