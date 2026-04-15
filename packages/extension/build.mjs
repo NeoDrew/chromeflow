@@ -47,6 +47,13 @@ async function build() {
       format: "iife",
       platform: "browser",
     }),
+    esbuild.context({
+      ...sharedConfig,
+      entryPoints: ["src/stealth.ts"],
+      outfile: "dist/stealth.js",
+      format: "iife",
+      platform: "browser",
+    }),
   ]);
 
   if (watch) {
