@@ -9,6 +9,7 @@ import { fillInput } from "./fill.js";
 import { clickElement, prepareClickTarget, postClickInspect } from "./click.js";
 import { extractTextDeep } from "./shadow.js";
 import { markerIds } from "../markers.js";
+import { redactSecrets } from "./redact.js";
 
 type IncomingMessage = {
   type: string;
@@ -171,6 +172,17 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         .replace(/[ \t]+/g, " ")
         .replace(/\n\s*\n+/g, "\n\n")
         .trim();
+      // Redact high-confidence secret patterns (API keys, JWTs, etc.) so they
+      // don't silently end up in Claude's context. Claude still sees a
+      // [REDACTED:KIND] placeholder and can ask the user or use read_element.
+      const { text: redacted, redactions } = redactSecrets(text);
+      text = redacted;
+      if (redactions.length > 0) {
+        const byKind: Record<string, number> = {};
+        for (const r of redactions) byKind[r.kind] = (byKind[r.kind] ?? 0) + 1;
+        const summary = Object.entries(byKind).map(([k, n]) => `${k}×${n}`).join(", ");
+        text = `[chromeflow redacted ${redactions.length} secret${redactions.length === 1 ? "" : "s"}: ${summary}. Use read_element + write_to_env to capture specific values intentionally.]\n\n` + text;
+      }
       if (selectorMissed) {
         text = `[Warning: selector "${selector}" not found — returning full page text]\n\n` + text;
       }
