@@ -341,15 +341,38 @@ async function handleMcpMessage(msg: {
   switch (msg.type) {
     case "navigate": {
       let targetTab: chrome.tabs.Tab;
+      const targetUrl = msg.url as string;
       if (msg.newTab) {
-        const createProps: chrome.tabs.CreateProperties = { url: msg.url as string, active: true };
+        const createProps: chrome.tabs.CreateProperties = { url: targetUrl, active: true };
         const wid = getWindowId(port);
         if (wid) createProps.windowId = wid;
         targetTab = await chrome.tabs.create(createProps);
       } else {
-        // Reuse active tab
+        // Reuse active tab. When the current page is already on the same origin,
+        // navigate via in-page location.href so sec-fetch-site is "same-origin"
+        // instead of "cross-site" — some sites (e.g. Outlier) serve a mobile /
+        // blocked SSR response when hit with cross-site direct navigation.
         const active = await getActiveTab(port);
-        await chrome.tabs.update(active.id!, { url: msg.url as string });
+        const sameOrigin = (() => {
+          try {
+            return active.url && new URL(active.url).origin === new URL(targetUrl).origin;
+          } catch { return false; }
+        })();
+        if (sameOrigin && active.id) {
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: active.id },
+              world: "MAIN",
+              func: (url: string) => { window.location.href = url; },
+              args: [targetUrl],
+            });
+          } catch {
+            // Fall back to tabs.update if scripting injection fails (e.g. on chrome:// pages)
+            await chrome.tabs.update(active.id, { url: targetUrl });
+          }
+        } else {
+          await chrome.tabs.update(active.id!, { url: targetUrl });
+        }
         targetTab = { ...active, id: active.id };
       }
       await new Promise<void>((resolve) => {
