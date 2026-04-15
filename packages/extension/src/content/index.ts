@@ -7,6 +7,7 @@ import {
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
 import { clickElement } from "./click.js";
+import { extractTextDeep } from "./shadow.js";
 
 type IncomingMessage = {
   type: string;
@@ -148,7 +149,14 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       // renders LaTeX/math into such spans whose innerHTML is empty but whose
       // React fiber holds the source markdown at __reactProps.children.props.markdown).
       hydrateContentVisibilityFromFiber(root, clone);
-      let text = (clone.textContent ?? "")
+      // Extract text including shadow DOM descendants from the LIVE root (clones
+      // don't include shadow roots). Append to the cleaned clone's text so we
+      // get React-fiber-hydrated content + shadow-rooted content.
+      const cloneText = clone.textContent ?? "";
+      const deepText = extractTextDeep(root, new Set(["NAV", "HEADER", "FOOTER"]));
+      // If the deep walk found significantly more text (i.e. shadow content
+      // exists), use it; otherwise stick with the clone.
+      let text = (deepText.length > cloneText.length * 1.1 ? deepText : cloneText)
         .replace(/[ \t]+/g, " ")
         .replace(/\n\s*\n+/g, "\n\n")
         .trim();

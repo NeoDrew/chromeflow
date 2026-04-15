@@ -1,7 +1,10 @@
+import { queryAllDeep } from "./shadow.js";
+
 /**
  * Find a clickable element by text/aria-label and programmatically click it.
  * Handles elements that are off-screen inside nested scroll containers (e.g.
- * Stripe's drawer panels).
+ * Stripe's drawer panels) and elements inside open shadow roots (Outlier chat,
+ * Radix UI components, etc.).
  */
 export function clickElement(
   textHint: string,
@@ -87,7 +90,7 @@ function findClickable(lower: string, nth: number = 1): Element | null {
   const interactiveSelectors =
     'button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], input[type="submit"], input[type="button"], label, [onclick], [tabindex]';
 
-  const candidates = Array.from(document.querySelectorAll(interactiveSelectors));
+  const candidates = queryAllDeep(document, interactiveSelectors);
 
   // Collect all usable matches in priority order, then pick the nth
   const allMatches: Element[] = [];
@@ -104,19 +107,19 @@ function findClickable(lower: string, nth: number = 1): Element | null {
   allMatches.push(...partials);
 
   // aria-label matches
-  Array.from(document.querySelectorAll<Element>("[aria-label]")).forEach((el) => {
+  queryAllDeep(document, "[aria-label]").forEach((el) => {
     if (isUsable(el) && !allMatches.includes(el) && el.getAttribute("aria-label")?.toLowerCase().includes(lower))
       allMatches.push(el);
   });
 
   // value attribute (input[type=submit], input[type=button])
-  Array.from(document.querySelectorAll<HTMLInputElement>("input[type=submit], input[type=button]")).forEach((el) => {
+  queryAllDeep<HTMLInputElement>(document, "input[type=submit], input[type=button]").forEach((el) => {
     if (isUsable(el) && !allMatches.includes(el) && el.value.toLowerCase().includes(lower))
       allMatches.push(el);
   });
 
   // title / data-testid
-  Array.from(document.querySelectorAll<Element>("[title], [data-testid]")).forEach((el) => {
+  queryAllDeep(document, "[title], [data-testid]").forEach((el) => {
     const v = el.getAttribute("title") ?? el.getAttribute("data-testid") ?? "";
     if (isUsable(el) && !allMatches.includes(el) && v.toLowerCase().includes(lower))
       allMatches.push(el);
