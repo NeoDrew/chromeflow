@@ -20,17 +20,10 @@ export type ServerMessage =
       message: string;
       valueToType?: string;
     }
-  | {
-      type: "show_panel";
-      requestId: string;
-      title: string;
-      steps: Array<{ text: string; done?: boolean }>;
-    }
   | { type: "read_element"; requestId: string; textHint: string }
   | { type: "clear"; requestId: string }
   // Flow control — reactive progression
   | { type: "start_click_watch"; requestId: string; timeout: number }
-  | { type: "mark_step_done"; requestId: string; stepIndex: number }
   | { type: "fill_input"; requestId: string; textHint: string; value: string; nth?: number }
   | { type: "click_element"; requestId: string; textHint: string; nth?: number }
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
@@ -45,7 +38,8 @@ export type ServerMessage =
   | { type: "list_tabs"; requestId: string }
   | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }> }
   | { type: "set_file_input"; requestId: string; hint: string; filePath: string }
-  | { type: "type_text"; requestId: string; text: string };
+  | { type: "type_text"; requestId: string; text: string }
+  | { type: "inspect_request_headers"; requestId: string; url: string };
 
 export type PageFieldState = {
   selector: string;

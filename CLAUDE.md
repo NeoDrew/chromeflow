@@ -34,10 +34,8 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 ## Guided flow pattern
 
 ```
-1. show_guide_panel(title, steps[])          — show the full plan upfront
-2. open_page(url)                            — navigate to the right page (add new_tab=true to keep current tab open)
-   mark_step_done(0)                         — ALWAYS mark step 0 done right after open_page succeeds
-3. For each step:
+1. open_page(url)                            — navigate to the right page (add new_tab=true to keep current tab open)
+2. For each step:
    a. Claude acts directly:
         click_element("Save")               — press buttons/links Claude can press
         get_page_text() or wait_for_selector(".success") — ALWAYS confirm after click; click_element returns after 600ms regardless of outcome
@@ -62,8 +60,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         find_and_highlight(text, msg)        — show the user what to do
         wait_for_click()                    — wait for user interaction
         [after fill_input] clear_overlays() — always clear after filling
-   e. mark_step_done(i)                      — check off the step after it is complete
-4. clear_overlays()                          — clean up when done
+3. clear_overlays()                          — clean up when done
 ```
 
 **Default to automation.** Only pause for human input when the step genuinely requires
