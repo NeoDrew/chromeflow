@@ -47,12 +47,14 @@ Tier 2 — Behavioral humanization
 | Behavior                       | Detection vector                                      | Status |
 |--------------------------------|-------------------------------------------------------|--------|
 | Mouse movement before click    | Bots teleport; real users move                        | SHIPPED v0.1.60 (synthetic), v0.1.61 (CDP) |
+| Curved mouse trajectory (bezier path) | Straight-line moves = bot; humans arc              | SHIPPED v0.1.62 — CDP path uses 6-9 waypoints along a random-control-point quadratic bezier |
 | Random mousedown→mouseup delay | Constant delay = bot                                  | SHIPPED v0.1.60 (synthetic), v0.1.61 (CDP) |
 | Click coordinate jitter        | Always-perfect-center clicks = bot                    | SHIPPED v0.1.60 (synthetic), v0.1.61 (CDP) |
 | Type_text variable cadence     | Constant interval = bot; humans burst with pauses     | PARTIAL — has jitter, no thinking pauses |
 | Scroll speed / acceleration    | Linear scroll = bot; humans have momentum/easing     | TODO |
 | Focus blur events on clicks    | Real clicks blur previous focused element             | TODO |
 | `isTrusted` on mouse events    | element.click() → isTrusted=false; CDP click → true | SHIPPED v0.1.61 — tries CDP `Input.dispatchMouseEvent` first, synthetic fallback |
+| WebRTC ICE host candidates     | Fingerprinters read private IPs via STUN enum         | SHIPPED v0.1.62 — RTCPeerConnection patched to drop `typ host` and mDNS candidates on both `addIceCandidate` and `onicecandidate` paths |
 
 
 Tier 3 — Footprint reduction
@@ -84,6 +86,21 @@ Things we should NOT do
 - Canvas fingerprint randomization — sounds clever, breaks real WebGL apps, sites detect the randomization itself, net negative
 - Mass user-agent rotation — easy to detect (real UA stays constant per session)
 - Pretending to be a totally different browser (Firefox UA + Chrome internals) — trivially detectable
+
+
+Tier 5 — Protecting user data from leakage
+-------------------------------------------
+
+These prevent chromeflow from accidentally exfiltrating secrets into the LLM
+conversation or writing to sensitive filesystem locations.
+
+| Item                                                                    | Status |
+|-------------------------------------------------------------------------|--------|
+| `write_to_env` path restriction (project-scoped, `.env*` filenames only)| SHIPPED v0.1.62 |
+| Secret pattern redaction in `get_page_text` output                      | SHIPPED v0.1.62 — Stripe, OpenAI, Anthropic, GitHub, AWS, Google, Slack, SendGrid, Twilio, DigitalOcean, JWT, long hex. Redacted as `[REDACTED:KIND:sk••••xyz]`. Summary line prepended. |
+| Password-field redaction in screenshots                                 | TODO |
+| `read_element` warning when captured value matches secret patterns      | TODO |
+| MCP server WebSocket auth token                                         | DEFERRED — threat model (local pre-bind port attack) is narrow and UX cost (token paste) is high. Documented for reconsideration if/when the attack surface grows. |
 
 
 Notes on specific sites

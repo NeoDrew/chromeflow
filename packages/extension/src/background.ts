@@ -736,18 +736,39 @@ async function handleMcpMessage(msg: {
             };
             const cx = Math.round(prep.x!);
             const cy = Math.round(prep.y!);
-            // Approach: a short move from a nearby offset toward the target,
-            // then press/release. Humanlike, and produces isTrusted=true events.
-            const ax = cx + Math.round((Math.random() - 0.5) * 40);
-            const ay = cy + Math.round((Math.random() - 0.5) * 40);
-            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-              type: "mouseMoved", x: ax, y: ay, button: "none", clickCount: 0,
-            });
-            await new Promise((r) => setTimeout(r, 30 + Math.random() * 40));
-            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-              type: "mouseMoved", x: cx, y: cy, button: "none", clickCount: 0,
-            });
-            await new Promise((r) => setTimeout(r, 20 + Math.random() * 40));
+
+            // Build a curved path from an offset start point to the target,
+            // using a quadratic bezier with a random control point. Humans
+            // move in arcs, not straight lines — behavioral fingerprinters
+            // (LinkedIn, Akamai) score on trajectory smoothness and curvature.
+            const sx = cx + Math.round((Math.random() - 0.5) * 60);
+            const sy = cy + Math.round((Math.random() - 0.5) * 60);
+            // Control point offset perpendicular to the line, random magnitude.
+            const midX = (sx + cx) / 2;
+            const midY = (sy + cy) / 2;
+            const perpDx = -(cy - sy);
+            const perpDy = cx - sx;
+            const perpLen = Math.sqrt(perpDx * perpDx + perpDy * perpDy) || 1;
+            // Control-point offset in pixels, along the unit-perpendicular
+            // vector. Random sign + magnitude scaled with path length (capped).
+            const bowPx = (Math.random() * 0.4 - 0.2) * Math.min(80, perpLen);
+            const ctlX = midX + (perpDx / perpLen) * bowPx;
+            const ctlY = midY + (perpDy / perpLen) * bowPx;
+
+            const steps = 6 + Math.floor(Math.random() * 4); // 6-9 waypoints
+            for (let i = 1; i <= steps; i++) {
+              const t = i / steps;
+              // Quadratic bezier B(t) = (1-t)^2 P0 + 2(1-t)t P1 + t^2 P2
+              const bx = Math.round((1 - t) * (1 - t) * sx + 2 * (1 - t) * t * ctlX + t * t * cx);
+              const by = Math.round((1 - t) * (1 - t) * sy + 2 * (1 - t) * t * ctlY + t * t * cy);
+              await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+                type: "mouseMoved", x: bx, y: by, button: "none", clickCount: 0,
+              });
+              // Slight ease-out: gaps shorter in the middle, longer at the ends
+              await new Promise((r) => setTimeout(r, 8 + Math.random() * 14));
+            }
+            // Small settle pause before the press
+            await new Promise((r) => setTimeout(r, 25 + Math.random() * 40));
             await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
               type: "mousePressed", x: cx, y: cy, button: "left", clickCount: 1,
             });
