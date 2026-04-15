@@ -1,3 +1,5 @@
+import { queryAllDeep } from "./shadow.js";
+
 /**
  * Find a form input by its label/placeholder/aria-label and set its value,
  * dispatching the synthetic events React/Vue/Svelte apps need to pick up the change.
@@ -128,7 +130,7 @@ function findInput(lower: string, nth: number = 1): FillableInput | null {
   }
 
   // 1. <label> whose text matches → use htmlFor to find input
-  for (const label of Array.from(document.querySelectorAll<HTMLLabelElement>("label"))) {
+  for (const label of queryAllDeep<HTMLLabelElement>(document, "label")) {
     if (label.textContent?.toLowerCase().includes(lower)) {
       const target = label.htmlFor
         ? document.getElementById(label.htmlFor)
@@ -138,17 +140,17 @@ function findInput(lower: string, nth: number = 1): FillableInput | null {
   }
 
   // 2. Input with placeholder matching
-  for (const el of Array.from(
-    document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>(
-      "input[placeholder], textarea[placeholder]"
-    )
+  for (const el of queryAllDeep<HTMLInputElement | HTMLTextAreaElement>(
+    document,
+    "input[placeholder], textarea[placeholder]"
   )) {
     if (el.placeholder.toLowerCase().includes(lower) && isEditable(el)) addMatch(el);
   }
 
   // 3. Input with aria-label matching
-  for (const el of Array.from(
-    document.querySelectorAll<FillableInput>("input[aria-label], textarea[aria-label], select[aria-label]")
+  for (const el of queryAllDeep<FillableInput>(
+    document,
+    "input[aria-label], textarea[aria-label], select[aria-label]"
   )) {
     const ariaLabel = el.getAttribute("aria-label") ?? "";
     if (ariaLabel.toLowerCase().includes(lower) && isEditable(el)) addMatch(el);
@@ -186,11 +188,11 @@ function findInput(lower: string, nth: number = 1): FillableInput | null {
   }
 
   // 5. Input/textarea whose name or id attribute matches the hint
-  for (const el of Array.from(document.querySelectorAll<FillableInput>("input, textarea"))) {
+  for (const el of queryAllDeep<FillableInput>(document, "input, textarea")) {
     const name = (el as HTMLInputElement).name?.toLowerCase() ?? "";
     if (name === lower && isEditable(el)) addMatch(el);
   }
-  for (const el of Array.from(document.querySelectorAll<FillableInput>("input, textarea"))) {
+  for (const el of queryAllDeep<FillableInput>(document, "input, textarea")) {
     if (el.id.toLowerCase() === lower && isEditable(el)) addMatch(el);
   }
 
