@@ -9,6 +9,7 @@
  */
 
 const groupsEl = document.getElementById("groups")!;
+const statusPill = document.getElementById("status-pill")!;
 
 type PortInfo = { port: number; label?: string };
 
@@ -196,6 +197,16 @@ function render(state: State) {
   }
 
   groupsEl.innerHTML = groups.join("");
+
+  const activeCount = state.livePorts.length;
+  const pillText = statusPill.querySelector(".pill-text")!;
+  if (activeCount > 0) {
+    statusPill.classList.remove("idle");
+    pillText.textContent = `${activeCount} active`;
+  } else {
+    statusPill.classList.add("idle");
+    pillText.textContent = "No active sessions";
+  }
 }
 
 groupsEl.addEventListener("click", async (e) => {
