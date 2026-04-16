@@ -37,7 +37,7 @@ function connect(conn: Conn) {
   }
 
   conn.ws.onopen = () => {
-    console.log(`[chromeflow offscreen] Connected to MCP server on port ${conn.port}`);
+    // Connected to MCP server on this port
     conn.reconnectDelay = RECONNECT_BASE_MS;
     conn.connected = true;
     conn.ws!.send(JSON.stringify({ type: "ready" }));
@@ -80,7 +80,7 @@ function connect(conn: Conn) {
 
   conn.ws.onclose = () => {
     if (conn.connected) {
-      console.log(`[chromeflow offscreen] Disconnected from port ${conn.port}`);
+      // Disconnected from this port
     }
     conn.connected = false;
     conn.ws = null;
