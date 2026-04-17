@@ -129,10 +129,11 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
 
   for (const [requestId, entry] of pendingClicks) {
     // Resolve the pending click-watch only for navigations in the watching
-    // instance's assigned Chrome window.
+    // instance's assigned Chrome window. Skip unassigned ports entirely —
+    // we must never treat the user's currently-focused window as ours.
     const wid = getWindowId(entry.port);
-    const windowQuery = wid ? { active: true, windowId: wid } : { active: true, currentWindow: true };
-    chrome.tabs.query(windowQuery, ([activeTab]) => {
+    if (!wid) continue;
+    chrome.tabs.query({ active: true, windowId: wid }, ([activeTab]) => {
       if (activeTab?.id === tabId) {
         pendingClicks.delete(requestId);
         entry.cb({ type: "navigation_complete", url });
@@ -269,21 +270,40 @@ async function withDebugger<T>(tabId: number, fn: () => Promise<T>): Promise<T> 
 }
 
 async function getActiveTab(port: number): Promise<chrome.tabs.Tab> {
-  const wid = getWindowId(port);
-  const query = wid
-    ? { active: true, windowId: wid }
-    : { active: true, currentWindow: true };
-  const [tab] = await chrome.tabs.query(query);
-  if (tab?.id) return tab;
+  let wid = getWindowId(port);
 
-  // No active tab — create a new Chrome window and assign it to this instance
-  const win = await chrome.windows.create({ focused: true });
-  if (win?.id) {
-    await setWindowId(port, win.id);
+  // If we have an assignment, validate the window still exists. If the user
+  // closed it since assignment, fall through to creating a fresh one.
+  if (wid) {
+    const [tab] = await chrome.tabs.query({ active: true, windowId: wid });
+    if (tab?.id) return tab;
+    // Stale assignment — window was closed. Drop it and re-assign below.
+    wid = null;
+    try {
+      const { claudeInstances } = await chrome.storage.local.get("claudeInstances");
+      const instances = (claudeInstances as Record<string, number>) ?? {};
+      if (instances[String(port)] !== undefined) {
+        delete instances[String(port)];
+        await chrome.storage.local.set({ claudeInstances: instances });
+      }
+    } catch { /* best-effort cleanup */ }
   }
-  const [newTab] = await chrome.tabs.query({ active: true, windowId: win?.id });
-  if (!newTab?.id) throw new Error("Failed to create new Chrome window");
-  return newTab;
+
+  // UNASSIGNED path: do NOT touch the user's currently-focused window.
+  // Creating a brand-new window means chromeflow only ever operates on
+  // tabs it opened itself. Overwriting a user's existing tab (e.g. an
+  // open report, a live chat) would be destructive — they could lose work.
+  const win = await chrome.windows.create({ focused: true, url: "about:blank" });
+  if (!win?.id) throw new Error("Failed to create a new Chrome window for this Claude Code instance.");
+  await setWindowId(port, win.id);
+
+  // Poll briefly for the new window's active tab to be ready.
+  for (let i = 0; i < 20; i++) {
+    const [newTab] = await chrome.tabs.query({ active: true, windowId: win.id });
+    if (newTab?.id) return newTab;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error("Created new Chrome window but its active tab never appeared.");
 }
 
 function isScriptableUrl(url: string | undefined): boolean {
@@ -409,8 +429,11 @@ async function handleMcpMessage(msg: {
 
     case "switch_to_tab": {
       const query = (msg.query as string).toLowerCase();
-      const wid = getWindowId(port);
-      const allTabs = await chrome.tabs.query(wid ? { windowId: wid } : { currentWindow: true });
+      // Ensure this instance has an assigned window before listing/switching tabs,
+      // so we never accidentally operate on the user's currently-focused window.
+      await getActiveTab(port);
+      const wid = getWindowId(port)!;
+      const allTabs = await chrome.tabs.query({ windowId: wid });
       // Match by 1-based index, URL substring, or title substring
       const byIndex = parseInt(query, 10);
       let target: chrome.tabs.Tab | undefined;
@@ -432,8 +455,11 @@ async function handleMcpMessage(msg: {
     }
 
     case "list_tabs": {
-      const wid = getWindowId(port);
-      const allTabs = await chrome.tabs.query(wid ? { windowId: wid } : { currentWindow: true });
+      // Ensure this instance has an assigned window before listing tabs,
+      // so the list only shows tabs chromeflow owns (not the user's own window).
+      await getActiveTab(port);
+      const wid = getWindowId(port)!;
+      const allTabs = await chrome.tabs.query({ windowId: wid });
       const tabs = allTabs.map((t, i) => ({
         index: i + 1,
         title: t.title ?? "",
@@ -563,9 +589,11 @@ async function handleMcpMessage(msg: {
         // Race condition guard: if the user clicked a link and the page finished
         // loading before this handler ran, onUpdated already fired with no pending
         // clicks. Check recentNavigations and resolve immediately if so.
+        // Skip entirely for unassigned ports — we must not treat the user's
+        // currently-focused window as ours.
         const widWatch = getWindowId(port);
-        const wq = widWatch ? { active: true, windowId: widWatch } : { active: true, currentWindow: true };
-        chrome.tabs.query(wq, ([activeTab]) => {
+        if (!widWatch) return;
+        chrome.tabs.query({ active: true, windowId: widWatch }, ([activeTab]) => {
           if (!activeTab?.id) return;
           const nav = recentNavigations.get(activeTab.id);
           if (nav && Date.now() - nav.time < 5000) {
