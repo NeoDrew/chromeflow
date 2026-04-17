@@ -188,6 +188,8 @@ const CHROMEFLOW_TOOLS = [
   "type_text",
   // v0.1.57+
   "inspect_request_headers",
+  // v0.2.1+
+  "wait_for_change",
 ].map((t) => `mcp__chromeflow__${t}`);
 
 function patchSettingsLocalJson(cwd: string) {

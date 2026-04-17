@@ -121,6 +121,57 @@ to 15 seconds so the page is checked gently rather than hammered every 500ms.`,
   );
 
   server.tool(
+    "wait_for_change",
+    `Block until the element matching \`selector\` mutates, then return its text content.
+Uses a MutationObserver — no polling, no screenshots. Ideal after an action where you expect
+a specific UI region to update: click Save, then wait_for_change(".toast") to capture the
+confirmation. wait_for_change(".chat-messages") after sending a message to get the reply.
+
+The element must exist at call time (use wait_for_selector first if needed). After the first
+mutation fires, waits a brief settle window (default 150ms) for the update to batch, then
+returns the element's current text with secrets redacted.
+
+Only observes changes within the matched element's subtree. Mutations in deeper shadow roots
+or in sibling elements are not detected. For form inputs whose \`value\` changes without a
+DOM mutation, this won't fire — use execute_script to read the value directly.`,
+    {
+      selector: z
+        .string()
+        .describe(
+          "CSS selector of the element whose changes you want to observe (e.g. '.toast', '.chat-messages', '[role=\"alert\"]')"
+        ),
+      timeout: z.number().optional().describe("Max seconds to wait for a mutation (default 30)"),
+      settle: z
+        .number()
+        .optional()
+        .describe(
+          "Milliseconds to wait AFTER the first mutation for subsequent mutations to batch (default 150). Increase to 500-1000 if the page renders in multiple rapid steps."
+        ),
+    },
+    async ({ selector, timeout = 30, settle }) => {
+      const timeoutMs = timeout * 1000;
+      const settleMs = settle ?? 150;
+      const response = await bridge.request(
+        { type: "wait_for_change", selector, timeout: timeoutMs, settle: settleMs },
+        timeoutMs + 5000
+      );
+      const r = response as unknown as { ok: boolean; reason: "mutation" | "timeout"; text?: string; message?: string };
+      if (!r.ok) {
+        return { content: [{ type: "text", text: r.message ?? `wait_for_change timed out on "${selector}"` }] };
+      }
+      const preview = (r.text ?? "").slice(0, 5000);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Element "${selector}" changed.\n\n${preview}`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
     "scroll_to_element",
     `Scroll an element into view by CSS selector or label/text match.
 Use this instead of guessing scroll amounts when you know which field or section you need to reach.
