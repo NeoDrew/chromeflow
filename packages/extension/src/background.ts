@@ -382,10 +382,12 @@ async function handleMcpMessage(msg: {
       let targetTab: chrome.tabs.Tab;
       const targetUrl = msg.url as string;
       if (msg.newTab) {
-        const createProps: chrome.tabs.CreateProperties = { url: targetUrl, active: true };
-        const wid = getWindowId(port);
-        if (wid) createProps.windowId = wid;
-        targetTab = await chrome.tabs.create(createProps);
+        // Ensure an assignment exists BEFORE creating the tab — otherwise
+        // chrome.tabs.create with no windowId drops the tab into whatever
+        // window Chrome considers "current" (the user's active window).
+        await getActiveTab(port);
+        const wid = getWindowId(port)!;
+        targetTab = await chrome.tabs.create({ url: targetUrl, active: true, windowId: wid });
       } else {
         // Reuse active tab. When the current page is already on the same origin,
         // navigate via in-page location.href so sec-fetch-site is "same-origin"
