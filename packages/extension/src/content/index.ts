@@ -7,7 +7,7 @@ import {
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
 import { clickElement, prepareClickTarget, postClickInspect } from "./click.js";
-import { extractTextDeep } from "./shadow.js";
+import { extractTextDeep, queryAllDeep } from "./shadow.js";
 import { markerIds } from "../markers.js";
 import { redactSecrets } from "./redact.js";
 
@@ -105,6 +105,78 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     case "post_click_inspect": {
       const result = postClickInspect();
       return { type: "action_done", requestId: msg.requestId, ...result };
+    }
+
+    case "wait_for_change": {
+      const selector = msg.selector as string;
+      const timeoutMs = (msg.timeout as number) ?? 30_000;
+      const settleMs = (msg.settle as number) ?? 150;
+
+      // queryAllDeep so selectors inside open shadow roots work
+      const target = queryAllDeep<Element>(document, selector)[0];
+      if (!target) {
+        return {
+          type: "action_done",
+          requestId: msg.requestId,
+          ok: false,
+          reason: "not-found",
+          message: `Selector "${selector}" not found. Call wait_for_selector first if the element may still be loading.`,
+        };
+      }
+
+      return new Promise<unknown>((resolve) => {
+        let settleTimer: ReturnType<typeof setTimeout> | null = null;
+        const observer = new MutationObserver(() => {
+          // Debounce: on each mutation, (re)start the settle window. Resolve
+          // when the window elapses without further mutations — this lets
+          // batched updates (multiple appended nodes, style changes, text
+          // flips) settle before we read.
+          if (settleTimer !== null) clearTimeout(settleTimer);
+          settleTimer = setTimeout(finish, settleMs);
+        });
+
+        const timeoutTimer = setTimeout(() => {
+          observer.disconnect();
+          if (settleTimer !== null) clearTimeout(settleTimer);
+          // Return current text even on timeout — often useful to see what
+          // state the element is actually in.
+          const fallbackText = extractTextDeep(target)
+            .replace(/[ \t]+/g, " ")
+            .replace(/\n\s*\n+/g, "\n\n")
+            .trim();
+          resolve({
+            type: "action_done",
+            requestId: msg.requestId,
+            ok: false,
+            reason: "timeout",
+            message: `No mutation in "${selector}" after ${timeoutMs / 1000}s. Current text (may still be useful):`,
+            text: redactSecrets(fallbackText).text,
+          });
+        }, timeoutMs);
+
+        function finish() {
+          observer.disconnect();
+          clearTimeout(timeoutTimer);
+          const raw = extractTextDeep(target)
+            .replace(/[ \t]+/g, " ")
+            .replace(/\n\s*\n+/g, "\n\n")
+            .trim();
+          resolve({
+            type: "action_done",
+            requestId: msg.requestId,
+            ok: true,
+            reason: "mutation",
+            text: redactSecrets(raw).text,
+          });
+        }
+
+        observer.observe(target, {
+          childList: true,
+          characterData: true,
+          attributes: true,
+          subtree: true,
+        });
+      });
     }
 
     case "scroll_page": {

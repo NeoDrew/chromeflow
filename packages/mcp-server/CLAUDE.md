@@ -48,7 +48,8 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         scroll_page("down")                 — reveal off-screen content when target location is unknown
    b. Check results with text, not vision:
         get_page_text()                     — read errors/status after actions
-        wait_for_selector(".success")       — wait for async changes (builds, modals)
+        wait_for_selector(".success")       — wait for a new element to appear
+        wait_for_change(".toast")          — wait for an existing element's content to mutate, then read it (uses MutationObserver, cheaper than polling)
         execute_script("document.title")    — query DOM state programmatically
    c. When an element can't be found or clicked:
         scroll_page("down") and retry      — always try this first
@@ -166,6 +167,8 @@ screenshot to check what happened.
 5. Only use `valueToType` when the user must personally type the value (password, personal data)
 
 **Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots.
+
+**Waiting for an existing region to update** (e.g. click Save, then get the confirmation toast; send a chat message, then get the reply): `wait_for_change(selector)` uses a MutationObserver on the element's subtree and returns its new text content as soon as the mutation settles. Prefer this over `wait_for_selector` + `get_page_text` when the element already exists and you just need its next state — one call instead of two, no polling.
 
 **Pre-filling `prompt()` and `confirm()` dialogs**: When a page action will trigger a JS
 dialog (e.g. "Save As" calling `prompt()`), call `set_dialog_response` BEFORE the action:

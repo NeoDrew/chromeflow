@@ -31,6 +31,7 @@ export type ServerMessage =
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
   | { type: "get_page_text"; requestId: string; selector?: string; startIndex?: number }
   | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number; refresh?: number }
+  | { type: "wait_for_change"; requestId: string; selector: string; timeout: number; settle?: number }
   | { type: "execute_script"; requestId: string; code: string }
   | { type: "get_elements"; requestId: string }
   | { type: "get_form_fields"; requestId: string }
