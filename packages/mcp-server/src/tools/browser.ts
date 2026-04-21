@@ -91,7 +91,10 @@ save_to controls where the PNG is saved: "downloads" (default) saves to ~/Downlo
         .describe('Where to save the PNG file: "downloads" (~/Downloads, default) or "cwd" (Claude\'s current working directory)'),
     },
     async ({ save_to = "downloads" }) => {
-      const response = await bridge.request({ type: "screenshot" });
+      // grid:false — saved/clipboard screenshots are for external sharing
+      // (pasting into chats, uploading to forms). The coordinate grid would
+      // be distracting noise on those.
+      const response = await bridge.request({ type: "screenshot", grid: false });
       if (response.type !== "screenshot_response") throw new Error("Unexpected response from extension");
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
