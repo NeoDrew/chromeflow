@@ -5,7 +5,7 @@ export type DistributiveOmit<T, K extends keyof T> = T extends unknown
 
 // Messages sent from MCP server → Extension (via WebSocket)
 export type ServerMessage =
-  | { type: "navigate"; requestId: string; url: string; newTab?: boolean }
+  | { type: "navigate"; requestId: string; url: string; newTab?: boolean; background?: boolean }
   | { type: "switch_to_tab"; requestId: string; query: string }
   | { type: "screenshot"; requestId: string; grid?: boolean }
   | { type: "find_highlight"; requestId: string; text: string; message: string; valueToType?: string }
@@ -24,8 +24,17 @@ export type ServerMessage =
   | { type: "clear"; requestId: string }
   // Flow control — reactive progression
   | { type: "start_click_watch"; requestId: string; timeout: number }
-  | { type: "fill_input"; requestId: string; textHint: string; value: string; nth?: number }
-  | { type: "click_element"; requestId: string; textHint: string; nth?: number }
+  | { type: "fill_input"; requestId: string; textHint: string; value: string; nth?: number; exact?: boolean }
+  | {
+      type: "click_element";
+      requestId: string;
+      textHint: string;
+      nth?: number;
+      until_selector?: string;
+      until_url_contains?: string;
+      until_text_contains?: string;
+      until_timeout_ms?: number;
+    }
   | { type: "prepare_click_target"; requestId: string; textHint: string; nth?: number }
   | { type: "post_click_inspect"; requestId: string }
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
@@ -39,10 +48,11 @@ export type ServerMessage =
   | { type: "save_page_state"; requestId: string }
   | { type: "restore_page_state"; requestId: string; state: PageFieldState[] }
   | { type: "list_tabs"; requestId: string }
-  | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }> }
-  | { type: "set_file_input"; requestId: string; hint: string; filePath: string }
-  | { type: "type_text"; requestId: string; text: string }
-  | { type: "inspect_request_headers"; requestId: string; url: string };
+  | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }>; exact?: boolean }
+  | { type: "set_file_input"; requestId: string; hint: string; filePath: string; waitMs?: number; verifySelector?: string }
+  | { type: "type_text"; requestId: string; text: string; frame?: string }
+  | { type: "inspect_request_headers"; requestId: string; url: string }
+  | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string };
 
 export type PageFieldState = {
   selector: string;
@@ -66,7 +76,7 @@ export type ClientMessage =
   | { type: "read_response"; requestId: string; value: string | null }
   | { type: "click_detected"; requestId: string }
   | { type: "navigation_complete"; requestId: string; url: string }
-  | { type: "fill_response"; requestId: string; success: boolean; message: string }
+  | { type: "fill_response"; requestId: string; success: boolean; message: string; matched?: string }
   | { type: "click_element_response"; requestId: string; success: boolean; message: string }
   | { type: "page_text_response"; requestId: string; text: string }
   | { type: "script_response"; requestId: string; result: string; alert?: string | null }
@@ -75,4 +85,4 @@ export type ClientMessage =
   | { type: "form_fields_response"; requestId: string; fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }> }
   | { type: "save_state_response"; requestId: string; state: PageFieldState[] }
   | { type: "tabs_response"; requestId: string; tabs: Array<{ index: number; title: string; url: string; active: boolean }> }
-  | { type: "fill_form_response"; requestId: string; results: Array<{ label: string; success: boolean; message: string }>; succeeded: number; total: number };
+  | { type: "fill_form_response"; requestId: string; results: Array<{ label: string; success: boolean; message: string; matched?: string }>; succeeded: number; total: number };

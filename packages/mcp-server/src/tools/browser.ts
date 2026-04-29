@@ -9,15 +9,21 @@ import type { WsBridge } from "../ws-bridge.js";
 export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
   server.tool(
     "open_page",
-    "Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it. After navigating, call get_page_text to read the page — do NOT take a screenshot.",
+    `Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it. After navigating, call get_page_text to read the page — do NOT take a screenshot.
+
+Set background=true (only with new_tab=true) to open the new tab WITHOUT switching focus to it. Use this when the current tab has a partially-filled form whose page auto-saves on focus loss (e.g. eBay seller listings) — switching away would trigger the auto-save and corrupt the in-progress draft.`,
     {
       url: z.string().url().describe("The URL to navigate to"),
       new_tab: z.boolean().optional().describe("Open in a new tab instead of replacing the current one (default false)"),
+      background: z
+        .boolean()
+        .optional()
+        .describe("If new_tab=true, do not switch focus to the new tab. Default false. Ignored when new_tab is false."),
     },
-    async ({ url, new_tab }) => {
-      await bridge.request({ type: "navigate", url, newTab: new_tab ?? false });
+    async ({ url, new_tab, background }) => {
+      await bridge.request({ type: "navigate", url, newTab: new_tab ?? false, background: background ?? false });
       return {
-        content: [{ type: "text", text: `Navigated to ${url}${new_tab ? " (new tab)" : ""}` }],
+        content: [{ type: "text", text: `Navigated to ${url}${new_tab ? (background ? " (new background tab)" : " (new tab)") : ""}` }],
       };
     }
   );
@@ -296,17 +302,26 @@ Unlike fill_input (which sets .value programmatically), this produces real keyst
 - fill_input fails because the site validates event.isTrusted (e.g. Outlier, DataAnnotation code editors)
 - The target is a shadow DOM input, custom web component, or heavily guarded editor
 - You need to type into a CodeMirror/Monaco/Ace editor that rejects programmatic value changes
+- The target lives inside a same-origin iframe (e.g. eBay's "se-rte" rich-text description editor) — pass the iframe's CSS selector via the \`frame\` parameter
 
 Usage: first click_element or execute_script to focus the target field, then call type_text with the content.
-To clear existing content before typing, use execute_script("document.execCommand('selectAll')") first.`,
+To clear existing content before typing, use execute_script("document.execCommand('selectAll')") first.
+
+For iframe contenteditables: pass \`frame\` (a CSS selector for the iframe). type_text descends into the iframe, focuses its first editable element, types via CDP, then dispatches input/change in the iframe's context so React picks up the change. Same-origin iframes only — cross-origin iframes will return an error.`,
     {
       text: z.string().describe("The text to type into the focused element"),
+      frame: z
+        .string()
+        .optional()
+        .describe(
+          "CSS selector for an iframe whose contents you want to type into (e.g. 'iframe.se-rte-frame__summary'). Same-origin only. Before typing, the first contenteditable/input inside the iframe is focused; after typing, input/change events are dispatched in the iframe's context."
+        ),
     },
-    async ({ text }) => {
+    async ({ text, frame }) => {
       // Average ~90ms per char (60ms avg delay + overhead) + 15s buffer for
       // debugger attach/detach and the post-typing input event dispatch.
       const timeoutMs = Math.max(30_000, text.length * 90 + 15_000);
-      const response = await bridge.request({ type: "type_text", text }, timeoutMs);
+      const response = await bridge.request({ type: "type_text", text, frame }, timeoutMs);
       const r = response as { success?: boolean; message?: string };
       return {
         content: [{ type: "text", text: r.message ?? (r.success ? "Text typed successfully" : "Failed to type text") }],
@@ -318,18 +333,66 @@ To clear existing content before typing, use execute_script("document.execComman
     "set_file_input",
     `Upload a file to a file input field. Works even when the input is visually hidden behind a custom drag-and-drop zone.
 Uses Chrome DevTools Protocol to set the file — the only way to bypass the browser's file-input script restriction.
-hint: label text or name of the file input (or empty string to target the first file input on the page).
-file_path: absolute path to the file on the local filesystem (e.g. /Users/you/Downloads/task.zip).
-After calling this, verify the upload was accepted: use execute_script to check that the input's files.length > 0, or use get_page_text to look for a success indicator (e.g. a Remove button appearing). If not accepted, call set_file_input again — occasional React timing issues may require a retry.`,
+
+Returns success=true ONLY if an observable change is detected within wait_ms: either the page-level file count goes up, or the file is consumed by the page's React handler (input is reset), or verify_selector matches a new element on the page. Otherwise success=false with a clear message — typically because the page rejected the file (size/type) or the React handler hasn't run yet.
+
+For rapid batch uploads (multiple set_file_input calls in a row), this commit-wait prevents the second CDP call from overwriting the first before React reads it — no manual sleep needed between calls.
+
+hint: label text, name, or CSS selector of the file input (or empty string to target the first file input on the page).
+file_path: absolute path to the file on the local filesystem (e.g. /Users/you/Downloads/task.zip).`,
     {
       hint: z.string().describe("Label text, name, or surrounding text of the file input. Use empty string to target the first file input on the page."),
       file_path: z.string().describe("Absolute path to the file to upload (e.g. /Users/you/Downloads/task.zip)"),
+      wait_ms: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("How long to wait for an observable change after setting the file (default 3000). Increase for slow uploaders that take a moment to render thumbnails."),
+      verify_selector: z
+        .string()
+        .optional()
+        .describe('Optional CSS selector that should appear after a successful upload (e.g. ".photo-thumbnail", "[data-uploaded=true]"). When matched, set_file_input returns success immediately.'),
     },
-    async ({ hint, file_path }) => {
-      const response = await bridge.request({ type: "set_file_input", hint, filePath: file_path });
+    async ({ hint, file_path, wait_ms, verify_selector }) => {
+      // The WS request must outlive the upload-poll, with margin for CDP attach.
+      const wsTimeout = Math.max(30_000, (wait_ms ?? 3000) + 10_000);
+      const response = await bridge.request(
+        { type: "set_file_input", hint, filePath: file_path, waitMs: wait_ms, verifySelector: verify_selector },
+        wsTimeout
+      );
       const r = response as { success?: boolean; message?: string };
       return {
         content: [{ type: "text", text: r.message ?? (r.success ? "File set successfully" : "Failed to set file") }],
+      };
+    }
+  );
+
+  server.tool(
+    "react_set_input",
+    `Set the value of a React-controlled input via the native value-setter, dispatching the input/change events that React's onChange handler listens for.
+
+Use this instead of writing your own \`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set\` script — this helper handles the prototype-from-instance gotcha automatically (inputs inside iframes have their own HTMLInputElement constructor, and using the outer-window prototype throws "Illegal invocation").
+
+Common cases:
+- A standard input that fill_input fails on because the page validates event.isTrusted or uses an exotic React Hook Form setup.
+- An input inside a same-origin iframe (pass frame="iframe.selector").
+- A hidden React-Select combobox input (selector='input[id*="react-select-3-input"]').
+
+Returns the matched element's tag/name/id/type so you can verify it was the right field, and the read-back value so you can spot when React rejected the new value.`,
+    {
+      selector: z.string().describe("CSS selector of the input to set (e.g. 'input[name=email]', '#promoted-rate-input')"),
+      value: z.string().describe("The value to set"),
+      frame: z
+        .string()
+        .optional()
+        .describe('Optional CSS selector for a same-origin iframe whose contents contain the input (e.g. "iframe.se-rte-frame"). Cross-origin iframes are not supported.'),
+    },
+    async ({ selector, value, frame }) => {
+      const response = await bridge.request({ type: "react_set_input", selector, value, frame });
+      const r = response as { success?: boolean; message?: string };
+      return {
+        content: [{ type: "text", text: r.message ?? (r.success ? "Set" : "Failed to set") }],
       };
     }
   );
@@ -340,8 +403,9 @@ After calling this, verify the upload was accepted: use execute_script to check 
 Use this to read framework state, check DOM properties, or interact with page APIs that aren't reachable via text.
 Prefer get_page_text for reading visible content. Use this for programmatic DOM queries (e.g. checking an element's attribute, reading a value not visible in text).
 Top-level return statements are supported (e.g. multi-statement scripts with \`return value;\`).
+Top-level \`await\` is supported — write \`return await fetch(url).then(r => r.json())\` directly without the window.__variable + sleep + re-read pattern. Detected automatically when the code contains the \`await\` keyword.
 If the page called alert()/confirm()/prompt() since the last check, the message will appear as PAGE ALERT in the result — read it and act on it.
-NOTE: Pages with strict Content Security Policy (e.g. Stripe, GitHub) will block eval and return a CSP error — do not retry, use get_page_text or fill_input instead.`,
+NOTE: Pages with strict Content Security Policy (e.g. Stripe, GitHub) will fall through to a CDP path that bypasses CSP — but the script still runs, so retries usually aren't needed.`,
     {
       code: z
         .string()
