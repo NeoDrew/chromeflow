@@ -22,7 +22,13 @@ export function registerFlowTools(server: McpServer, bridge: WsBridge) {
 Use this whenever Claude can press a button without needing user input — e.g. "Save", "Continue", "Create product", "Add pricing", "Confirm", "Next".
 After clicking, use get_page_text to check the result — only use take_screenshot if you need pixel positions.
 Do NOT use for: elements that require the user to make a personal choice, consent to terms, or enter sensitive data.
-When multiple elements share the same label (e.g. many "Remove" buttons), use nth to target a specific one (1 = first/topmost, 2 = second, etc.).`,
+When multiple elements share the same label (e.g. many "Remove" buttons), use nth to target a specific one (1 = first/topmost, 2 = second, etc.).
+
+Verifying the click took effect: on React-heavy sites the synthetic click sometimes returns success but the handler never ran. Pass an "until" condition that should hold AFTER the click — click_element will then poll for it and return success only if the page actually changed:
+- until_selector: a CSS selector that should appear (e.g. ".success-toast", "#confirm-modal")
+- until_url_contains: a substring that should appear in the URL (e.g. "/listing-published")
+- until_text_contains: a substring that should appear anywhere in page text (e.g. "Listing created")
+If the until-condition is not met within until_timeout_ms (default 5000ms), click_element returns success=false with a clear message so the caller can retry or take a different path.`,
     {
       textHint: z
         .string()
@@ -35,16 +41,39 @@ When multiple elements share the same label (e.g. many "Remove" buttons), use nt
         .min(1)
         .optional()
         .describe("Which match to click when multiple elements share the same label (1 = first/topmost, default 1)"),
+      until_selector: z
+        .string()
+        .optional()
+        .describe('Wait until this CSS selector appears on the page after the click (e.g. ".success-toast"). Returns success=false if it does not appear within until_timeout_ms.'),
+      until_url_contains: z
+        .string()
+        .optional()
+        .describe('Wait until the URL contains this substring after the click (e.g. "/checkout/complete"). Returns success=false if it does not.'),
+      until_text_contains: z
+        .string()
+        .optional()
+        .describe('Wait until the visible page text contains this substring after the click (e.g. "Listing published"). Returns success=false if it does not.'),
+      until_timeout_ms: z
+        .number()
+        .int()
+        .min(500)
+        .optional()
+        .describe("How long to wait for the until-condition, in milliseconds (default 5000). Only used if one of until_* is set."),
     },
-    async ({ textHint, nth }) => {
-      const response = await bridge.request({ type: "click_element", textHint, nth });
+    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms }) => {
+      // The WS request must outlive the until-poll, with a buffer for navigation.
+      const wsTimeout = Math.max(30_000, (until_timeout_ms ?? 0) + 10_000);
+      const response = await bridge.request(
+        { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms },
+        wsTimeout
+      );
       const r = response as { success: boolean; message: string };
       if (!r.success) {
         return {
           content: [
             {
               type: "text",
-              text: `Could not click "${textHint}": ${r.message}. Call take_screenshot() to locate the element visually.`,
+              text: `Could not click "${textHint}": ${r.message}`,
             },
           ],
         };
@@ -191,7 +220,11 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
     `Fill multiple form fields in a single call by targeting each field by its label text.
 Use this instead of calling fill_input repeatedly — it fills all fields in one round trip and returns a per-field success report.
 Ideal for forms with many textareas or inputs where each fill would otherwise require a separate tool call.
-fields is an array of {label, value} pairs. label should match the field's visible label, placeholder, or aria-label.`,
+fields is an array of {label, value} pairs. label should match the field's visible label, placeholder, or aria-label.
+
+Each per-field result includes the matched element description (e.g. \`<input name="title" id="..." placeholder="...">\`) so Claude can spot when fill_form picked the wrong field.
+
+Pass \`exact: true\` for forms with short generic labels (like "Rate" or "Amount") that may collide with similarly-labeled neighbours — fields without an exact aria-label/placeholder/name/id/label-text match will return success=false instead of silently filling the wrong field.`,
     {
       fields: z.array(
         z.object({
@@ -199,10 +232,14 @@ fields is an array of {label, value} pairs. label should match the field's visib
           value: z.string().describe("Value to fill in"),
         })
       ).describe("List of fields to fill"),
+      exact: z
+        .boolean()
+        .optional()
+        .describe("If true, refuse fuzzy text-walk matches for every field. Default false."),
     },
-    async ({ fields }) => {
-      const response = await bridge.request({ type: "fill_form", fields });
-      const r = response as { results: Array<{ label: string; success: boolean; message: string }>; succeeded: number; total: number };
+    async ({ fields, exact }) => {
+      const response = await bridge.request({ type: "fill_form", fields, exact });
+      const r = response as { results: Array<{ label: string; success: boolean; message: string; matched?: string }>; succeeded: number; total: number };
       const lines = r.results.map(f => `${f.success ? "✓" : "✗"} "${f.label}": ${f.message}`);
       return {
         content: [{

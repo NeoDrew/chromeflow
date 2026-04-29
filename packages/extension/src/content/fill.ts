@@ -1,15 +1,53 @@
 import { queryAllDeep } from "./shadow.js";
 
 /**
+ * Match strength used to rank fill_input candidates. Lower = stronger.
+ * Anything ≤ EXACT_MAX is considered an "exact" match for the `exact: true` mode.
+ */
+type MatchKind =
+  | "aria-eq"        // 1: aria-label === hint
+  | "placeholder-eq" // 2: placeholder === hint
+  | "label-text-eq"  // 3: associated <label> textContent === hint
+  | "name-eq"        // 4: name attribute === hint
+  | "id-eq"          // 5: id === hint
+  | "aria-includes"      // 6: aria-label.includes(hint)
+  | "placeholder-includes" // 7: placeholder.includes(hint)
+  | "label-text-includes" // 8: associated <label> textContent.includes(hint)
+  | "fuzzy-text-walk";    // 9: fuzzy walk through nearby text nodes (lowest confidence)
+
+const RANK: Record<MatchKind, number> = {
+  "aria-eq": 1,
+  "placeholder-eq": 2,
+  "label-text-eq": 3,
+  "name-eq": 4,
+  "id-eq": 5,
+  "aria-includes": 6,
+  "placeholder-includes": 7,
+  "label-text-includes": 8,
+  "fuzzy-text-walk": 9,
+};
+
+const EXACT_MAX = 5; // ranks 1-5 are exact matches; ≥6 is fuzzy
+
+type FillableInput = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+
+/**
  * Find a form input by its label/placeholder/aria-label and set its value,
  * dispatching the synthetic events React/Vue/Svelte apps need to pick up the change.
  * Also handles contenteditable elements used by dashboards like Stripe.
+ *
+ * Set `exact: true` to refuse fuzzy text-walk matches — the fuzzy walker is the
+ * source of "filled the wrong field" bugs on dense forms (e.g. eBay's promoted-
+ * listings rate input matching against the title input). When exact is true and
+ * no strict match exists, returns success: false rather than silently filling
+ * the wrong field.
  */
 export function fillInput(
   textHint: string,
   value: string,
-  nth: number = 1
-): { success: boolean; message: string } {
+  nth: number = 1,
+  exact: boolean = false
+): { success: boolean; message: string; matched?: string } {
   const lower = textHint.toLowerCase().trim();
 
   // Try CodeMirror 6 editors first (.cm-editor wrapping a .cm-content div)
@@ -31,11 +69,12 @@ export function fillInput(
     editable.dispatchEvent(new Event("input", { bubbles: true }));
     editable.dispatchEvent(new Event("change", { bubbles: true }));
     editable.scrollIntoView({ behavior: "smooth", block: "center" });
-    return { success: true, message: `Filled "${textHint}" with value` };
+    const matched = describeElement(editable);
+    return { success: true, message: `Filled "${textHint}" → ${matched} (contenteditable)`, matched };
   }
 
-  const input = findInput(lower, nth);
-  if (!input) {
+  const found = findInput(lower, nth, exact);
+  if (!found) {
     // Last resort: the user may have just clicked/focused the target field via
     // wait_for_click — try to fill whatever is currently focused.
     const active = document.activeElement;
@@ -50,7 +89,8 @@ export function fillInput(
         document.execCommand("insertText", false, value);
         active.dispatchEvent(new Event("input", { bubbles: true }));
         active.dispatchEvent(new Event("change", { bubbles: true }));
-        return { success: true, message: `Filled "${textHint}" with value` };
+        const matched = describeElement(active);
+        return { success: true, message: `Filled "${textHint}" → ${matched} (currently-focused contenteditable)`, matched };
       }
       if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
         if (isEditable(active)) {
@@ -62,12 +102,21 @@ export function fillInput(
           else active.value = value;
           active.dispatchEvent(new Event("input", { bubbles: true }));
           active.dispatchEvent(new Event("change", { bubbles: true }));
-          return { success: true, message: `Filled "${textHint}" with value` };
+          const matched = describeElement(active);
+          return { success: true, message: `Filled "${textHint}" → ${matched} (currently-focused input)`, matched };
         }
       }
     }
+    if (exact) {
+      return {
+        success: false,
+        message: `No exact-match input found for "${textHint}". Pass exact: false (the default) to allow fuzzy text-walk matching, but verify the matched element via the response.`,
+      };
+    }
     return { success: false, message: `No input found for "${textHint}"` };
   }
+
+  const { input, kind } = found;
 
   // Focus the element first (triggers any focus handlers)
   input.focus();
@@ -83,17 +132,23 @@ export function fillInput(
       input.value = option.value;
       input.dispatchEvent(new Event("change", { bubbles: true }));
     }
-    return { success: true, message: `Selected "${option?.text ?? value}"` };
+    const matched = describeElement(input);
+    return { success: true, message: `Selected "${option?.text ?? value}" → ${matched} (matched via ${kind})`, matched };
   }
 
   // For React-controlled inputs, bypass the synthetic event system by using
-  // the native setter so React's onChange fires correctly.
-  const nativeSetter = Object.getOwnPropertyDescriptor(
-    input instanceof HTMLTextAreaElement
-      ? HTMLTextAreaElement.prototype
-      : HTMLInputElement.prototype,
-    "value"
-  )?.set;
+  // the native setter so React's onChange fires correctly. Use the prototype
+  // FROM THE INSTANCE so iframe-hosted inputs (whose own constructor differs
+  // from the outer window's HTMLInputElement) don't throw "Illegal invocation".
+  const proto = Object.getPrototypeOf(input);
+  const nativeSetter =
+    Object.getOwnPropertyDescriptor(proto, "value")?.set ??
+    Object.getOwnPropertyDescriptor(
+      input instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype,
+      "value"
+    )?.set;
 
   if (nativeSetter) {
     nativeSetter.call(input, value);
@@ -111,93 +166,154 @@ export function fillInput(
   // Read back the value to confirm it was accepted (React may discard improperly dispatched events)
   const confirmedValue = (input as HTMLInputElement | HTMLTextAreaElement).value;
   const accepted = confirmedValue === value;
+  const matched = describeElement(input);
+  const matchNote = `matched via ${kind}`;
   return {
     success: true,
+    matched,
     message: accepted
-      ? `Filled "${textHint}" with value`
-      : `Filled "${textHint}" but value may not have been accepted by React (got back: "${confirmedValue.slice(0, 60)}")`,
+      ? `Filled "${textHint}" → ${matched} (${matchNote})`
+      : `Filled "${textHint}" → ${matched} (${matchNote}) — but value may not have been accepted by React (got back: "${confirmedValue.slice(0, 60)}")`,
   };
 }
 
-type FillableInput = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+/**
+ * Build a human-readable description of an element for the fill_input return
+ * message — `<input name="X" id="Y" placeholder="Z">`. Used by Claude to
+ * sanity-check that fill_input matched the intended field.
+ */
+function describeElement(el: Element): string {
+  const tag = el.tagName.toLowerCase();
+  const parts: string[] = [];
+  const name = el.getAttribute("name");
+  const id = el.id || null;
+  const placeholder = el.getAttribute("placeholder");
+  const aria = el.getAttribute("aria-label");
+  const type = el.getAttribute("type");
+  if (type) parts.push(`type="${type}"`);
+  if (name) parts.push(`name="${name}"`);
+  if (id) parts.push(`id="${id}"`);
+  if (placeholder) parts.push(`placeholder="${placeholder.slice(0, 40)}"`);
+  if (aria) parts.push(`aria-label="${aria.slice(0, 40)}"`);
+  return `<${tag}${parts.length ? " " + parts.join(" ") : ""}>`;
+}
 
-function findInput(lower: string, nth: number = 1): FillableInput | null {
-  const allMatches: FillableInput[] = [];
+/**
+ * Find a fillable input by hint, classifying each match by how strong the
+ * association is. Returns the nth match overall (after ranking by strength)
+ * along with the kind of match. `exact` removes fuzzy-text-walk and includes-
+ * style partial matches from consideration — only equality matches qualify.
+ */
+function findInput(
+  lower: string,
+  nth: number = 1,
+  exact: boolean = false
+): { input: FillableInput; kind: MatchKind } | null {
+  const matches: Array<{ input: FillableInput; kind: MatchKind }> = [];
   const seen = new Set<Element>();
 
-  function addMatch(el: FillableInput) {
-    if (!seen.has(el)) { seen.add(el); allMatches.push(el); }
+  function add(el: FillableInput, kind: MatchKind) {
+    if (seen.has(el)) return;
+    seen.add(el);
+    matches.push({ input: el, kind });
   }
 
-  // 1. <label> whose text matches → use htmlFor to find input
+  // STRONGEST: aria-label / placeholder / name / id equality on the element itself
+  for (const el of queryAllDeep<FillableInput>(document, "input, textarea, select")) {
+    if (!isEditable(el)) continue;
+    const aria = (el.getAttribute("aria-label") ?? "").toLowerCase().trim();
+    if (aria === lower) { add(el, "aria-eq"); continue; }
+    const placeholder = ((el as HTMLInputElement).placeholder ?? "").toLowerCase().trim();
+    if (placeholder === lower) { add(el, "placeholder-eq"); continue; }
+    const name = ((el as HTMLInputElement).name ?? "").toLowerCase().trim();
+    if (name === lower) { add(el, "name-eq"); continue; }
+    if (el.id.toLowerCase().trim() === lower) { add(el, "id-eq"); continue; }
+  }
+
+  // Strong: <label>(textContent === hint) → input via htmlFor or descendant
   for (const label of queryAllDeep<HTMLLabelElement>(document, "label")) {
-    if (label.textContent?.toLowerCase().includes(lower)) {
+    const labelText = (label.textContent ?? "").toLowerCase().trim();
+    if (!labelText) continue;
+    if (labelText === lower) {
       const target = label.htmlFor
         ? document.getElementById(label.htmlFor)
         : label.querySelector<FillableInput>("input, textarea, select");
-      if (target && isEditable(target)) addMatch(target as FillableInput);
+      if (target && isEditable(target as FillableInput)) add(target as FillableInput, "label-text-eq");
     }
   }
 
-  // 2. Input with placeholder matching
-  for (const el of queryAllDeep<HTMLInputElement | HTMLTextAreaElement>(
-    document,
-    "input[placeholder], textarea[placeholder]"
-  )) {
-    if (el.placeholder.toLowerCase().includes(lower) && isEditable(el)) addMatch(el);
-  }
-
-  // 3. Input with aria-label matching
-  for (const el of queryAllDeep<FillableInput>(
-    document,
-    "input[aria-label], textarea[aria-label], select[aria-label]"
-  )) {
-    const ariaLabel = el.getAttribute("aria-label") ?? "";
-    if (ariaLabel.toLowerCase().includes(lower) && isEditable(el)) addMatch(el);
-  }
-
-  // 4. Any text node near an input that contains the hint
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      if (!node.textContent?.toLowerCase().includes(lower)) return NodeFilter.FILTER_REJECT;
-      const p = node.parentElement;
-      if (!p) return NodeFilter.FILTER_REJECT;
-      const style = getComputedStyle(p);
-      if (style.display === "none" || style.visibility === "hidden") return NodeFilter.FILTER_REJECT;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
-
-  let textNode: Node | null;
-  while ((textNode = walker.nextNode())) {
-    const anchor = (textNode as Text).parentElement!;
-    let node: Element | null = anchor;
-    for (let depth = 0; depth < 8 && node && node !== document.body; depth++) {
-      const input = node.querySelector<FillableInput>("input, textarea, select");
-      if (input && isEditable(input)) { addMatch(input); break; }
-      let found = false;
-      for (const sibling of [node.nextElementSibling, node.previousElementSibling]) {
-        if (sibling) {
-          const sibInput = sibling.querySelector<FillableInput>("input, textarea, select");
-          if (sibInput && isEditable(sibInput)) { addMatch(sibInput); found = true; break; }
-        }
+  if (!exact) {
+    // Medium: aria-label / placeholder includes hint
+    for (const el of queryAllDeep<FillableInput>(document, "input, textarea, select")) {
+      if (!isEditable(el)) continue;
+      const aria = (el.getAttribute("aria-label") ?? "").toLowerCase();
+      if (aria && aria.includes(lower) && aria !== lower) add(el, "aria-includes");
+    }
+    for (const el of queryAllDeep<HTMLInputElement | HTMLTextAreaElement>(
+      document,
+      "input[placeholder], textarea[placeholder]"
+    )) {
+      if (!isEditable(el)) continue;
+      const placeholder = (el.placeholder ?? "").toLowerCase();
+      if (placeholder && placeholder.includes(lower) && placeholder !== lower) add(el, "placeholder-includes");
+    }
+    // Medium: <label>(textContent.includes(hint)) → input via htmlFor or descendant
+    for (const label of queryAllDeep<HTMLLabelElement>(document, "label")) {
+      const labelText = (label.textContent ?? "").toLowerCase().trim();
+      if (!labelText || labelText === lower) continue;
+      if (labelText.includes(lower)) {
+        const target = label.htmlFor
+          ? document.getElementById(label.htmlFor)
+          : label.querySelector<FillableInput>("input, textarea, select");
+        if (target && isEditable(target as FillableInput)) add(target as FillableInput, "label-text-includes");
       }
-      if (found) break;
-      node = node.parentElement;
+    }
+
+    // WEAK (fuzzy text walk) — last resort only. This is the pathway that's
+    // historically caused fill_input to land on the wrong field on dense
+    // forms (see Issue #1 — eBay promoted-listings rate filling into title).
+    // We keep it for forms with no proper labels, but rank it lowest so
+    // exact-match modes never see it, and it loses to every other strategy.
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        if (!node.textContent?.toLowerCase().includes(lower)) return NodeFilter.FILTER_REJECT;
+        const p = node.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        const style = getComputedStyle(p);
+        if (style.display === "none" || style.visibility === "hidden") return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    let textNode: Node | null;
+    while ((textNode = walker.nextNode())) {
+      const anchor = (textNode as Text).parentElement!;
+      let node: Element | null = anchor;
+      for (let depth = 0; depth < 8 && node && node !== document.body; depth++) {
+        const input = node.querySelector<FillableInput>("input, textarea, select");
+        if (input && isEditable(input)) { add(input, "fuzzy-text-walk"); break; }
+        let found = false;
+        for (const sibling of [node.nextElementSibling, node.previousElementSibling]) {
+          if (sibling) {
+            const sibInput = sibling.querySelector<FillableInput>("input, textarea, select");
+            if (sibInput && isEditable(sibInput)) { add(sibInput, "fuzzy-text-walk"); found = true; break; }
+          }
+        }
+        if (found) break;
+        node = node.parentElement;
+      }
     }
   }
 
-  // 5. Input/textarea whose name or id attribute matches the hint
-  for (const el of queryAllDeep<FillableInput>(document, "input, textarea")) {
-    const name = (el as HTMLInputElement).name?.toLowerCase() ?? "";
-    if (name === lower && isEditable(el)) addMatch(el);
+  if (matches.length === 0) return null;
+  // Sort by rank (lower = stronger). Stable sort preserves DOM order within a rank.
+  matches.sort((a, b) => RANK[a.kind] - RANK[b.kind]);
+  if (exact) {
+    const exactOnly = matches.filter((m) => RANK[m.kind] <= EXACT_MAX);
+    if (exactOnly.length === 0) return null;
+    return exactOnly[nth - 1] ?? exactOnly[exactOnly.length - 1];
   }
-  for (const el of queryAllDeep<FillableInput>(document, "input, textarea")) {
-    if (el.id.toLowerCase() === lower && isEditable(el)) addMatch(el);
-  }
-
-  if (allMatches.length === 0) return null;
-  return allMatches[nth - 1] ?? allMatches[allMatches.length - 1];
+  return matches[nth - 1] ?? matches[matches.length - 1];
 }
 
 /**
