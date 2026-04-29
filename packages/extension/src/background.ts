@@ -381,13 +381,17 @@ async function handleMcpMessage(msg: {
     case "navigate": {
       let targetTab: chrome.tabs.Tab;
       const targetUrl = msg.url as string;
+      const background = msg.background === true;
       if (msg.newTab) {
         // Ensure an assignment exists BEFORE creating the tab — otherwise
         // chrome.tabs.create with no windowId drops the tab into whatever
         // window Chrome considers "current" (the user's active window).
         await getActiveTab(port);
         const wid = getWindowId(port)!;
-        targetTab = await chrome.tabs.create({ url: targetUrl, active: true, windowId: wid });
+        // background:true creates the tab without focus-switching, so a
+        // partially-filled form on the current tab keeps focus and doesn't
+        // trigger the page's blur/auto-save behavior.
+        targetTab = await chrome.tabs.create({ url: targetUrl, active: !background, windowId: wid });
       } else {
         // Reuse active tab. When the current page is already on the same origin,
         // navigate via in-page location.href so sec-fetch-site is "same-origin"
@@ -649,6 +653,13 @@ async function handleMcpMessage(msg: {
       const code = msg.code as string;
       const tabId = tab.id!;
 
+      // Detect top-level `await` so the script can use it directly. The
+      // word-boundary check excludes false positives like `myawaitable`. With
+      // await, we wrap the code in an async IIFE expression and either:
+      //  - chrome.scripting path: make the injected func async, await eval'd promise
+      //  - CDP path: pass awaitPromise: true to Runtime.evaluate
+      const usesAwait = /\bawait\b/.test(code);
+
       // Try normal content-script injection first
       let result = "undefined";
       let alertMsg: string | null = null;
@@ -658,14 +669,25 @@ async function handleMcpMessage(msg: {
         const results = await chrome.scripting.executeScript({
           target: { tabId },
           world: "MAIN",
-          func: (code: string) => {
+          func: async (code: string, usesAwait: boolean) => {
             let result: unknown;
             try {
-              result = (0, eval)(code);
+              if (usesAwait) {
+                // Wrap in an async IIFE expression so eval parses the body as
+                // an async function (top-level await works inside async fns).
+                // Then await the returned promise here.
+                result = await (0, eval)(`(async () => { ${code} })()`);
+              } else {
+                result = (0, eval)(code);
+              }
             } catch (e) {
               if (String(e).includes("Illegal return")) {
                 try {
-                  result = (0, eval)(`(function() { ${code} })()`);
+                  if (usesAwait) {
+                    result = await (0, eval)(`(async () => { ${code} })()`);
+                  } else {
+                    result = (0, eval)(`(function() { ${code} })()`);
+                  }
                 } catch (e2) {
                   result = `Error: ${e2}`;
                 }
@@ -677,7 +699,7 @@ async function handleMcpMessage(msg: {
             if (captured) (window as any)._alertCapture = null;
             return JSON.stringify({ result: String(result ?? "undefined"), alert: captured });
           },
-          args: [code],
+          args: [code, usesAwait],
         });
         try {
           const parsed = JSON.parse(String(results[0]?.result ?? "{}"));
@@ -702,23 +724,36 @@ async function handleMcpMessage(msg: {
       // CSP blocked eval — fall back to CDP Runtime.evaluate which bypasses CSP
       if (cspBlocked) {
         await withDebugger(tabId, async () => {
-          const wrappedCode = `(function() {
-            var __result;
-            try { __result = (0, eval)(${JSON.stringify(code)}); }
-            catch(e) {
-              if (String(e).includes("Illegal return")) {
-                try { __result = (0, eval)("(function() { " + ${JSON.stringify(code)} + " })()"); }
-                catch(e2) { __result = "Error: " + e2; }
-              } else { __result = "Error: " + e; }
-            }
-            var __alert = window._alertCapture || null;
-            if (__alert) window._alertCapture = null;
-            return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
-          })()`;
+          // CDP Runtime.evaluate can await a returned promise directly via
+          // awaitPromise: true. So in the await-detected path we just have the
+          // expression be the async IIFE; awaitPromise resolves it for us.
+          const wrappedCode = usesAwait
+            ? `(async () => {
+                var __result;
+                try { __result = await (async () => { ${code} })(); }
+                catch(e) { __result = "Error: " + e; }
+                var __alert = window._alertCapture || null;
+                if (__alert) window._alertCapture = null;
+                return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
+              })()`
+            : `(function() {
+                var __result;
+                try { __result = (0, eval)(${JSON.stringify(code)}); }
+                catch(e) {
+                  if (String(e).includes("Illegal return")) {
+                    try { __result = (0, eval)("(function() { " + ${JSON.stringify(code)} + " })()"); }
+                    catch(e2) { __result = "Error: " + e2; }
+                  } else { __result = "Error: " + e; }
+                }
+                var __alert = window._alertCapture || null;
+                if (__alert) window._alertCapture = null;
+                return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
+              })()`;
           const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
             expression: wrappedCode,
             returnByValue: true,
             allowUnsafeEvalBlockedByCSP: true,
+            awaitPromise: usesAwait,
           }) as { result: { value?: string }; exceptionDetails?: unknown };
           try {
             const parsed = JSON.parse(evalResult.result.value ?? "{}");
@@ -744,15 +779,23 @@ async function handleMcpMessage(msg: {
 
       // Phase 1: ask content script to find, scroll, and tag the element,
       // returning its viewport coordinates (with small jitter).
-      const prep = await forwardToContentScript(tab, {
-        type: "prepare_click_target",
-        requestId: msg.requestId,
-        textHint: msg.textHint,
-        nth: msg.nth,
-      }) as { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string };
+      // Retry up to 3 times with 500ms gap. Elements briefly disappear during
+      // a React re-render and a single attempt fails; a short retry loop
+      // turns those into successful clicks instead of 30s timeouts.
+      let prep: { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string } | undefined;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        prep = await forwardToContentScript(tab, {
+          type: "prepare_click_target",
+          requestId: msg.requestId,
+          textHint: msg.textHint,
+          nth: msg.nth,
+        }) as { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string };
+        if (prep.success) break;
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
+      }
 
-      if (!prep.success) {
-        return { type: "click_element_response", success: false, message: prep.message };
+      if (!prep || !prep.success) {
+        return { type: "click_element_response", success: false, message: prep?.message ?? "click failed" };
       }
 
       // Phase 2: dispatch the click via CDP (isTrusted=true events) if possible.
@@ -839,12 +882,78 @@ async function handleMcpMessage(msg: {
         }
       }
 
-      // Wait for the click to take effect — navigation, modal open, re-render etc.
-      // Race: navigation completes within 4s, or just wait 600ms and move on.
-      const navigationResult = await Promise.race([
-        waitForNavigation(tab.id!, 4000),
-        new Promise<null>((r) => setTimeout(() => r(null), 600)),
-      ]);
+      // If the caller specified an until-clause, poll for it before returning.
+      // This catches the "click_element returned success but the click didn't
+      // register" case on React-heavy sites — Claude can require an observable
+      // post-click condition (URL change, new selector, new page text) instead
+      // of trusting the synthetic-success message.
+      const untilSelector = msg.until_selector as string | undefined;
+      const untilUrlContains = msg.until_url_contains as string | undefined;
+      const untilTextContains = msg.until_text_contains as string | undefined;
+      const untilTimeoutMs = (msg.until_timeout_ms as number | undefined) ?? 5000;
+      const hasUntil = !!(untilSelector || untilUrlContains || untilTextContains);
+
+      let untilResult: { ok: boolean; reason: string } | null = null;
+      let navigationResult: string | null = null;
+
+      if (hasUntil) {
+        const start = Date.now();
+        while (Date.now() - start < untilTimeoutMs) {
+          // Pull the current tab state each iteration (URL may change after navigation).
+          const [currentTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+          const currentUrl = currentTab?.url ?? "";
+
+          if (untilUrlContains && currentUrl.includes(untilUrlContains)) {
+            untilResult = { ok: true, reason: `URL now contains "${untilUrlContains}"` };
+            navigationResult = currentUrl;
+            break;
+          }
+
+          if (currentTab?.id && isScriptableUrl(currentUrl)) {
+            try {
+              if (untilSelector) {
+                const r = await chrome.scripting.executeScript({
+                  target: { tabId: currentTab.id },
+                  func: (sel: string) => !!document.querySelector(sel),
+                  args: [untilSelector],
+                });
+                if (r[0]?.result) {
+                  untilResult = { ok: true, reason: `Selector "${untilSelector}" appeared` };
+                  break;
+                }
+              }
+              if (untilTextContains) {
+                const r = await chrome.scripting.executeScript({
+                  target: { tabId: currentTab.id },
+                  func: (needle: string) => (document.body?.innerText ?? "").includes(needle),
+                  args: [untilTextContains],
+                });
+                if (r[0]?.result) {
+                  untilResult = { ok: true, reason: `Text "${untilTextContains}" appeared` };
+                  break;
+                }
+              }
+            } catch { /* page may be navigating — keep polling */ }
+          }
+
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        if (!untilResult) {
+          const conditions = [
+            untilSelector && `selector "${untilSelector}"`,
+            untilUrlContains && `URL containing "${untilUrlContains}"`,
+            untilTextContains && `text "${untilTextContains}"`,
+          ].filter(Boolean).join(" or ");
+          untilResult = { ok: false, reason: `Click fired but ${conditions} did not appear within ${untilTimeoutMs}ms — the click may not have registered. Try execute_script with a direct .click() on the matched element, or pass a different until_* value.` };
+        }
+      } else {
+        // No until-clause — keep the existing race so callers without explicit
+        // verification still get the navigation URL when the click navigated.
+        navigationResult = await Promise.race([
+          waitForNavigation(tab.id!, 4000),
+          new Promise<null>((r) => setTimeout(() => r(null), 600)),
+        ]);
+      }
 
       // Check if a JS alert/confirm/prompt fired during or after the click.
       // The interceptor (injected on page load) captures these non-blockingly.
@@ -864,7 +973,19 @@ async function handleMcpMessage(msg: {
         } catch { /* non-scriptable or unloaded tab — ignore */ }
       }
 
-      let message = navigationResult
+      let message: string;
+      if (untilResult) {
+        // The until-clause is the authoritative signal — a successful click
+        // is the one whose post-click condition was met. Failure is reported
+        // as success:false so callers can branch on it.
+        message = `${result.message}${untilResult.ok ? "" : "\n"}${untilResult.ok ? ` — ${untilResult.reason}` : `\n⚠ ${untilResult.reason}`}`;
+        if (alertMessage) {
+          message += `\n\nPAGE ALERT: "${alertMessage}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
+        }
+        return { type: "click_element_response", success: untilResult.ok, message };
+      }
+
+      message = navigationResult
         ? `Clicked and navigated to ${navigationResult}`
         : result.message;
 
@@ -879,6 +1000,64 @@ async function handleMcpMessage(msg: {
       const tab = await getActiveTab(port);
       const tabId = tab.id!;
       const text = msg.text as string;
+      const frameSelector = msg.frame as string | undefined;
+
+      // If `frame` is given, focus a contenteditable/input inside that iframe
+      // BEFORE the CDP keys fire. eBay's "se-rte" description editor is an
+      // iframe containing a contenteditable; without focus inside the iframe,
+      // the CDP keys land on the outer document and are silently dropped.
+      // Only works for same-origin iframes (contentDocument access requires it).
+      let frameFocusOk: boolean | null = null;
+      if (frameSelector) {
+        try {
+          const r = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: "MAIN",
+            func: (sel: string) => {
+              const iframe = document.querySelector(sel);
+              if (!(iframe instanceof HTMLIFrameElement)) return "no-iframe";
+              let doc: Document | null = null;
+              try { doc = iframe.contentDocument; } catch { doc = null; }
+              if (!doc) return "cross-origin";
+              const editable = doc.querySelector<HTMLElement>(
+                '[contenteditable="true"], [contenteditable=""], textarea, input:not([type=hidden])'
+              );
+              if (!editable) return "no-editable-in-frame";
+              editable.focus();
+              // Place caret at the end so typing appends rather than overwriting selection
+              if (editable.isContentEditable) {
+                const sel = doc.getSelection();
+                const range = doc.createRange();
+                range.selectNodeContents(editable);
+                range.collapse(false);
+                sel?.removeAllRanges();
+                sel?.addRange(range);
+              } else if (editable instanceof HTMLInputElement || editable instanceof HTMLTextAreaElement) {
+                const len = editable.value.length;
+                editable.setSelectionRange(len, len);
+              }
+              return "ok";
+            },
+            args: [frameSelector],
+          });
+          frameFocusOk = r[0]?.result === "ok";
+          if (!frameFocusOk) {
+            return {
+              type: "action_done",
+              requestId: msg.requestId,
+              success: false,
+              message: `Could not focus an editable element inside iframe "${frameSelector}" (${r[0]?.result ?? "unknown"}). The iframe may be cross-origin or empty.`,
+            };
+          }
+        } catch (e) {
+          return {
+            type: "action_done",
+            requestId: msg.requestId,
+            success: false,
+            message: `Error focusing iframe "${frameSelector}": ${(e as Error).message}`,
+          };
+        }
+      }
 
       // Type character-by-character with individual keyDown/keyUp events
       // and randomized delays to produce input indistinguishable from real typing.
@@ -931,11 +1110,44 @@ async function handleMcpMessage(msg: {
         });
       });
 
+      // If we were typing into an iframe, also dispatch input/change on the
+      // iframe's focused element. CDP's Runtime.evaluate above runs in the
+      // top-level frame's execution context, so events dispatched there don't
+      // reach the iframe's React tree.
+      let frameVerify = "";
+      if (frameSelector) {
+        try {
+          const r = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: "MAIN",
+            func: (sel: string) => {
+              const iframe = document.querySelector(sel);
+              if (!(iframe instanceof HTMLIFrameElement)) return "";
+              let doc: Document | null = null;
+              try { doc = iframe.contentDocument; } catch { doc = null; }
+              if (!doc) return "";
+              const active = doc.activeElement;
+              if (active instanceof HTMLElement) {
+                active.dispatchEvent(new Event("input", { bubbles: true }));
+                active.dispatchEvent(new Event("change", { bubbles: true }));
+                const txt = active.isContentEditable
+                  ? (active.textContent ?? "")
+                  : (active as HTMLInputElement).value ?? "";
+                return `[frame editor now has ${txt.length} chars]`;
+              }
+              return "";
+            },
+            args: [frameSelector],
+          });
+          frameVerify = (r[0]?.result as string) ?? "";
+        } catch { /* best-effort verification */ }
+      }
+
       return {
         type: "action_done",
         requestId: msg.requestId,
         success: true,
-        message: `Typed ${text.length} characters via individual keystrokes`,
+        message: `Typed ${text.length} characters via individual keystrokes${frameSelector ? ` into iframe "${frameSelector}"${frameVerify ? " " + frameVerify : ""}` : ""}`,
       };
     }
 
@@ -955,6 +1167,25 @@ async function handleMcpMessage(msg: {
 
       const tabId = tab.id!;
       const fileAttr = tagResult.attr ?? "data-cf-file";
+      const filename = (msg.filePath as string).split("/").pop() ?? "";
+      const waitMs = (msg.waitMs as number | undefined) ?? 3000;
+      const verifySelector = msg.verifySelector as string | undefined;
+
+      // Snapshot the page-level file count BEFORE we attach. This is the
+      // single most useful signal that the upload landed: if the page shows
+      // 4 file inputs with 0 files total before, and 1 file after, the
+      // upload committed. Inputs that are visually hidden (drag-and-drop
+      // zones) count too.
+      const pre = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          const inputs = Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"));
+          let total = 0;
+          for (const el of inputs) total += el.files?.length ?? 0;
+          return { totalFiles: total, inputCount: inputs.length };
+        },
+      });
+      const preTotal = (pre[0]?.result as { totalFiles: number; inputCount: number } | undefined)?.totalFiles ?? 0;
 
       // Use Chrome DevTools Protocol to set the file — the only way to bypass
       // the browser's script restriction on file inputs.
@@ -991,8 +1222,163 @@ async function handleMcpMessage(msg: {
         }).catch(() => {});
       }
 
-      const filename = (msg.filePath as string).split("/").pop();
-      return { type: "action_done", requestId: msg.requestId, success: true, message: `File "${filename}" set on input` };
+      // Poll for the upload to commit. Issue #2 (rapid back-to-back set_file_input
+      // calls duplicate or overwrite uploads) and Issue #3 (no signal that the page
+      // accepted the file) are both fixed by waiting here for an observable change
+      // before returning. Two signals:
+      //  (a) total file count across input[type=file] increased — the input still
+      //      holds the file (most uploaders).
+      //  (b) the page now matches verifySelector — caller-supplied confirmation
+      //      element (e.g. ".photo-thumbnail" for an image carousel).
+      // (a)-or-(b) success short-circuits the wait. Otherwise we wait the full
+      // waitMs and report no observable change.
+      const pollStart = Date.now();
+      let committed = false;
+      let consumed = false;
+      let postTotal = preTotal;
+      let verifyMatched = false;
+
+      while (Date.now() - pollStart < waitMs) {
+        await new Promise((r) => setTimeout(r, 200));
+
+        const post = await chrome.scripting.executeScript({
+          target: { tabId },
+          func: (name: string, sel: string | undefined) => {
+            const inputs = Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"));
+            let total = 0;
+            let stillHasOurFile = false;
+            for (const el of inputs) {
+              const files = el.files;
+              if (!files) continue;
+              total += files.length;
+              for (let i = 0; i < files.length; i++) {
+                if (files[i].name === name) stillHasOurFile = true;
+              }
+            }
+            const verifyOk = sel ? !!document.querySelector(sel) : false;
+            return { total, stillHasOurFile, verifyOk };
+          },
+          args: [filename, verifySelector ?? ""],
+        });
+        const result = post[0]?.result as { total: number; stillHasOurFile: boolean; verifyOk: boolean } | undefined;
+        if (!result) continue;
+
+        postTotal = result.total;
+        verifyMatched = result.verifyOk;
+
+        if (verifyMatched) { committed = true; break; }
+        if (postTotal > preTotal) { committed = true; break; }
+        // Some uploaders consume the file: read it from .files and reset the input.
+        // If our file disappeared without an increase elsewhere, treat it as consumed.
+        if (!result.stillHasOurFile && Date.now() - pollStart > 400) {
+          committed = true;
+          consumed = true;
+          break;
+        }
+      }
+
+      const noteParts: string[] = [];
+      noteParts.push(`page-level file count: ${preTotal} → ${postTotal}`);
+      if (verifySelector) noteParts.push(`verifySelector "${verifySelector}" ${verifyMatched ? "matched" : "did not match"}`);
+      if (consumed) noteParts.push("file was consumed by the page (input was reset)");
+      const note = noteParts.join("; ");
+
+      if (committed) {
+        return {
+          type: "action_done",
+          requestId: msg.requestId,
+          success: true,
+          message: `File "${filename}" uploaded — ${note}`,
+        };
+      }
+      return {
+        type: "action_done",
+        requestId: msg.requestId,
+        success: false,
+        message: `File "${filename}" set on input but the page did not show an observable change within ${waitMs}ms — ${note}. The page may have rejected the upload (size, type, format), or the change handler may be slower than the wait window. Use verifySelector or get_page_text to confirm.`,
+      };
+    }
+
+    case "react_set_input": {
+      const tab = await getActiveTab(port);
+      const tabId = tab.id!;
+      if (!isScriptableUrl(tab.url)) {
+        return { type: "action_done", requestId: msg.requestId, success: false, message: `Cannot run on ${tab.url}` };
+      }
+
+      const selector = msg.selector as string;
+      const value = msg.value as string;
+      const frameSelector = msg.frame as string | undefined;
+
+      const r = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: (sel: string, val: string, frameSel: string | undefined) => {
+          // Resolve the input — top-frame document by default, contentDocument
+          // when frameSel is given (same-origin iframes only).
+          let doc: Document = document;
+          if (frameSel) {
+            const iframe = document.querySelector(frameSel);
+            if (!(iframe instanceof HTMLIFrameElement)) return { ok: false, reason: `iframe "${frameSel}" not found` };
+            try {
+              const fdoc = iframe.contentDocument;
+              if (!fdoc) return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
+              doc = fdoc;
+            } catch {
+              return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
+            }
+          }
+          const el = doc.querySelector(sel);
+          if (!el) return { ok: false, reason: `selector "${sel}" not found${frameSel ? ` inside iframe "${frameSel}"` : ""}` };
+
+          // Use the prototype FROM THE INSTANCE so the setter is callable on
+          // the input directly. Inputs hosted inside an iframe have their own
+          // window.HTMLInputElement that differs from the outer one — calling
+          // window.HTMLInputElement.prototype's value setter on them throws
+          // "Illegal invocation". Object.getPrototypeOf(el) sidesteps that.
+          if (!(el instanceof HTMLElement)) return { ok: false, reason: "selector matched a non-HTMLElement" };
+
+          const proto = Object.getPrototypeOf(el);
+          const desc = Object.getOwnPropertyDescriptor(proto, "value");
+          if (!desc?.set) return { ok: false, reason: `element does not expose a value setter (tag=${el.tagName.toLowerCase()})` };
+
+          (el as HTMLElement).focus();
+          desc.set.call(el, val);
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+
+          // Read back to confirm React accepted it
+          const readBack = (el as unknown as { value?: unknown }).value;
+          return {
+            ok: true,
+            reason: "set",
+            tag: el.tagName.toLowerCase(),
+            name: (el as HTMLInputElement).name ?? "",
+            id: el.id ?? "",
+            type: (el as HTMLInputElement).type ?? "",
+            readBack: typeof readBack === "string" ? readBack : String(readBack),
+          };
+        },
+        args: [selector, value, frameSelector],
+      });
+
+      const result = r[0]?.result as
+        | { ok: false; reason: string }
+        | { ok: true; reason: string; tag: string; name: string; id: string; type: string; readBack: string }
+        | undefined;
+      if (!result) return { type: "action_done", requestId: msg.requestId, success: false, message: "no response from page" };
+      if (!result.ok) return { type: "action_done", requestId: msg.requestId, success: false, message: result.reason };
+
+      const accepted = result.readBack === value;
+      const desc = `<${result.tag}${result.type ? ` type="${result.type}"` : ""}${result.name ? ` name="${result.name}"` : ""}${result.id ? ` id="${result.id}"` : ""}>`;
+      return {
+        type: "action_done",
+        requestId: msg.requestId,
+        success: true,
+        message: accepted
+          ? `Set ${desc} to "${value.slice(0, 60)}"${frameSelector ? ` (inside iframe "${frameSelector}")` : ""}`
+          : `Set ${desc} via native setter, but React reported back "${result.readBack.slice(0, 60)}" — the page may be controlling the value externally.`,
+      };
     }
 
     case "inspect_request_headers": {

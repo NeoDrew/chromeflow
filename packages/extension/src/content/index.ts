@@ -200,7 +200,12 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "fill_input": {
-      const result = fillInput(msg.textHint as string, msg.value as string, msg.nth as number | undefined);
+      const result = fillInput(
+        msg.textHint as string,
+        msg.value as string,
+        msg.nth as number | undefined,
+        (msg.exact as boolean | undefined) ?? false
+      );
       return { type: "fill_response", requestId: msg.requestId, ...result };
     }
 
@@ -647,10 +652,11 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "fill_form": {
       const formFields = msg.fields as Array<{ label: string; value: string }>;
-      const results: Array<{ label: string; success: boolean; message: string }> = [];
+      const exact = (msg.exact as boolean | undefined) ?? false;
+      const results: Array<{ label: string; success: boolean; message: string; matched?: string }> = [];
       for (const field of formFields) {
-        const result = fillInput(field.label, field.value);
-        results.push({ label: field.label, success: result.success, message: result.message });
+        const result = fillInput(field.label, field.value, 1, exact);
+        results.push({ label: field.label, success: result.success, message: result.message, matched: result.matched });
         // Brief pause between fills so React can process each change event
         await new Promise((r) => setTimeout(r, 80));
       }

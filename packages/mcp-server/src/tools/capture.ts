@@ -13,7 +13,11 @@ export function registerCaptureTools(server: McpServer, bridge: WsBridge) {
     `Fill a form input field with a value automatically.
 Use this for fields Claude knows the answer to (product name, price, description, tier name, URLs, etc.).
 DO NOT use for: email address, password, payment/billing info, phone number — highlight those instead and tell the user what to enter.
-After filling, call wait_for_click only if the user needs to review/confirm; otherwise proceed directly to the next step.`,
+After filling, call wait_for_click only if the user needs to review/confirm; otherwise proceed directly to the next step.
+
+The response always includes the matched element's identifying attributes (e.g. \`<input name="title" id="..." placeholder="...">\`) and the match-strength (aria-eq, name-eq, fuzzy-text-walk, etc.). VERIFY this is the field you intended — fuzzy-text-walk matches are the lowest-confidence kind and have historically caused fill_input to land on the wrong field on dense forms.
+
+Pass \`exact: true\` to refuse fuzzy text-walk matches entirely. Use this for short generic labels like "Rate", "Price", or "Amount" on dense forms with many similarly-labeled fields. If no exact match exists, fill_input returns success=false instead of silently filling the wrong field.`,
     {
       textHint: z
         .string()
@@ -27,9 +31,13 @@ After filling, call wait_for_click only if the user needs to review/confirm; oth
         .min(1)
         .optional()
         .describe("Which match to fill when multiple inputs share the same label (1 = first/topmost, default 1)"),
+      exact: z
+        .boolean()
+        .optional()
+        .describe("If true, only match aria-label/placeholder/name/id/label-text equal to the hint — refuse fuzzy text-walk matches. Default false."),
     },
-    async ({ textHint, value, nth }) => {
-      const response = await bridge.request({ type: "fill_input", textHint, value, nth });
+    async ({ textHint, value, nth, exact }) => {
+      const response = await bridge.request({ type: "fill_input", textHint, value, nth, exact });
       if (response.type !== "fill_response") throw new Error("Unexpected response");
       const r = response as { success: boolean; message: string };
       return {
