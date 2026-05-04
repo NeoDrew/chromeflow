@@ -91,6 +91,29 @@ export function extractTextDeep(root: Node, extraSkipTags?: Set<string>): string
 }
 
 /**
+ * Walk every text node in the tree, descending into open shadow roots. Yields
+ * text nodes in document order. Skips text inside <script>, <style>, etc. so
+ * you only see user-visible text. Used by fill_input's fuzzy text walk so
+ * label-near-input matching works inside shadow trees.
+ */
+export function* walkTextNodesDeep(root: Node): Generator<Text> {
+  if (root.nodeType === Node.TEXT_NODE) {
+    yield root as Text;
+    return;
+  }
+  if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_NODE && root.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) {
+    return;
+  }
+  if (root.nodeType === Node.ELEMENT_NODE) {
+    const el = root as Element;
+    if (SKIP_TAGS.has(el.tagName)) return;
+    const sr = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+    if (sr) yield* walkTextNodesDeep(sr);
+  }
+  for (const child of Array.from(root.childNodes)) yield* walkTextNodesDeep(child);
+}
+
+/**
  * Get the actually-focused element, descending through any nested shadow roots.
  * `document.activeElement` returns the shadow host, not the focused element
  * inside the shadow tree — this drills down to find the real focus target.
