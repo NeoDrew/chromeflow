@@ -618,19 +618,46 @@ async function handleMcpMessage(msg: {
       const selector = msg.selector as string;
       const timeout = (msg.timeout as number) ?? 30_000;
       const pollMs = (msg.refresh as number | undefined) ?? 500;
+      const requireShadow = (msg.shadow_root as boolean | undefined) ?? false;
       const tab = await getActiveTab(port);
       return new Promise((resolve, reject) => {
         const start = Date.now();
         const check = async () => {
           if (Date.now() - start > timeout) {
-            reject(new Error(`Selector "${selector}" not found after ${timeout / 1000}s`));
+            const reason = requireShadow
+              ? `Selector "${selector}" never grew an attached shadowRoot within ${timeout / 1000}s`
+              : `Selector "${selector}" not found after ${timeout / 1000}s`;
+            reject(new Error(reason));
             return;
           }
           try {
             const results = await chrome.scripting.executeScript({
               target: { tabId: tab.id! },
-              func: (sel: string) => !!document.querySelector(sel),
-              args: [selector],
+              func: (sel: string, requireShadow: boolean) => {
+                // Shadow-piercing query: walks open shadow roots so selectors
+                // for elements inside web components (Outlier, Lit, Stencil)
+                // are found without needing a shadow-DOM-aware caller.
+                function findFirst(root: Document | Element | ShadowRoot): Element | null {
+                  const direct = root.querySelector(sel);
+                  if (direct) return direct;
+                  for (const el of Array.from(root.querySelectorAll<Element>("*"))) {
+                    const sr = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+                    if (sr) {
+                      const inner = findFirst(sr);
+                      if (inner) return inner;
+                    }
+                  }
+                  return null;
+                }
+                const found = findFirst(document);
+                if (!found) return false;
+                if (requireShadow) {
+                  const sr = (found as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+                  return sr != null;
+                }
+                return true;
+              },
+              args: [selector, requireShadow],
             });
             if (results[0]?.result) {
               resolve({ type: "action_done", requestId: msg.requestId });

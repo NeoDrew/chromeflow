@@ -124,7 +124,15 @@ If the click causes page navigation, this resolves when the new page finishes lo
 Examples: wait for a build to finish, a success/error message to appear, a modal to open.
 After it resolves, use get_page_text to read the result rather than taking a screenshot.
 For long-running server-side processes (e.g. a query job that may take minutes), set poll_interval
-to 15 seconds so the page is checked gently rather than hammered every 500ms.`,
+to 15 seconds so the page is checked gently rather than hammered every 500ms.
+
+Pierces open shadow roots automatically — selectors for elements inside web components
+(Outlier task UI, Lit/Stencil widgets) match without needing a shadow-DOM-aware caller.
+
+Pass \`shadow_root: true\` when the matched element is itself a shadow host whose tree
+hasn't attached yet — common after SPA route transitions where the host element appears
+seconds before its shadow content hydrates. Without this, wait_for_selector("the-host")
+resolves on the empty host and the next execute_script(host.shadowRoot) returns null.`,
     {
       selector: z
         .string()
@@ -138,13 +146,23 @@ to 15 seconds so the page is checked gently rather than hammered every 500ms.`,
         .describe(
           "How often to check for the selector, in seconds (default 0.5). Set to 15 when waiting for a slow server-side process."
         ),
+      shadow_root: z
+        .boolean()
+        .optional()
+        .describe(
+          "If true, also require the matched element to have an attached shadowRoot (not null). Use after SPA navigations where the shadow host appears before its tree hydrates. Default false."
+        ),
     },
-    async ({ selector, timeout = 30, poll_interval }) => {
+    async ({ selector, timeout = 30, poll_interval, shadow_root }) => {
       const timeoutMs = timeout * 1000;
       const pollMs = poll_interval ? poll_interval * 1000 : undefined;
-      await bridge.request({ type: "wait_for_selector", selector, timeout: timeoutMs, refresh: pollMs }, timeoutMs + 5000);
+      await bridge.request(
+        { type: "wait_for_selector", selector, timeout: timeoutMs, refresh: pollMs, shadow_root },
+        timeoutMs + 5000
+      );
+      const suffix = shadow_root ? " (with attached shadowRoot)" : "";
       return {
-        content: [{ type: "text", text: `Selector "${selector}" found on page.` }],
+        content: [{ type: "text", text: `Selector "${selector}" found on page${suffix}.` }],
       };
     }
   );

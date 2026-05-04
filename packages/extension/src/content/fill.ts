@@ -1,4 +1,4 @@
-import { queryAllDeep } from "./shadow.js";
+import { queryAllDeep, walkTextNodesDeep } from "./shadow.js";
 
 /**
  * Match strength used to rank fill_input candidates. Lower = stronger.
@@ -274,33 +274,38 @@ function findInput(
     // forms (see Issue #1 — eBay promoted-listings rate filling into title).
     // We keep it for forms with no proper labels, but rank it lowest so
     // exact-match modes never see it, and it loses to every other strategy.
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        if (!node.textContent?.toLowerCase().includes(lower)) return NodeFilter.FILTER_REJECT;
-        const p = node.parentElement;
-        if (!p) return NodeFilter.FILTER_REJECT;
-        const style = getComputedStyle(p);
-        if (style.display === "none" || style.visibility === "hidden") return NodeFilter.FILTER_REJECT;
-        return NodeFilter.FILTER_ACCEPT;
-      },
-    });
+    // walkTextNodesDeep traverses open shadow roots so labels-near-textareas
+    // inside web components (Outlier's task UI) are reachable.
+    for (const textNode of walkTextNodesDeep(document.body)) {
+      if (!textNode.textContent?.toLowerCase().includes(lower)) continue;
+      const anchor = textNode.parentElement;
+      if (!anchor) continue;
+      const style = getComputedStyle(anchor);
+      if (style.display === "none" || style.visibility === "hidden") continue;
 
-    let textNode: Node | null;
-    while ((textNode = walker.nextNode())) {
-      const anchor = (textNode as Text).parentElement!;
       let node: Element | null = anchor;
-      for (let depth = 0; depth < 8 && node && node !== document.body; depth++) {
-        const input = node.querySelector<FillableInput>("input, textarea, select");
-        if (input && isEditable(input)) { add(input, "fuzzy-text-walk"); break; }
+      for (let depth = 0; depth < 8 && node; depth++) {
+        // Use queryAllDeep so a label OUTSIDE a nested shadow root can match
+        // an input INSIDE it (and vice versa).
+        const inputs = queryAllDeep<FillableInput>(node, "input, textarea, select");
+        const input = inputs.find((el) => isEditable(el));
+        if (input) { add(input, "fuzzy-text-walk"); break; }
         let found = false;
         for (const sibling of [node.nextElementSibling, node.previousElementSibling]) {
           if (sibling) {
-            const sibInput = sibling.querySelector<FillableInput>("input, textarea, select");
-            if (sibInput && isEditable(sibInput)) { add(sibInput, "fuzzy-text-walk"); found = true; break; }
+            const sibInputs = queryAllDeep<FillableInput>(sibling, "input, textarea, select");
+            const sibInput = sibInputs.find((el) => isEditable(el));
+            if (sibInput) { add(sibInput, "fuzzy-text-walk"); found = true; break; }
           }
         }
         if (found) break;
-        node = node.parentElement;
+        // Climb past shadow roots: parentElement is null at the shadow root,
+        // so fall back to the host via parentNode.
+        const dnPN: Node | null = node.parentNode;
+        const parent: Element | null = node.parentElement
+          ?? (dnPN instanceof ShadowRoot ? dnPN.host : null);
+        if (!parent || parent === document.body) break;
+        node = parent;
       }
     }
   }
@@ -322,7 +327,7 @@ function findInput(
  * Standard fill_input doesn't work because CM6 is not a native input.
  */
 function fillCodeMirror(lower: string, value: string): { success: boolean; message: string } | null {
-  const editors = Array.from(document.querySelectorAll<HTMLElement>(".cm-editor"));
+  const editors = queryAllDeep<HTMLElement>(document, ".cm-editor");
   if (editors.length === 0) return null;
 
   let targetEditor: HTMLElement | null = null;
@@ -375,9 +380,7 @@ function fillCodeMirror(lower: string, value: string): { success: boolean; messa
 }
 
 function findContentEditable(lower: string): HTMLElement | null {
-  for (const el of Array.from(
-    document.querySelectorAll<HTMLElement>('[contenteditable]:not([contenteditable="false"])')
-  )) {
+  for (const el of queryAllDeep<HTMLElement>(document, '[contenteditable]:not([contenteditable="false"])')) {
     const ariaLabel = (el.getAttribute("aria-label") ?? "").toLowerCase();
     const dataPlaceholder = (
       el.getAttribute("data-placeholder") ??
