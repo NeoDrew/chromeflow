@@ -69,4 +69,5 @@ export const markerIds = {
   animationFade: () => `${prefix()}-fade`,
   fileTargetAttr: () => `data-${prefix()}-file`,
   clickTargetAttr: () => `data-${prefix()}-click`,
+  preCheckedAttr: () => `data-${prefix()}-prech`,
 };

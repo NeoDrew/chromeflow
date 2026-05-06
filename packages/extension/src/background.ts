@@ -809,20 +809,27 @@ async function handleMcpMessage(msg: {
       // Retry up to 3 times with 500ms gap. Elements briefly disappear during
       // a React re-render and a single attempt fails; a short retry loop
       // turns those into successful clicks instead of 30s timeouts.
-      let prep: { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string } | undefined;
+      let prep: { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean } | undefined;
       for (let attempt = 0; attempt < 3; attempt++) {
         prep = await forwardToContentScript(tab, {
           type: "prepare_click_target",
           requestId: msg.requestId,
           textHint: msg.textHint,
           nth: msg.nth,
-        }) as { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string };
+        }) as { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean };
         if (prep.success) break;
         if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
       }
 
       if (!prep || !prep.success) {
         return { type: "click_element_response", success: false, message: prep?.message ?? "click failed" };
+      }
+
+      // Pre-flight skip: matched element resolved to an already-checked radio.
+      // The page is already in the desired state, so firing the click would
+      // toggle it OFF on React-controlled forms.
+      if (prep.skipClick) {
+        return { type: "click_element_response", success: true, message: prep.message };
       }
 
       // Phase 2: dispatch the click via CDP (isTrusted=true events) if possible.
