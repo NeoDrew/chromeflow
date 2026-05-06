@@ -7,13 +7,20 @@ import { markerIds } from "../markers.js";
  * later via Runtime.evaluate, and return the viewport-centered coordinates
  * (with small jitter) for CDP Input.dispatchMouseEvent. Returns the element
  * label and a state note; leaves the element tagged for post-click inspection.
+ *
+ * If the matched element resolves to an `<input type=radio>` that is already
+ * checked, returns `skipClick: true` and does NOT tag the element — the
+ * caller should short-circuit without firing the click. Re-clicking an
+ * already-checked radio toggles it OFF on React forms whose onChange handler
+ * interprets the click as a deselect (DataAnnotation Raccoon submission, etc).
  */
 export function prepareClickTarget(
   textHint: string,
   nth?: number
-): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string } {
-  // Clear any stale tag from a previous click
+): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean } {
+  // Clear any stale tags from a previous click
   document.querySelectorAll(`[${markerIds.clickTargetAttr()}]`).forEach((el) => el.removeAttribute(markerIds.clickTargetAttr()));
+  document.querySelectorAll(`[${markerIds.preCheckedAttr()}]`).forEach((el) => el.removeAttribute(markerIds.preCheckedAttr()));
 
   const lower = textHint.toLowerCase().trim();
   const el = findClickable(lower, nth);
@@ -22,8 +29,27 @@ export function prepareClickTarget(
     return { success: false, message: `No clickable element found for "${textHint}"` };
   }
 
+  const checkable = resolveCheckableInput(el);
+
+  // Pre-flight: an already-checked radio should never be re-clicked.
+  if (checkable && checkable.type === "radio" && checkable.checked) {
+    scrollSmartIntoView(el);
+    const label =
+      (el as HTMLElement).innerText?.trim() ||
+      el.getAttribute("aria-label") ||
+      textHint;
+    return { success: true, skipClick: true, message: `"${label}" — radio already checked, click skipped`, label };
+  }
+
   scrollSmartIntoView(el);
   el.setAttribute(markerIds.clickTargetAttr(), "true");
+
+  // Record pre-click state on the resolved input so postClickInspect can
+  // verify the click landed and fall back to a full pointer-event chain
+  // if the input's checked state didn't flip.
+  if (checkable) {
+    checkable.setAttribute(markerIds.preCheckedAttr(), checkable.checked ? "true" : "false");
+  }
 
   const rect = el.getBoundingClientRect();
   // Random point in central 60% of the element (avoid edges — humans aim
@@ -42,15 +68,33 @@ export function prepareClickTarget(
 /**
  * Phase 3 of the CDP click flow. After the CDP mouse event has fired, read
  * the tagged element's post-click state (radio/checkbox check state, 0×0
- * warning) and untag it.
+ * warning) and untag it. If the underlying radio/checkbox didn't change
+ * state as expected (radio still unchecked, or checkbox didn't toggle),
+ * automatically dispatch a full pointer-event chain on the input as a
+ * fallback for React-controlled inputs whose handlers are bound to pointer
+ * events rather than mouse events.
  */
 export function postClickInspect(): { message: string } {
   const el = document.querySelector<HTMLElement>(`[${markerIds.clickTargetAttr()}]`);
   if (!el) return { message: "" };
 
   let stateNote = "";
-  if (el instanceof HTMLInputElement && (el.type === "radio" || el.type === "checkbox")) {
-    stateNote = ` — now ${el.checked ? "checked" : "unchecked"}`;
+  const checkable = resolveCheckableInput(el);
+  if (checkable) {
+    const preAttr = checkable.getAttribute(markerIds.preCheckedAttr());
+    const preChecked = preAttr === "true";
+    const radioFailed = checkable.type === "radio" && !checkable.checked;
+    const checkboxFailed =
+      checkable.type === "checkbox" && preAttr !== null && checkable.checked === preChecked;
+
+    let fallbackUsed = false;
+    if (radioFailed || checkboxFailed) {
+      firePointerChain(checkable);
+      fallbackUsed = true;
+    }
+
+    checkable.removeAttribute(markerIds.preCheckedAttr());
+    stateNote = ` — now ${checkable.checked ? "checked" : "unchecked"}${fallbackUsed ? " (after pointer-chain fallback)" : ""}`;
   }
 
   const rect = el.getBoundingClientRect();
@@ -64,6 +108,57 @@ export function postClickInspect(): { message: string } {
 
   el.removeAttribute(markerIds.clickTargetAttr());
   return { message: stateNote };
+}
+
+/**
+ * Resolve a clicked element to the underlying radio/checkbox input, if any.
+ * Handles both the matched-element-is-input case and the matched-element-is-
+ * label-of-input case (label[for=...] or label-wrapping-input).
+ */
+function resolveCheckableInput(el: Element): HTMLInputElement | null {
+  if (el instanceof HTMLInputElement && (el.type === "radio" || el.type === "checkbox")) {
+    return el;
+  }
+  if (el instanceof HTMLLabelElement) {
+    if (el.htmlFor) {
+      const target = el.ownerDocument.getElementById(el.htmlFor);
+      if (target instanceof HTMLInputElement && (target.type === "radio" || target.type === "checkbox")) {
+        return target;
+      }
+    }
+    const inner = el.querySelector('input[type="radio"], input[type="checkbox"]');
+    if (inner instanceof HTMLInputElement) return inner;
+  }
+  return null;
+}
+
+/**
+ * Fire the full pointer-event chain on an input that didn't flip its
+ * checked state via the standard click. This is the user-validated reliable
+ * pattern for React-controlled radios/checkboxes whose handlers are bound
+ * to pointer events. Does NOT call .click() — that's already been tried.
+ */
+function firePointerChain(el: Element) {
+  const rect = el.getBoundingClientRect();
+  const cx = rect.left + rect.width / 2;
+  const cy = rect.top + rect.height / 2;
+  const baseOpts = {
+    bubbles: true,
+    cancelable: true,
+    view: window,
+    clientX: cx,
+    clientY: cy,
+    button: 0,
+  };
+  try {
+    el.dispatchEvent(new PointerEvent("pointerdown", { ...baseOpts, pointerType: "mouse" }));
+  } catch { /* PointerEvent may be unavailable in old browsers */ }
+  el.dispatchEvent(new MouseEvent("mousedown", baseOpts));
+  try {
+    el.dispatchEvent(new PointerEvent("pointerup", { ...baseOpts, pointerType: "mouse" }));
+  } catch { /* ignore */ }
+  el.dispatchEvent(new MouseEvent("mouseup", baseOpts));
+  el.dispatchEvent(new MouseEvent("click", baseOpts));
 }
 
 /**
@@ -90,6 +185,19 @@ export function clickElement(
   // Scroll the element into view, including nested scroll containers
   scrollSmartIntoView(el);
 
+  const label =
+    (el as HTMLElement).innerText?.trim() ||
+    el.getAttribute("aria-label") ||
+    textHint;
+
+  // Pre-flight: skip already-checked radios — re-clicking can toggle them OFF
+  // on React forms whose onChange handler interprets the click as a deselect.
+  const checkable = resolveCheckableInput(el);
+  if (checkable && checkable.type === "radio" && checkable.checked) {
+    return { success: true, message: `"${label}" — radio already checked, click skipped` };
+  }
+  const preChecked = checkable ? checkable.checked : null;
+
   // Humanize the click: dispatch mousemove → mousedown → small delay → mouseup → click,
   // with coord jitter, before falling back to native .click(). Sites doing
   // behavioral fingerprinting (LinkedIn, Akamai) flag teleport-clicks as bots.
@@ -102,15 +210,19 @@ export function clickElement(
     el.dispatchEvent(new MouseEvent("click", opts));
   }
 
-  const label =
-    (el as HTMLElement).innerText?.trim() ||
-    el.getAttribute("aria-label") ||
-    textHint;
-
-  // For radio buttons and checkboxes, confirm the new checked state
+  // For radio buttons and checkboxes, confirm the new checked state and fall
+  // back to a full pointer-event chain on the input if the standard click
+  // didn't change state (React-controlled inputs bound to pointer events).
   let stateNote = "";
-  if (el instanceof HTMLInputElement && (el.type === "radio" || el.type === "checkbox")) {
-    stateNote = ` — now ${el.checked ? "checked" : "unchecked"}`;
+  if (checkable && preChecked !== null) {
+    const radioFailed = checkable.type === "radio" && !checkable.checked;
+    const checkboxFailed = checkable.type === "checkbox" && checkable.checked === preChecked;
+    let fallbackUsed = false;
+    if (radioFailed || checkboxFailed) {
+      firePointerChain(checkable);
+      fallbackUsed = true;
+    }
+    stateNote = ` — now ${checkable.checked ? "checked" : "unchecked"}${fallbackUsed ? " (after pointer-chain fallback)" : ""}`;
   }
 
   // Warn if element is truly invisible (0x0 bounding rect AND no offset dimensions

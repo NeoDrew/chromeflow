@@ -126,6 +126,17 @@ use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it
 - `set_file_input` accepts CSS selectors as the hint (e.g. `#import-problem-file`,
   `.upload-input`) in addition to label text. Use selectors when file inputs are hidden
   behind custom UIs and have no visible label.
+- **Replacing an already-uploaded file**: after `set_file_input` succeeds, the input
+  becomes invisible and a "Remove" span/button typically appears near the upload area.
+  To replace the file: `click_element("Remove", nth=N)` (the right `nth` if there are
+  multiple), then call `set_file_input(hint, newPath)` again — the same hidden input is
+  recycled and accepts the new file. Verify with `get_form_fields()` between the two
+  steps so you're sure the input has reappeared.
+- **Forcing auto-save on idempotent text edits** (e.g. keep-alive loop on an
+  auto-saving DataAnnotation form): some auto-save logic diffs against the last-saved
+  value and skips no-op writes. To force a real save on each tick without changing
+  visible content, toggle a trailing space — add when absent, remove when present.
+  `fill_input` value comparison handles both directions transparently.
 - After any radio/checkbox click that reveals new fields, call `get_form_fields()` again —
   the inventory will include the new fields and warn if more hidden ones still exist.
 - If a form has collapsible sections, expand them all before calling `get_form_fields()` so
@@ -144,6 +155,12 @@ use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it
 - `switch_to_tab("1")` switches by tab number; `switch_to_tab("form")` matches by URL or title substring.
 - Before navigating away from a partially-filled form, call `save_page_state()` so the form
   can be restored if the tab reloads or the page loses its state on return.
+- **In long-lived self-rescheduling loops**, the active tab can silently drift mid-session
+  (the user navigates manually while AFK, or another tab steals focus). At the start of
+  every loop iteration, call `list_tabs` and verify the active tab's URL matches your
+  expected target — if not, `switch_to_tab(<URL or title substring>)` before running
+  `execute_script` or any other tab-scoped tool. Without this guard, scripts run on the
+  wrong tab and fail with confusing "undefined" errors that look like page bugs.
 
 ## Error handling
 
@@ -270,10 +287,25 @@ document.body.style.zoom = '1';
 1. Retry the exact same `execute_script` call
 2. If still failing, use `find_and_highlight` to show the user a download button to click manually
 
-**Shadow DOM `[role=radio]` / custom radios silently no-op**: On sites like Outlier,
-`element.click()` on a shadow-DOM radio often doesn't flip `aria-checked`. Two things
-must be true: (a) the element must be scrolled into view FIRST (`scrollIntoView({block:'center'})`),
-and (b) the full pointer-event chain must fire — not just `click()`:
+**React-controlled native radios/checkboxes that don't update `checked`**: `click_element`
+auto-handles this for native `<input type=radio>` and `<input type=checkbox>` inputs
+(including labels that wrap or `for=` reference them). The flow:
+- If a radio is already `checked=true`, `click_element` skips the click — re-clicking can
+  toggle it OFF on React forms whose `onChange` interprets the click as a deselect. The
+  response says `"X — radio already checked, click skipped"`.
+- If the standard click fires but the input's `checked` state didn't change as expected
+  (radio still unchecked, or checkbox didn't toggle), `click_element` automatically
+  dispatches the full pointer-event chain (`pointerdown → mousedown → pointerup → mouseup
+  → click`) on the input. The response says `"now checked (after pointer-chain fallback)"`.
+
+You only need to drop into `execute_script` for the no-native-input case below.
+
+**Shadow DOM `[role=radio]` / role-only custom radios silently no-op**: On sites like
+Outlier where the radio is a `[role=radio]` div with no underlying `<input>`,
+`click_element`'s native-input fallback can't help — the click target has no `.checked`
+property to verify. Two things must be true: (a) the element must be scrolled into view
+FIRST (`scrollIntoView({block:'center'})`), and (b) the full pointer-event chain must
+fire — not just `click()`:
 ```js
 ['pointerdown','mousedown','pointerup','mouseup','click'].forEach(t =>
   el.dispatchEvent(new MouseEvent(t, {bubbles: true, cancelable: true}))
