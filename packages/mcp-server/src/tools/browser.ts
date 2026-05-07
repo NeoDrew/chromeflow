@@ -61,75 +61,69 @@ Example: switch_to_tab("1") to go to the first tab, switch_to_tab("form") to fin
 
   server.tool(
     "take_screenshot",
-    "Capture a screenshot of the current page. IMPORTANT: Do NOT use this to read page content or check what is on the page — call get_page_text instead, which is faster and returns searchable text. Screenshots are ONLY for locating a specific element's pixel coordinates when get_elements has already failed. Never take a screenshot immediately after open_page, scroll_page, or click_element — always use get_page_text after those actions. Never take more than 1-2 screenshots in a row. To also save or copy the image, use take_and_copy_screenshot instead.",
-    {},
-    async () => {
-      const response = await bridge.request({ type: "screenshot" });
+    `Capture a screenshot of the current page. By default returns the image to Claude only; pass copy_to_clipboard or save_to to also share the image outside Claude (paste into a chat, upload to a form, keep as a file).
+
+IMPORTANT: Do NOT use this to read page content — call get_page_text instead, which is faster and returns searchable text. Screenshots are ONLY for locating an element's pixel coordinates when DOM queries have already failed. Never take a screenshot immediately after open_page, scroll_page, or click_element. Never take more than 1-2 screenshots in a row.`,
+    {
+      copy_to_clipboard: z
+        .boolean()
+        .optional()
+        .describe("Copy the PNG to the system clipboard (macOS only). Default false."),
+      save_to: z
+        .enum(["downloads", "cwd", "none"])
+        .optional()
+        .describe('Save the PNG to disk: "downloads" (~/Downloads), "cwd" (Claude\'s working directory), or "none" (default — image returned only to Claude).'),
+    },
+    async ({ copy_to_clipboard = false, save_to = "none" }) => {
+      const sharing = copy_to_clipboard || save_to !== "none";
+      // grid:false when sharing — coord grid is noise when the image is for
+      // pasting into chats / uploading to forms.
+      const response = await bridge.request({ type: "screenshot", grid: !sharing });
       if (response.type !== "screenshot_response") {
         throw new Error("Unexpected response from extension");
       }
-      return {
-        content: [
-          {
-            type: "image",
-            data: response.image,
-            mimeType: "image/png",
-          },
-          {
-            type: "text",
-            text: `Screenshot captured (${response.width}x${response.height}). Analyze the image to identify element positions for highlighting.`,
-          },
-        ],
-      };
-    }
-  );
 
-  server.tool(
-    "take_and_copy_screenshot",
-    `Take a screenshot, return it to Claude, copy it to the system clipboard, and save it as a PNG file.
-Use this instead of take_screenshot when you need the image outside of Claude — to paste into a chat, upload to a form, or keep as a file.
-Unlike take_screenshot (Claude-only), this also puts the image on the clipboard and saves it to disk.
-save_to controls where the PNG is saved: "downloads" (default) saves to ~/Downloads, "cwd" saves to Claude's current working directory.`,
-    {
-      save_to: z
-        .enum(["downloads", "cwd"])
-        .optional()
-        .describe('Where to save the PNG file: "downloads" (~/Downloads, default) or "cwd" (Claude\'s current working directory)'),
-    },
-    async ({ save_to = "downloads" }) => {
-      // grid:false — saved/clipboard screenshots are for external sharing
-      // (pasting into chats, uploading to forms). The coordinate grid would
-      // be distracting noise on those.
-      const response = await bridge.request({ type: "screenshot", grid: false });
-      if (response.type !== "screenshot_response") throw new Error("Unexpected response from extension");
+      if (!sharing) {
+        return {
+          content: [
+            { type: "image", data: response.image, mimeType: "image/png" },
+            {
+              type: "text",
+              text: `Screenshot captured (${response.width}x${response.height}). Analyze the image to identify element positions for highlighting.`,
+            },
+          ],
+        };
+      }
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const filename = `chromeflow-${timestamp}.png`;
-      const imageBuffer = Buffer.from((response as { image: string }).image, "base64");
+      const imageBuffer = Buffer.from(response.image, "base64");
 
       // Write to temp file first (needed for osascript clipboard copy)
       const tmpPath = join(tmpdir(), filename);
       writeFileSync(tmpPath, imageBuffer);
 
-      // Save to final destination
-      const savePath = save_to === "cwd"
-        ? join(process.cwd(), filename)
-        : join(homedir(), "Downloads", filename);
-      copyFileSync(tmpPath, savePath);
-
-      // Copy to clipboard (macOS via osascript; silent fail on other platforms)
-      let clipboardNote = "";
-      try {
-        execSync(`osascript -e 'set the clipboard to (read (POSIX file "${tmpPath}") as «class PNGf»)'`);
-        clipboardNote = "Copied to clipboard. ";
-      } catch {
-        clipboardNote = "";
+      const notes: string[] = [];
+      if (save_to !== "none") {
+        const savePath = save_to === "cwd"
+          ? join(process.cwd(), filename)
+          : join(homedir(), "Downloads", filename);
+        copyFileSync(tmpPath, savePath);
+        notes.push(`Saved to ${savePath}`);
+      }
+      if (copy_to_clipboard) {
+        try {
+          execSync(`osascript -e 'set the clipboard to (read (POSIX file "${tmpPath}") as «class PNGf»)'`);
+          notes.push("Copied to clipboard");
+        } catch {
+          // best effort — non-mac platforms silently skip
+        }
       }
 
       return {
         content: [
-          { type: "image", data: (response as { image: string }).image, mimeType: "image/png" },
-          { type: "text", text: `${clipboardNote}Saved to ${savePath}` },
+          { type: "image", data: response.image, mimeType: "image/png" },
+          { type: "text", text: notes.length ? notes.join(". ") + "." : `Screenshot captured (${response.width}x${response.height}).` },
         ],
       };
     }
@@ -331,15 +325,7 @@ For iframe contenteditables: pass \`frame\` (a CSS selector for the iframe). typ
 
   server.tool(
     "set_file_input",
-    `Upload a file to a file input field. Works even when the input is visually hidden behind a custom drag-and-drop zone.
-Uses Chrome DevTools Protocol to set the file — the only way to bypass the browser's file-input script restriction.
-
-Returns success=true ONLY if an observable change is detected within wait_ms: either the page-level file count goes up, or the file is consumed by the page's React handler (input is reset), or verify_selector matches a new element on the page. Otherwise success=false with a clear message — typically because the page rejected the file (size/type) or the React handler hasn't run yet.
-
-For rapid batch uploads (multiple set_file_input calls in a row), this commit-wait prevents the second CDP call from overwriting the first before React reads it — no manual sleep needed between calls.
-
-hint: label text, name, or CSS selector of the file input (or empty string to target the first file input on the page).
-file_path: absolute path to the file on the local filesystem (e.g. /Users/you/Downloads/task.zip).`,
+    "Upload a file to a file input — works even when the input is hidden behind a custom drag-and-drop zone. Returns success=true only after an observable commit (file count goes up, input gets reset, or verify_selector appears within wait_ms). See CLAUDE.md for batch-upload guidance.",
     {
       hint: z.string().describe("Label text, name, or surrounding text of the file input. Use empty string to target the first file input on the page."),
       file_path: z.string().describe("Absolute path to the file to upload (e.g. /Users/you/Downloads/task.zip)"),
@@ -399,13 +385,9 @@ Returns the matched element's tag/name/id/type so you can verify it was the righ
 
   server.tool(
     "execute_script",
-    `Execute JavaScript in the current page's context and return the result as a string.
-Use this to read framework state, check DOM properties, or interact with page APIs that aren't reachable via text.
-Prefer get_page_text for reading visible content. Use this for programmatic DOM queries (e.g. checking an element's attribute, reading a value not visible in text).
-Top-level return statements are supported (e.g. multi-statement scripts with \`return value;\`).
-Top-level \`await\` is supported — write \`return await fetch(url).then(r => r.json())\` directly without the window.__variable + sleep + re-read pattern. Detected automatically when the code contains the \`await\` keyword.
-If the page called alert()/confirm()/prompt() since the last check, the message will appear as PAGE ALERT in the result — read it and act on it.
-NOTE: Pages with strict Content Security Policy (e.g. Stripe, GitHub) will fall through to a CDP path that bypasses CSP — but the script still runs, so retries usually aren't needed.`,
+    `Execute JavaScript in the current page's context and return the result. Use for reading framework state or DOM properties not visible in text — prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
+
+CSP-strict pages (Stripe, GitHub) silently fall through to a CDP eval path. Page alerts (alert/confirm/prompt) fired since the last script appear as PAGE ALERT in the result.`,
     {
       code: z
         .string()

@@ -234,6 +234,288 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
   );
 
   server.tool(
+    "find_text",
+    `Search the page for text and get back actionable matches without dumping the whole DOM. Use this instead of get_page_text when you only need to know "is X on the page?" or "where is the Save button?".
+
+For each match, returns the surrounding context, the nearest meaningful element (button/link/heading/role/label/etc.), a best-effort CSS selector, and a clickable flag. If a match is clickable, pipe the matched text into click_element to act on it.
+
+Use when:
+- Checking whether a toast / error message / heading appeared after an action
+- Locating one of multiple buttons by text
+- Finding all instances of a phrase to count or inspect them
+
+Do NOT use for: reading large blocks of body text — use get_page_text(selector=...) for that. find_text returns one short snippet per match, not the full content.
+
+Pierces open shadow roots. Pass frame="iframe.selector" to search inside a same-origin iframe.`,
+    {
+      query: z
+        .string()
+        .describe(
+          "Text to search for. Substring match by default; pass regex=true to interpret as a case-insensitive regex."
+        ),
+      max: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Maximum matches to return (default 10). total_matches is reported even when truncated."),
+      scope_selector: z
+        .string()
+        .optional()
+        .describe('Limit search to descendants of this CSS selector (e.g. ".main-panel", "#dialog"). Default searches the whole body.'),
+      regex: z
+        .boolean()
+        .optional()
+        .describe("Treat query as a regex (case-insensitive). Default false."),
+      visible_only: z
+        .boolean()
+        .optional()
+        .describe("Skip matches inside display:none / visibility:hidden / aria-hidden=true ancestors. Default true."),
+      context_chars: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Characters of surrounding context to include before/after each match. Default 60."),
+      frame: z
+        .string()
+        .optional()
+        .describe('Same-origin iframe CSS selector (e.g. "iframe.editor") to search inside. Cross-origin iframes are not supported.'),
+    },
+    async ({ query, max, scope_selector, regex, visible_only, context_chars, frame }) => {
+      const response = await bridge.request({
+        type: "find_text",
+        query,
+        max,
+        scope_selector,
+        regex,
+        visible_only,
+        context_chars,
+        frame,
+      });
+      const r = response as unknown as {
+        matches: Array<{
+          text: string;
+          context: string;
+          selector: string;
+          tag: string;
+          role: string | null;
+          clickable: boolean;
+          position: { x: number; y: number; width: number; height: number } | null;
+        }>;
+        total_matches: number;
+        truncated: boolean;
+        scope_missed?: boolean;
+        frame_error?: string;
+      };
+      if (r.frame_error) {
+        return { content: [{ type: "text", text: r.frame_error }] };
+      }
+      if (r.scope_missed) {
+        return {
+          content: [
+            { type: "text", text: `Scope selector "${scope_selector}" did not match any element — no search performed.` },
+          ],
+        };
+      }
+      if (r.matches.length === 0) {
+        return {
+          content: [
+            { type: "text", text: `No matches found for "${query}".` },
+          ],
+        };
+      }
+      const lines = r.matches.map((m, i) => {
+        const role = m.role ? `, role=${m.role}` : "";
+        const click = m.clickable ? " — clickable" : "";
+        const pos = m.position
+          ? ` at (${m.position.x}, ${m.position.y}, ${m.position.width}×${m.position.height})`
+          : "";
+        return `  ${i + 1}. [${m.tag}${role}]${click}${pos} — selector: ${m.selector}\n     "${m.text}"\n     context: ${m.context}`;
+      });
+      const header = r.truncated
+        ? `Found ${r.matches.length} of ${r.total_matches} matches for "${query}":`
+        : `Found ${r.matches.length} match${r.matches.length === 1 ? "" : "es"} for "${query}":`;
+      return {
+        content: [{ type: "text", text: `${header}\n${lines.join("\n")}` }],
+      };
+    }
+  );
+
+  server.tool(
+    "find_input",
+    `Locate form inputs whose label / placeholder / aria-label / name / id matches a hint, returning the top N with their section heading. Use this instead of get_form_fields when you only need a couple of fields — it's the targeted lookup, not the full inventory.
+
+Match strength is reported as match_kind: aria-eq / placeholder-eq / label-text-eq / name-eq / id-eq are exact matches; *-includes are partial matches; fuzzy-text-walk is the lowest-confidence fallback.
+
+Returned labels are designed to be piped straight into fill_input(label, value), which uses the same fuzzy ranks to find the same field again. No CSS selector is returned — fill_input matches by label text, not by selector.
+
+Use when:
+- "Is the Email field on this page?"
+- "Find the price input below the fold"
+- "Which input has placeholder 'you@example.com'?"
+
+Do NOT use for: filling fields (use fill_input / fill_form). For the full form inventory (every field including hidden ones), use get_form_fields.
+
+Pierces open shadow roots. Pass frame="iframe.selector" to search inside a same-origin iframe. Pass exact=true to refuse fuzzy text-walk and *-includes matches when the hint is short and could collide with neighbours.`,
+    {
+      query: z
+        .string()
+        .describe(
+          "Hint to match against the field's label, placeholder, aria-label, name, or id (e.g. 'Email', 'price', 'Card number')"
+        ),
+      type_filter: z
+        .string()
+        .optional()
+        .describe(
+          'Restrict to a specific input type — "email", "checkbox", "file", "textarea", "select", "number", etc. Default "any".'
+        ),
+      max: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Maximum fields to return (default 5). total_matches is reported even when truncated."),
+      exact: z
+        .boolean()
+        .optional()
+        .describe(
+          "If true, return only exact equality matches (aria-eq / placeholder-eq / label-text-eq / name-eq / id-eq). Skips fuzzy text-walk and *-includes. Default false."
+        ),
+      frame: z
+        .string()
+        .optional()
+        .describe('Same-origin iframe CSS selector to search inside. Cross-origin iframes are not supported.'),
+    },
+    async ({ query, type_filter, max, exact, frame }) => {
+      const response = await bridge.request({
+        type: "find_input",
+        query,
+        type_filter,
+        max,
+        exact,
+        frame,
+      });
+      const r = response as unknown as {
+        fields: Array<{
+          label: string;
+          placeholder: string;
+          type: string;
+          value: string;
+          under?: string;
+          position: { x: number; y: number; width: number; height: number } | null;
+          match_kind: string;
+        }>;
+        total_matches: number;
+        truncated: boolean;
+        frame_error?: string;
+      };
+      if (r.frame_error) {
+        return { content: [{ type: "text", text: r.frame_error }] };
+      }
+      if (r.fields.length === 0) {
+        return {
+          content: [{ type: "text", text: `No input fields found matching "${query}".` }],
+        };
+      }
+      const lines = r.fields.map((f, i) => {
+        const placeholderPart = f.placeholder ? ` placeholder="${f.placeholder}"` : "";
+        const valuePart = f.value ? ` value="${f.value}"` : "";
+        const underPart = f.under ? ` [under: "${f.under}"]` : "";
+        const posPart = f.position ? ` at y=${f.position.y}` : "";
+        return `  ${i + 1}. "${f.label}" type=${f.type}${placeholderPart}${valuePart}${underPart} — match: ${f.match_kind}${posPart}`;
+      });
+      const header = r.truncated
+        ? `Found ${r.fields.length} of ${r.total_matches} input(s) for "${query}":`
+        : `Found ${r.fields.length} input${r.fields.length === 1 ? "" : "s"} for "${query}":`;
+      return {
+        content: [{ type: "text", text: `${header}\n${lines.join("\n")}\n\nTo fill: fill_input("${r.fields[0].label}", "<value>")` }],
+      };
+    }
+  );
+
+  server.tool(
+    "wait_for_text",
+    `Wait for text to appear in the DOM. Complement to wait_for_selector for the case where you only know the message text — no selector required. Uses a MutationObserver under the hood, no polling.
+
+Resolves on the first match (or if the text is already present). Returns the elapsed time, the matched text, and the surrounding context.
+
+Use when:
+- "Click Save, then wait for 'Saved successfully' to show"
+- "Wait until the deploy log says 'Build complete'"
+- Any case where the post-action signal is a phrase, not a known selector
+
+Do NOT use for: waiting on a known CSS selector (use wait_for_selector — slightly cheaper).
+
+Pierces open shadow roots. Pass frame="iframe.selector" to wait for text inside a same-origin iframe.`,
+    {
+      query: z
+        .string()
+        .describe("Text to wait for (substring by default; pass regex=true for a regex)"),
+      timeout_ms: z
+        .number()
+        .int()
+        .min(100)
+        .optional()
+        .describe("Maximum milliseconds to wait (default 10000)"),
+      scope_selector: z
+        .string()
+        .optional()
+        .describe("Limit the observation to a CSS selector's subtree (e.g. '.toast-region')"),
+      regex: z
+        .boolean()
+        .optional()
+        .describe("Treat query as a regex (case-insensitive). Default false."),
+      frame: z
+        .string()
+        .optional()
+        .describe('Same-origin iframe CSS selector to wait inside. Cross-origin iframes are not supported.'),
+    },
+    async ({ query, timeout_ms, scope_selector, regex, frame }) => {
+      const wsTimeout = Math.max(15_000, (timeout_ms ?? 10_000) + 5_000);
+      const response = await bridge.request(
+        {
+          type: "wait_for_text",
+          query,
+          timeout_ms,
+          scope_selector,
+          regex,
+          frame,
+        },
+        wsTimeout
+      );
+      const r = response as unknown as {
+        found: boolean;
+        selector?: string;
+        text?: string;
+        context?: string;
+        elapsed_ms: number;
+        frame_error?: string;
+      };
+      if (r.frame_error) {
+        return { content: [{ type: "text", text: r.frame_error }] };
+      }
+      if (!r.found) {
+        return {
+          content: [
+            { type: "text", text: `Timed out after ${r.elapsed_ms}ms waiting for "${query}".` },
+          ],
+        };
+      }
+      const ctx = r.context ? `\ncontext: ${r.context}` : "";
+      const sel = r.selector ? `\nselector: ${r.selector}` : "";
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Found "${r.text}" after ${r.elapsed_ms}ms.${sel}${ctx}`,
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
     "fill_form",
     `Fill multiple form fields in a single call by targeting each field by its label text.
 Use this instead of calling fill_input repeatedly — it fills all fields in one round trip and returns a per-field success report.

@@ -52,7 +52,36 @@ export type ServerMessage =
   | { type: "set_file_input"; requestId: string; hint: string; filePath: string; waitMs?: number; verifySelector?: string }
   | { type: "type_text"; requestId: string; text: string; frame?: string }
   | { type: "inspect_request_headers"; requestId: string; url: string }
-  | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string };
+  | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string }
+  | {
+      type: "find_text";
+      requestId: string;
+      query: string;
+      max?: number;
+      scope_selector?: string;
+      regex?: boolean;
+      visible_only?: boolean;
+      context_chars?: number;
+      frame?: string;
+    }
+  | {
+      type: "find_input";
+      requestId: string;
+      query: string;
+      type_filter?: string;
+      max?: number;
+      exact?: boolean;
+      frame?: string;
+    }
+  | {
+      type: "wait_for_text";
+      requestId: string;
+      query: string;
+      timeout_ms?: number;
+      scope_selector?: string;
+      regex?: boolean;
+      frame?: string;
+    };
 
 export type PageFieldState = {
   selector: string;
@@ -85,4 +114,47 @@ export type ClientMessage =
   | { type: "form_fields_response"; requestId: string; fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }> }
   | { type: "save_state_response"; requestId: string; state: PageFieldState[] }
   | { type: "tabs_response"; requestId: string; tabs: Array<{ index: number; title: string; url: string; active: boolean }> }
-  | { type: "fill_form_response"; requestId: string; results: Array<{ label: string; success: boolean; message: string; matched?: string }>; succeeded: number; total: number };
+  | { type: "fill_form_response"; requestId: string; results: Array<{ label: string; success: boolean; message: string; matched?: string }>; succeeded: number; total: number }
+  | {
+      type: "find_text_response";
+      requestId: string;
+      matches: Array<{
+        text: string;
+        context: string;
+        selector: string;
+        tag: string;
+        role: string | null;
+        clickable: boolean;
+        position: { x: number; y: number; width: number; height: number } | null;
+      }>;
+      total_matches: number;
+      truncated: boolean;
+      scope_missed?: boolean;
+      frame_error?: string;
+    }
+  | {
+      type: "find_input_response";
+      requestId: string;
+      fields: Array<{
+        label: string;
+        placeholder: string;
+        type: string;
+        value: string;
+        under?: string;
+        position: { x: number; y: number; width: number; height: number } | null;
+        match_kind: string;
+      }>;
+      total_matches: number;
+      truncated: boolean;
+      frame_error?: string;
+    }
+  | {
+      type: "wait_for_text_response";
+      requestId: string;
+      found: boolean;
+      selector?: string;
+      text?: string;
+      context?: string;
+      elapsed_ms: number;
+      frame_error?: string;
+    };

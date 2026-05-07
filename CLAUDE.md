@@ -25,7 +25,9 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 2. **Never use `take_screenshot` to read page content.** After `scroll_page`, after
    `click_element`, after navigation — always call `get_page_text`, not `take_screenshot`.
    `get_page_text` returns up to 10,000 characters; if truncated it tells you the next
-   `startIndex` to paginate. Screenshots are only for locating an element's pixel position
+   `startIndex` to paginate. When you only need to confirm a specific phrase is present,
+   prefer `find_text("phrase")` — it returns matches with context and selectors instead of
+   dumping the whole page. Screenshots are only for locating an element's pixel position
    when DOM queries have already failed. Never take more than 1–2 screenshots in a row.
 
 3. **Use `wait_for_selector` to wait for async page changes** (build completion, modals,
@@ -98,13 +100,18 @@ After a secret key or API key is revealed:
 Use the absolute path for `envPath` — it's the Claude Code working directory + `/.env`.
 
 To capture and share a screenshot (e.g. for uploading to a form or pasting into a chat),
-use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it to the clipboard.
+use `take_screenshot(copy_to_clipboard=true, save_to="downloads")` — saves a PNG to ~/Downloads
+and copies it to the clipboard. The defaults (`copy_to_clipboard=false, save_to="none"`) return
+the image to Claude only.
 
 ## Working with complex forms
 - Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory
   of every field (type, label, current value, vertical position, and section heading). Use
   `get_elements()` when you need pixel coordinates of visible elements; use `get_form_fields()`
   when you need to understand the full structure of a form including fields below the fold.
+  If you only need one or two specific fields, use `find_input("hint")` instead — targeted
+  lookup is much cheaper than the full inventory and returns labels you can pipe straight
+  into `fill_input`.
 - `get_form_fields()` includes `[type=file]` fields even when they are visually hidden behind
   custom drag-and-drop zones. Use `set_file_input(hint, filePath)` to upload a file — provide
   the label/hint text and the absolute path to the file on disk.
@@ -146,6 +153,24 @@ use `take_and_copy_screenshot()` — it saves a PNG to ~/Downloads and copies it
   which field or section you need — it scrolls precisely and confirms the matched element.
 - For multi-session tasks (long forms that may exceed context), call `save_page_state()` as a
   checkpoint. A future session can call `restore_page_state()` to reload all field values.
+
+## Discovery — find without dumping the whole page
+
+Three lightweight tools save tokens vs `get_page_text` / `get_form_fields` when you don't need the full content:
+
+- `find_text("Saved successfully")` — grep the DOM. Returns surrounding context, a CSS selector, and a `clickable` flag for each match. Use this instead of `get_page_text` when you're checking whether a specific phrase is present, or to locate a button by its visible text. If `clickable=true`, pipe the matched text straight into `click_element`.
+- `find_input("Email")` — fuzzy form-field lookup, top-N. Returns labels you can pipe straight into `fill_input(label, value)` — both tools share the same match ranks (`aria-eq` → `placeholder-eq` → `label-text-eq` → `name-eq` → `id-eq` → `*-includes` → `fuzzy-text-walk`). Cheaper than `get_form_fields` when you just need a couple of specific fields. Pass `type_filter="email"` to restrict to a specific input type.
+- `wait_for_text("Saved")` — wait for text to appear without knowing the selector ahead of time. Complements `wait_for_selector` for the case where you only know the post-action message.
+
+All three pierce open shadow roots and accept `frame="iframe.selector"` for same-origin iframes. Pass `regex=true` on `find_text` / `wait_for_text` for case-insensitive regex matching. Pass `exact=true` on `find_input` to refuse fuzzy text-walk matches.
+
+```
+find_text("Build complete", scope_selector=".log-output")     — only check the build log section
+find_input("Card number", type_filter="text")                  — find Stripe's card-number field
+wait_for_text("Deploy successful", timeout_ms=30000)           — wait up to 30s after clicking Deploy
+```
+
+Reach for these BEFORE `get_page_text` / `get_form_fields` when the goal is "is X here?" or "where is X?". Reserve `get_page_text` for reading actual content, and `get_form_fields` for understanding a whole form's structure.
 
 ## Working with multiple tabs
 - Before opening a new tab, call `list_tabs()` to check if the target URL is already open —
@@ -277,7 +302,7 @@ instead of DOM text): `get_page_text()` returns nothing useful. Zoom out and scr
 ```js
 // Shrink to fit wide content, then screenshot
 document.body.style.zoom = '0.4';
-// use take_and_copy_screenshot() to read it
+// use take_screenshot() to read it
 // restore afterward:
 document.body.style.zoom = '1';
 ```
