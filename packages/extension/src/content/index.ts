@@ -8,6 +8,8 @@ import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
 import { clickElement, prepareClickTarget, postClickInspect } from "./click.js";
 import { extractTextDeep, queryAllDeep } from "./shadow.js";
+import { enumerateFormFields } from "./forms.js";
+import { findText, findInputs, waitForText } from "./find.js";
 import { markerIds } from "../markers.js";
 import { redactSecrets } from "./redact.js";
 
@@ -16,6 +18,22 @@ type IncomingMessage = {
   requestId: string;
   [key: string]: unknown;
 };
+
+/**
+ * Resolve a `frame` selector to its iframe's contentDocument. Returns the
+ * top-level document when no frame is given, and null when the frame
+ * selector matched nothing or the iframe is cross-origin.
+ */
+function resolveFrameDocument(frame: string | undefined): Document | null {
+  if (!frame) return document;
+  const iframe = document.querySelector<HTMLIFrameElement>(frame);
+  if (!iframe) return null;
+  try {
+    return iframe.contentDocument ?? null;
+  } catch {
+    return null;
+  }
+}
 
 chrome.runtime.onMessage.addListener(
   (msg: IncomingMessage, _sender, sendResponse) => {
@@ -325,195 +343,87 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "get_form_fields": {
-      const fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string }> = [];
-      let idx = 0;
-
-      // Helper: find nearest section heading above an element for stable context
-      function getNearestHeading(el: Element): string {
-        let node: Element | null = el.parentElement;
-        for (let d = 0; d < 8 && node && node !== document.body; d++) {
-          for (const sel of ["h1,h2,h3,h4,h5,h6", "legend", "[class*='section-title'],[class*='heading'],[class*='section-header']"]) {
-            const h = node.querySelector(sel);
-            if (h && h !== el && !h.contains(el)) return (h.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 60);
-          }
-          node = node.parentElement;
-        }
-        return "";
-      }
-
-      // Helper: stable document y even for hidden/zero-size elements.
-      // getBoundingClientRect() returns 0 for display:none elements, which combined with
-      // window.scrollY produces the current scroll position for every hidden element — wrong.
-      // Walk offsetParent chain instead, which gives the real document position.
-      function getDocumentY(el: HTMLElement): number {
-        const rect = el.getBoundingClientRect();
-        if (rect.width > 0 || rect.height > 0) {
-          return Math.round(rect.top + window.scrollY);
-        }
-        let top = 0;
-        let node: HTMLElement | null = el;
-        while (node) {
-          top += node.offsetTop;
-          node = node.offsetParent as HTMLElement | null;
-        }
-        return top;
-      }
-
-      // File inputs — always include even if visually hidden (commonly 0×0 behind custom drag zones)
-      for (const el of Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"))) {
-        let label = el.getAttribute("aria-label") || el.getAttribute("name") || "";
-        if (!label && el.id) {
-          const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
-          if (lbl) label = (lbl.textContent ?? "").trim();
-        }
-        if (!label) {
-          let node: Element | null = el.parentElement;
-          for (let d = 0; d < 5 && node; d++) {
-            const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
-            if (text && text.length < 120) { label = text.slice(0, 80); break; }
-            node = node.parentElement;
-          }
-        }
-        const context = getNearestHeading(el);
-        fields.push({
-          index: ++idx,
-          type: "file",
-          label: (label.replace(/\s+/g, " ").slice(0, 80) || "(unnamed)") + " — use set_file_input(hint, filePath) to upload",
-          value: el.files?.[0]?.name ?? "",
-          y: getDocumentY(el),
-          selector: el.id ? `#${el.id}` : "input[type=file]",
-          ...(context ? { context } : {}),
-        });
-      }
-
-      // Standard inputs (file handled above), textareas, selects
-      const FIELD_SELECTORS = "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=file]), textarea, select";
-      for (const el of Array.from(document.querySelectorAll<HTMLElement>(FIELD_SELECTORS))) {
-        const s = getComputedStyle(el);
-        if (s.display === "none" || s.visibility === "hidden") continue;
-        const rect = el.getBoundingClientRect();
-
-        // Derive label
-        let label = "";
-        const inputEl = el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
-        label = inputEl.getAttribute("placeholder") || inputEl.getAttribute("aria-label") || "";
-        if (!label && el.id) {
-          const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
-          if (lbl) label = (lbl.textContent ?? "").trim();
-        }
-        if (!label) {
-          let node: Element | null = el.parentElement;
-          for (let d = 0; d < 4 && node && node !== document.body; d++) {
-            const heading = node.querySelector("label, h1, h2, h3, h4, h5, legend, [class*='label']");
-            if (heading && heading !== el) { label = (heading.textContent ?? "").trim(); break; }
-            node = node.parentElement;
-          }
-        }
-
-        // Current value
-        let value = "";
-        if (el instanceof HTMLSelectElement) {
-          value = el.options[el.selectedIndex]?.text ?? el.value;
-        } else if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
-          value = el.checked ? "checked" : "unchecked";
-        } else {
-          value = (el as HTMLInputElement | HTMLTextAreaElement).value ?? "";
-        }
-
-        // Unique selector (prefer id, fall back to nth-of-type)
-        const selector = el.id
-          ? `#${el.id}`
-          : `${el.tagName.toLowerCase()}:nth-of-type(${Array.from(document.querySelectorAll(el.tagName)).indexOf(el) + 1})`;
-
-        const context = getNearestHeading(el);
-        fields.push({
-          index: ++idx,
-          type: el instanceof HTMLInputElement ? (el.type || "text") : el.tagName.toLowerCase(),
-          label: label.replace(/\s+/g, " ").slice(0, 80),
-          value: value.slice(0, 60),
-          y: getDocumentY(el as HTMLElement),
-          selector,
-          ...(context ? { context } : {}),
-        });
-      }
-
-      // CodeMirror 6 editors
-      for (const editor of Array.from(document.querySelectorAll<HTMLElement>(".cm-editor"))) {
-        const s = getComputedStyle(editor);
-        if (s.display === "none" || s.visibility === "hidden") continue;
-        const rect = editor.getBoundingClientRect();
-
-        let label = editor.getAttribute("aria-label") ?? "";
-        if (!label) {
-          const container = editor.closest("div[class], section, fieldset, li") ?? editor.parentElement;
-          if (container) {
-            const heading = container.querySelector("label, h1, h2, h3, h4, h5, legend, [class*='label']");
-            if (heading) label = (heading.textContent ?? "").trim();
-          }
-        }
-
-        const currentText = (editor.querySelector(".cm-content")?.textContent ?? "").slice(0, 60);
-        const context = getNearestHeading(editor);
-        fields.push({
-          index: ++idx,
-          type: "codemirror",
-          label: label.replace(/\s+/g, " ").slice(0, 80),
-          value: currentText,
-          y: Math.round(rect.top + window.scrollY),
-          selector: ".cm-editor",
-          ...(context ? { context } : {}),
-        });
-      }
-
-      // Monaco editors (VS Code-style code editors used by DataAnnotation, etc.)
-      for (const editor of Array.from(document.querySelectorAll<HTMLElement>(".monaco-editor"))) {
-        const s = getComputedStyle(editor);
-        if (s.display === "none" || s.visibility === "hidden") continue;
-        const rect = editor.getBoundingClientRect();
-
-        let label = editor.getAttribute("aria-label") ?? "";
-        if (!label) {
-          const container = editor.closest("div[class], section, fieldset, li") ?? editor.parentElement;
-          if (container) {
-            const heading = container.querySelector("label, h1, h2, h3, h4, h5, legend, [class*='label'], [class*='title']");
-            if (heading && !editor.contains(heading)) label = (heading.textContent ?? "").trim();
-          }
-        }
-
-        // Read first 60 chars from the visible lines
-        const lines = editor.querySelectorAll(".view-line");
-        const currentText = Array.from(lines).slice(0, 3).map(l => (l.textContent ?? "").trim()).join(" ").slice(0, 60);
-        const context = getNearestHeading(editor);
-        fields.push({
-          index: ++idx,
-          type: "monaco — use execute_script with monaco.editor.getModels() to read/write",
-          label: label.replace(/\s+/g, " ").slice(0, 80),
-          value: currentText,
-          y: getDocumentY(editor),
-          selector: ".monaco-editor",
-          ...(context ? { context } : {}),
-        });
-      }
-
-      // Sort by vertical position on page
-      fields.sort((a, b) => a.y - b.y);
-      fields.forEach((f, i) => { f.index = i + 1; });
-
-      // Warn about conditionally-hidden fields that could appear after user interaction
-      // (e.g. fields revealed by clicking a radio button or checkbox)
-      const hiddenFields = Array.from(document.querySelectorAll<HTMLElement>(
-        "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select"
-      )).filter(el => {
-        const s = getComputedStyle(el);
-        return s.display === "none" || s.visibility === "hidden" || el.getAttribute("aria-hidden") === "true";
-      });
+      const { fields, hiddenFieldCount } = enumerateFormFields(document);
 
       let warning = "";
-      if (hiddenFields.length > 0) {
-        warning = `\n\n⚠ ${hiddenFields.length} hidden field(s) not shown above — they may appear after you interact with radio buttons, checkboxes, or toggles. Call get_form_fields() again after any such interaction to get an updated inventory.`;
+      if (hiddenFieldCount > 0) {
+        warning = `\n\n⚠ ${hiddenFieldCount} hidden field(s) not shown above — they may appear after you interact with radio buttons, checkboxes, or toggles. Call get_form_fields() again after any such interaction to get an updated inventory.`;
       }
 
       return { type: "form_fields_response", requestId: msg.requestId, fields, warning };
+    }
+
+    case "find_text": {
+      const doc = resolveFrameDocument(msg.frame as string | undefined);
+      if (doc === null) {
+        return {
+          type: "find_text_response",
+          requestId: msg.requestId,
+          matches: [],
+          total_matches: 0,
+          truncated: false,
+          frame_error: `Iframe "${msg.frame}" not found, cross-origin, or contentDocument unavailable`,
+        };
+      }
+      const result = findText(
+        msg.query as string,
+        {
+          max: msg.max as number | undefined,
+          scope_selector: msg.scope_selector as string | undefined,
+          regex: msg.regex as boolean | undefined,
+          visible_only: msg.visible_only as boolean | undefined,
+          context_chars: msg.context_chars as number | undefined,
+        },
+        doc
+      );
+      return { type: "find_text_response", requestId: msg.requestId, ...result };
+    }
+
+    case "find_input": {
+      const doc = resolveFrameDocument(msg.frame as string | undefined);
+      if (doc === null) {
+        return {
+          type: "find_input_response",
+          requestId: msg.requestId,
+          fields: [],
+          total_matches: 0,
+          truncated: false,
+          frame_error: `Iframe "${msg.frame}" not found, cross-origin, or contentDocument unavailable`,
+        };
+      }
+      const result = findInputs(
+        msg.query as string,
+        {
+          type_filter: msg.type_filter as string | undefined,
+          max: msg.max as number | undefined,
+          exact: msg.exact as boolean | undefined,
+        },
+        doc
+      );
+      return { type: "find_input_response", requestId: msg.requestId, ...result };
+    }
+
+    case "wait_for_text": {
+      const doc = resolveFrameDocument(msg.frame as string | undefined);
+      if (doc === null) {
+        return {
+          type: "wait_for_text_response",
+          requestId: msg.requestId,
+          found: false,
+          elapsed_ms: 0,
+          frame_error: `Iframe "${msg.frame}" not found, cross-origin, or contentDocument unavailable`,
+        };
+      }
+      const result = await waitForText(
+        msg.query as string,
+        {
+          timeout_ms: msg.timeout_ms as number | undefined,
+          scope_selector: msg.scope_selector as string | undefined,
+          regex: msg.regex as boolean | undefined,
+        },
+        doc
+      );
+      return { type: "wait_for_text_response", requestId: msg.requestId, ...result };
     }
 
     case "scroll_to_element": {

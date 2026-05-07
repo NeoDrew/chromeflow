@@ -86,8 +86,7 @@ Claude will navigate, highlight steps, click what it can, pause for anything sen
 | Run arbitrary JS | `execute_script` |
 | Read browser console output | `get_console_logs` |
 | Capture credentials to `.env` | `read_element`, `write_to_env` |
-| Screenshot (element location only) | `take_screenshot` |
-| Screenshot + save + copy to clipboard | `take_and_copy_screenshot` |
+| Screenshot (Claude-only by default; pass `copy_to_clipboard` / `save_to` to share) | `take_screenshot` |
 | Screenshot the terminal window | `capture_terminal` |
 | Save/restore form state across tabs | `save_page_state`, `restore_page_state` |
 

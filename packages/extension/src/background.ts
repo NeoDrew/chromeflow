@@ -504,8 +504,8 @@ async function handleMcpMessage(msg: {
 
       // Draw a coordinate grid so Claude can read off exact pixel positions
       // instead of estimating them visually. Skip when `grid: false` (e.g.
-      // take_and_copy_screenshot, which produces screenshots the user shares
-      // externally — the grid would be visual noise).
+      // take_screenshot called with copy_to_clipboard or save_to — the image
+      // is for external sharing and the grid would be visual noise).
       const drawGrid = msg.grid !== false;
       if (drawGrid) {
         const GRID = 100;
