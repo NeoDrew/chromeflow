@@ -208,6 +208,10 @@ export function findInputs(
   const seen = new WeakSet<Element>();
   function add(el: AnyInput, kind: InputMatchKind) {
     if (seen.has(el)) return;
+    // Exclude type=hidden — never user-fillable, just CSRF/state noise.
+    // Visually-hidden file inputs (drag-zone uploaders) keep type="file"
+    // and are NOT excluded by this check.
+    if (el instanceof HTMLInputElement && el.type === "hidden") return;
     seen.add(el);
     matches.push({ el, kind });
   }
@@ -534,19 +538,38 @@ function getPosition(
 }
 
 /**
- * Build a best-effort CSS selector for an element. Prefers id, then a
- * tag:nth-of-type rooted at the element's parent. Won't reach across
- * shadow boundaries via document.querySelector — for shadow-rooted matches
- * the caller should use click_element with the matched text instead.
+ * Build a best-effort CSS selector for an element. Walks up to 6 levels,
+ * stopping early if it hits an element with an id. Produces a chained
+ * descendant selector (e.g. `nav > ul > li:nth-of-type(2) > a`) that's
+ * usually unique enough for a follow-up document.querySelector. Skips
+ * `:nth-of-type` when the element is the only child of its tag in its
+ * parent. Won't reach across shadow boundaries — for shadow-rooted
+ * matches the caller should use click_element with the matched text.
  */
 function buildPathSelector(el: Element): string {
-  if (el.id) return `#${CSS.escape(el.id)}`;
-  const tag = el.tagName.toLowerCase();
-  const parent = el.parentElement;
-  if (!parent) return tag;
-  const sameTag = Array.from(parent.children).filter((c) => c.tagName === el.tagName);
-  const idx = sameTag.indexOf(el) + 1;
-  return `${tag}:nth-of-type(${idx})`;
+  const parts: string[] = [];
+  let current: Element | null = el;
+  for (let depth = 0; depth < 6 && current; depth++) {
+    if (current.id) {
+      parts.unshift(`#${CSS.escape(current.id)}`);
+      return parts.join(" > ");
+    }
+    const parent = current.parentElement;
+    if (!parent) {
+      parts.unshift(current.tagName.toLowerCase());
+      break;
+    }
+    const tag = current.tagName.toLowerCase();
+    const sameTag = Array.from(parent.children).filter((c) => c.tagName === current!.tagName);
+    if (sameTag.length === 1) {
+      parts.unshift(tag);
+    } else {
+      const idx = sameTag.indexOf(current) + 1;
+      parts.unshift(`${tag}:nth-of-type(${idx})`);
+    }
+    current = parent;
+  }
+  return parts.join(" > ");
 }
 
 function resolveLabelTarget(label: HTMLLabelElement, doc: Document): AnyInput | null {
