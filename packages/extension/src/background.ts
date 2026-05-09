@@ -1415,6 +1415,111 @@ async function handleMcpMessage(msg: {
       };
     }
 
+    case "react_call_prop": {
+      const tab = await getActiveTab(port);
+      const tabId = tab.id!;
+      if (!isScriptableUrl(tab.url)) {
+        return { type: "action_done", requestId: msg.requestId, success: false, message: `Cannot run on ${tab.url}` };
+      }
+
+      const selector = msg.selector as string;
+      const propName = msg.prop_name as string;
+      const args = (msg.args ?? []) as unknown[];
+      const maxDepth = (msg.max_depth ?? 30) as number;
+      const frameSelector = msg.frame as string | undefined;
+
+      const r = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: async (sel: string, pName: string, callArgs: unknown[], depth: number, frameSel: string | undefined) => {
+          let doc: Document = document;
+          if (frameSel) {
+            const iframe = document.querySelector(frameSel);
+            if (!(iframe instanceof HTMLIFrameElement)) return { ok: false, reason: `iframe "${frameSel}" not found` };
+            try {
+              const fdoc = iframe.contentDocument;
+              if (!fdoc) return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
+              doc = fdoc;
+            } catch {
+              return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
+            }
+          }
+          const el = doc.querySelector(sel);
+          if (!el) return { ok: false, reason: `selector "${sel}" not found${frameSel ? ` inside iframe "${frameSel}"` : ""}` };
+
+          const fiberKey = Object.keys(el).find((k) => k.startsWith("__reactFiber$"));
+          if (!fiberKey) return { ok: false, reason: `no React fiber on element matched by "${sel}" — is this a React app?` };
+
+          let cur = (el as unknown as Record<string, unknown>)[fiberKey] as
+            | { memoizedProps?: Record<string, unknown>; type?: unknown; return?: unknown }
+            | null
+            | undefined;
+
+          for (let i = 0; i < depth && cur; i++) {
+            const props = cur.memoizedProps;
+            const fn = props?.[pName];
+            if (typeof fn === "function") {
+              const t = cur.type as { displayName?: string; name?: string } | string | undefined;
+              const componentName =
+                (typeof t === "string" ? t : null) ||
+                (t && typeof t === "object" ? (t.displayName || t.name) : null) ||
+                "anonymous";
+              try {
+                const ret = await Promise.resolve((fn as (...a: unknown[]) => unknown)(...callArgs));
+                let returned: string;
+                if (ret === undefined) returned = "undefined";
+                else if (ret === null) returned = "null";
+                else if (typeof ret === "object") {
+                  try {
+                    returned = JSON.stringify(ret).slice(0, 200);
+                  } catch {
+                    returned = "[object]";
+                  }
+                } else {
+                  returned = String(ret).slice(0, 200);
+                }
+                return {
+                  ok: true,
+                  depth: i,
+                  componentName,
+                  returned,
+                };
+              } catch (err) {
+                const e = err as Error;
+                return {
+                  ok: false,
+                  reason: `prop "${pName}" threw: ${e?.message ?? String(err)}`,
+                  depth: i,
+                  componentName,
+                };
+              }
+            }
+            cur = cur.return as typeof cur;
+          }
+          return { ok: false, reason: `no prop "${pName}" found within ${depth} fiber levels`, walked: depth };
+        },
+        args: [selector, propName, args, maxDepth, frameSelector],
+      });
+
+      const result = r[0]?.result as
+        | { ok: false; reason: string; depth?: number; walked?: number; componentName?: string }
+        | { ok: true; depth: number; componentName: string; returned: string }
+        | undefined;
+      if (!result) return { type: "action_done", requestId: msg.requestId, success: false, message: "no response from page" };
+      if (!result.ok) {
+        const where = result.depth !== undefined
+          ? ` (at fiber depth ${result.depth}${result.componentName ? ` in <${result.componentName}>` : ""})`
+          : result.walked !== undefined ? ` (walked ${result.walked} levels)` : "";
+        return { type: "action_done", requestId: msg.requestId, success: false, message: `${result.reason}${where}` };
+      }
+      return {
+        type: "action_done",
+        requestId: msg.requestId,
+        success: true,
+        message: `Called ${propName}(...) on <${result.componentName}> at fiber depth ${result.depth}. Return: ${result.returned}`,
+      };
+    }
+
     case "inspect_request_headers": {
       const tab = await getActiveTab(port);
       const tabId = tab.id!;

@@ -54,6 +54,15 @@ export type ServerMessage =
   | { type: "inspect_request_headers"; requestId: string; url: string }
   | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string }
   | {
+      type: "react_call_prop";
+      requestId: string;
+      selector: string;
+      prop_name: string;
+      args: unknown[];
+      max_depth: number;
+      frame?: string;
+    }
+  | {
       type: "find_text";
       requestId: string;
       query: string;
