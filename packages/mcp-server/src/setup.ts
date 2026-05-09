@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from "fs";
 import { homedir } from "os";
 import { join, resolve, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -191,6 +191,10 @@ const CHROMEFLOW_TOOLS = [
   "wait_for_change",
   // v0.6.0+
   "find_text", "find_input", "wait_for_text",
+  // v0.6.5+
+  "react_set_input",
+  // v0.8.0+
+  "react_call_prop",
 ].map((t) => `mcp__chromeflow__${t}`);
 
 function patchSettingsLocalJson(cwd: string) {
@@ -442,4 +446,117 @@ export async function runUpdate() {
   }
 
   console.log("Done.\n");
+}
+
+function readGlobalChromeflowVersion(): string | null {
+  try {
+    const root = execSync("npm root -g", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const pkgPath = join(root, "chromeflow", "package.json");
+    if (!existsSync(pkgPath)) return null;
+    return JSON.parse(readFileSync(pkgPath, "utf8")).version as string;
+  } catch {
+    return null;
+  }
+}
+
+function listNpxCachedChromeflowVersions(): Array<{ hash: string; version: string }> {
+  const cacheDir = join(HOME, ".npm", "_npx");
+  if (!existsSync(cacheDir)) return [];
+  const out: Array<{ hash: string; version: string }> = [];
+  let entries: string[];
+  try {
+    entries = readdirSync(cacheDir);
+  } catch {
+    return [];
+  }
+  for (const hash of entries) {
+    const pkgPath = join(cacheDir, hash, "node_modules", "chromeflow", "package.json");
+    if (!existsSync(pkgPath)) continue;
+    try {
+      const v = JSON.parse(readFileSync(pkgPath, "utf8")).version as string;
+      out.push({ hash, version: v });
+    } catch {
+      // skip
+    }
+  }
+  return out;
+}
+
+async function fetchLatestPublishedVersion(): Promise<string | null> {
+  try {
+    const res = await fetch("https://registry.npmjs.org/chromeflow/latest");
+    if (!res.ok) return null;
+    const json = await res.json() as { version?: string };
+    return json.version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function compareSemver(a: string, b: string): number {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) {
+    const da = pa[i] ?? 0;
+    const db = pb[i] ?? 0;
+    if (da !== db) return da - db;
+  }
+  return 0;
+}
+
+export async function runDoctor(runningVersion: string) {
+  console.log("\nChromeflow Doctor\n" + "─".repeat(40));
+
+  const installScript = fileURLToPath(import.meta.url);
+  console.log(`Running version:  ${runningVersion}`);
+  console.log(`Running from:     ${installScript}`);
+
+  const globalVersion = readGlobalChromeflowVersion();
+  console.log(`Global install:   ${globalVersion ?? "(none — not installed via `npm install -g chromeflow`)"}`);
+
+  const npxCaches = listNpxCachedChromeflowVersions();
+  if (npxCaches.length === 0) {
+    console.log(`npx cache:        (empty)`);
+  } else {
+    console.log(`npx cache (${npxCaches.length} ${npxCaches.length === 1 ? "entry" : "entries"}):`);
+    for (const c of npxCaches) console.log(`  ${c.hash}: ${c.version}`);
+  }
+
+  const latest = await fetchLatestPublishedVersion();
+  console.log(`Latest on npm:    ${latest ?? "(unable to reach https://registry.npmjs.org)"}`);
+
+  const allKnown: string[] = [runningVersion];
+  if (globalVersion) allKnown.push(globalVersion);
+  for (const c of npxCaches) allKnown.push(c.version);
+
+  const stale = latest
+    ? allKnown.some((v) => v !== "unknown" && compareSemver(v, latest) < 0)
+    : false;
+
+  if (stale) {
+    console.log("\n⚠ Stale chromeflow install detected.");
+    console.log("  Reinstall recipe:");
+    console.log("    npm uninstall -g chromeflow");
+    console.log("    rm -rf ~/.npm/_npx");
+    console.log("    npm install -g chromeflow@latest");
+    console.log("  Then restart Claude Code so the MCP server picks up the new version.");
+  } else if (latest && compareSemver(runningVersion, latest) === 0) {
+    console.log("\n✓ chromeflow is up to date.");
+  } else if (!latest) {
+    console.log("\n? Could not check the registry; skipping freshness check.");
+  } else {
+    console.log("\n✓ Running version is current.");
+  }
+
+  console.log("\nTools shipped in this build (from setup manifest):");
+  const toolNames = CHROMEFLOW_TOOLS.map((t) => t.replace("mcp__chromeflow__", ""));
+  console.log("  " + toolNames.join(", "));
+  console.log(`  (${toolNames.length} tools)`);
+
+  console.log("\nIf chromeflow tools are missing in Claude Code:");
+  console.log("  1. Restart Claude Code (the MCP server is started at session start).");
+  console.log("  2. If still missing, run the reinstall recipe above.");
+  console.log("  3. Confirm the MCP startup log shows the version banner");
+  console.log(`     ([chromeflow] v${latest ?? "X.Y.Z"} — registered N tools).`);
+  console.log("");
 }

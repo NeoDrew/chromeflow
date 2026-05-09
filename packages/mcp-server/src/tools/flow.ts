@@ -63,10 +63,30 @@ If the until-condition is not met within until_timeout_ms (default 5000ms), clic
     async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms }) => {
       // The WS request must outlive the until-poll, with a buffer for navigation.
       const wsTimeout = Math.max(30_000, (until_timeout_ms ?? 0) + 10_000);
-      const response = await bridge.request(
-        { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms },
-        wsTimeout
-      );
+      let response;
+      try {
+        response = await bridge.request(
+          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms },
+          wsTimeout
+        );
+      } catch (err) {
+        const errMsg = (err instanceof Error ? err.message : String(err));
+        if (errMsg.includes("timed out")) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Could not confirm click on "${textHint}": ${errMsg}. The click MAY have already fired — the page just took longer than ${wsTimeout}ms to respond. Verify with get_page_text or wait_for_selector before retrying. Re-clicking can toggle the wrong way on React-controlled radios.`,
+              },
+            ],
+          };
+        }
+        return {
+          content: [
+            { type: "text", text: `Could not click "${textHint}": ${errMsg}` },
+          ],
+        };
+      }
       const r = response as { success: boolean; message: string };
       if (!r.success) {
         return {

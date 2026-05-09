@@ -143,7 +143,13 @@ the image to Claude only.
   auto-saving DataAnnotation form): some auto-save logic diffs against the last-saved
   value and skips no-op writes. To force a real save on each tick without changing
   visible content, toggle a trailing space — add when absent, remove when present.
-  `fill_input` value comparison handles both directions transparently.
+  `fill_input` value comparison handles both directions transparently. **Caveat:**
+  long-running heartbeats that toggle whitespace on a real form field have been
+  observed to drift other fields' React state out of sync (the re-render reset a
+  separate radio's checked state to the form-level store value). For heartbeat
+  loops, prefer writing to `localStorage` via `execute_script` instead — the
+  auto-save handler usually fires on any input event, but `localStorage` writes
+  don't perturb React state at all.
 - After any radio/checkbox click that reveals new fields, call `get_form_fields()` again —
   the inventory will include the new fields and warn if more hidden ones still exist.
 - If a form has collapsible sections, expand them all before calling `get_form_fields()` so
@@ -227,6 +233,14 @@ click_element("Save", until_selector=".success-toast")
 click_element("Confirm", until_text_contains="Order placed")
 ```
 If success=false: try `react_set_input` to fire the click via the page's own React handler, or use `execute_script("document.querySelector(...).click()")` directly.
+
+**`click_element` timed out (the WS request, not until-polling)**: the message will say "the click MAY have already fired". On a busy React reconciliation, the click does land but the response read can outrun the 30s WS timeout. Don't blindly retry — re-clicking can toggle React radios OFF or fire a duplicate submit. Verify with `get_page_text`, `wait_for_selector`, or `wait_for_text` first; only retry if the page state confirms the click never took effect.
+
+**Modal never opens / submit handler swallowed by stale validation state**: when a Submit button's onClick opens a modal that never renders (e.g. validation thinks the form is incomplete because the form-level React state is stale, but DOM inputs look filled), use `react_call_prop` to call the bypass handler directly:
+```
+react_call_prop("input[name=justification]", "handleForceSubmitConfirmation", ["my justification text"])
+```
+Walks up the React fiber from the selector, finds the nearest component with a prop function of the given name, and calls it with the JSON-serializable args. Returns the component name and stringified return value so you can verify the right handler ran.
 
 **`set_file_input` not committing on rapid back-to-back uploads:**
 The default 3000ms commit-wait is enough for most uploaders. For batch photo uploads on slow react file handlers (eBay's 25-photo carousel, Stripe Connect document upload), increase `wait_ms` to 6000–8000 OR pass `verify_selector` pointing at the thumbnail/Remove-button that should appear:
