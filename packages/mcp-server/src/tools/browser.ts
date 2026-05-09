@@ -384,6 +384,40 @@ Returns the matched element's tag/name/id/type so you can verify it was the righ
   );
 
   server.tool(
+    "react_call_prop",
+    `Walk up the React fiber from a DOM element and call a named prop on the nearest component that has it. Use this as an escape hatch when the UI swallows clicks or a modal never renders — e.g. calling handleForceSubmitConfirmation directly to bypass a stuck submit modal.
+
+Common cases:
+- A submit button whose onClick opens a modal that never appears (validation thinks the form is incomplete because the form-level state is stale, even though the inputs look filled). Walk up to the page-level component and call the bypass handler directly.
+- An onChange handler that the synthetic-event path didn't reach (when click_element fired but React's form-level store wasn't updated).
+
+args MUST be JSON-serializable (primitives, arrays, plain objects). Functions, DOM nodes, and Promises cannot be passed in.
+
+Returns the component name (when available), the fiber depth where the prop was found, and a stringified version of the return value. If the prop function returned a Promise, react_call_prop awaits it before returning.`,
+    {
+      selector: z.string().describe("CSS selector of any element inside the target component's subtree (e.g. 'input[name=\"justification\"]', '#submit-button')"),
+      prop_name: z.string().describe("Name of the prop function to call (e.g. 'handleForceSubmitConfirmation', 'onChange', 'onSubmit')"),
+      args: z.array(z.any()).optional().describe("Arguments to pass; must be JSON-serializable (primitives, arrays, plain objects). Default: empty."),
+      max_depth: z.number().int().min(1).optional().describe("How many fiber levels to walk up before giving up (default 30)"),
+      frame: z.string().optional().describe('Optional CSS selector for a same-origin iframe whose contents contain the element (e.g. "iframe.se-rte-frame"). Cross-origin iframes are not supported.'),
+    },
+    async ({ selector, prop_name, args = [], max_depth = 30, frame }) => {
+      const response = await bridge.request({
+        type: "react_call_prop",
+        selector,
+        prop_name,
+        args,
+        max_depth,
+        frame,
+      }, 30_000);
+      const r = response as { success?: boolean; message?: string };
+      return {
+        content: [{ type: "text", text: r.message ?? (r.success ? "Called" : "Failed to call prop") }],
+      };
+    }
+  );
+
+  server.tool(
     "execute_script",
     `Execute JavaScript in the current page's context and return the result. Use for reading framework state or DOM properties not visible in text — prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
 
