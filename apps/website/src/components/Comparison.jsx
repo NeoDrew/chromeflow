@@ -46,23 +46,24 @@ const ROWS = [
     ],
   },
   {
-    label: 'Has your codebase context',
+    label: 'Native Claude Code plugin',
     cells: ['check', 'dash', 'dash', 'dash', 'dash'],
-    sublabels: ['via Claude Code', null, null, null, null],
+    sublabels: ['/plugin install', null, 'community MCP', null, 'Browserbase MCP'],
   },
   {
     label: 'Reads page DOM (not screenshots)',
     cells: ['check', 'check', 'dash', 'dash', 'dash'],
-    sublabels: [null, null, 'token-heavy', 'token-heavy', 'token-heavy'],
+    sublabels: [null, null, 'DOM + vision', 'screenshots only', 'DOM + vision'],
   },
   {
     label: 'Runs in your real Chrome',
     cells: ['check', 'dash', 'dash', 'dash', 'dash'],
-    sublabels: [null, 'headless', 'sandboxed', 'VM', 'cloud browser'],
+    sublabels: [null, 'fresh profile', 'fresh profile', 'VM', 'cloud browser'],
   },
   {
     label: 'Uses your existing logins',
     cells: ['check', 'dash', 'dash', 'dash', 'dash'],
+    sublabels: [null, null, null, null, 'via Contexts'],
   },
   {
     label: 'Pauses for 2FA / passwords / payments',
