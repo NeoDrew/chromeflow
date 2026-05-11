@@ -351,13 +351,35 @@ export default function InfiniteTasks() {
     if (!drag.active) return
     drag.active = false
     const track = trackRef.current
-    if (track) {
-      track.releasePointerCapture?.(e.pointerId)
-      track.style.cursor = 'grab'
-      // Restore snap so the release lands neatly on the nearest card
+    if (!track) return
+    track.releasePointerCapture?.(e.pointerId)
+    track.style.cursor = 'grab'
+
+    // Manually compute the nearest snap point and smooth-scroll there before
+    // re-enabling scroll-snap, otherwise mandatory snap clips to the target
+    // instantly with no animation.
+    const trackRect = track.getBoundingClientRect()
+    const viewportCenter = trackRect.left + trackRect.width / 2
+    const cards = track.querySelectorAll('[data-card]')
+    let bestDelta = 0
+    let bestDist = Infinity
+    for (const card of cards) {
+      const r = card.getBoundingClientRect()
+      const cardCenter = r.left + r.width / 2
+      const dist = Math.abs(cardCenter - viewportCenter)
+      if (dist < bestDist) {
+        bestDist = dist
+        bestDelta = cardCenter - viewportCenter
+      }
+    }
+    track.scrollTo({ left: track.scrollLeft + bestDelta, behavior: 'smooth' })
+
+    // Re-enable mandatory snap after the smooth-scroll lands so the next
+    // drag starts cleanly. Behavior cleared back to default in the same tick.
+    setTimeout(() => {
       track.style.scrollSnapType = 'x mandatory'
       track.style.scrollBehavior = ''
-    }
+    }, 450)
   }
 
   return (
