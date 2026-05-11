@@ -9,7 +9,15 @@ export default function Demo() {
       padding: '5rem 0',
     }}>
       <div className="wrap">
-        <div className="fade-up" style={{
+        <p className="fade-up" style={{
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: '0.7rem', letterSpacing: '0.12em',
+          textTransform: 'uppercase', color: 'var(--amber)',
+          marginBottom: '1rem',
+        }}>
+          Posting a tweet using Claude Code × Chromeflow
+        </p>
+        <div className="fade-up delay-1" style={{
           borderRadius: 12, overflow: 'hidden',
           border: '1px solid rgba(0,0,0,0.1)',
           boxShadow: '0 8px 32px rgba(0,0,0,0.12)',
