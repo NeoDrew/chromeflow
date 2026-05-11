@@ -88,15 +88,6 @@ export default function HowItWorks() {
             }}>
               Get Started
             </a>
-            <a href="https://github.com/NeoDrew/chromeflow" target="_blank" rel="noreferrer" style={{
-              display: 'inline-block',
-              border: '1px solid var(--border-2)',
-              color: 'var(--muted)',
-              padding: '0.65rem 1.3rem', borderRadius: 999,
-              fontSize: '0.92rem', fontWeight: 600,
-            }}>
-              View on GitHub
-            </a>
           </div>
         </div>
       </div>
