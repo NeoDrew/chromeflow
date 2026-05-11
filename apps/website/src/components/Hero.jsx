@@ -28,8 +28,18 @@ export default function Hero() {
               margin: '0 0.15em',
             }}
           />{' '}
-          <span style={{ color: 'var(--amber)' }}>web interaction</span>{' '}
-          plugin.
+          plugin for{' '}
+          <img
+            src="/googlechrome.png"
+            alt="Google Chrome"
+            style={{
+              display: 'inline-block',
+              height: '1em',
+              width: 'auto',
+              verticalAlign: '-0.18em',
+              margin: '0 0.1em',
+            }}
+          />
         </h1>
       </div>
     </section>
