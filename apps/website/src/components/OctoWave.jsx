@@ -1,15 +1,32 @@
+import { useEffect, useState } from 'react'
+
 // Decorative band of Claude octos arranged along a sine curve. Used as a
 // visual divider between sections. Static — positions computed once at render.
+// Density is responsive: count is recomputed from viewport width so each octo
+// touches its neighbours end-to-end at any screen size.
 
-const COUNT = 28
-const CYCLES = 2.5
-const SIZE_PX = 36
-const AMPLITUDE_PX = 46
-const HEIGHT_PX = 160
+const SIZE_PX = 32
+const AMPLITUDE_PX = 34
+const CYCLES = 3
+const HEIGHT_PX = 140
 
 export default function OctoWave() {
-  const octos = Array.from({ length: COUNT }, (_, i) => {
-    const t = i / (COUNT - 1) // 0..1 across the strip
+  const [count, setCount] = useState(40)
+
+  useEffect(() => {
+    const recompute = () => {
+      // One octo per SIZE_PX of horizontal space, so consecutive centers are
+      // exactly one octo-width apart — they kiss with no gap.
+      const w = window.innerWidth
+      setCount(Math.max(20, Math.min(120, Math.floor(w / SIZE_PX))))
+    }
+    recompute()
+    window.addEventListener('resize', recompute)
+    return () => window.removeEventListener('resize', recompute)
+  }, [])
+
+  const octos = Array.from({ length: count }, (_, i) => {
+    const t = i / (count - 1) // 0..1 across the strip
     const angle = t * CYCLES * Math.PI * 2
     return {
       x: t * 100, // percent of container width
@@ -27,9 +44,8 @@ export default function OctoWave() {
         width: '100%',
         overflow: 'hidden',
         pointerEvents: 'none',
-        // Fade the wave in/out at the page edges
-        maskImage: 'linear-gradient(to right, transparent, black 6%, black 94%, transparent)',
-        WebkitMaskImage: 'linear-gradient(to right, transparent, black 6%, black 94%, transparent)',
+        maskImage: 'linear-gradient(to right, transparent, black 5%, black 95%, transparent)',
+        WebkitMaskImage: 'linear-gradient(to right, transparent, black 5%, black 95%, transparent)',
       }}
     >
       {octos.map((octo, i) => (
