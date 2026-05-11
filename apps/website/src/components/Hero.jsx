@@ -12,7 +12,7 @@ export default function Hero() {
         </p>
         <h1 className="hero-el" style={{
           fontSize: 'clamp(3rem, 6.5vw, 5rem)',
-          fontWeight: 700, lineHeight: 1.0,
+          fontWeight: 700, lineHeight: 1.35,
           letterSpacing: '-0.035em',
         }}>
           The Best{' '}
