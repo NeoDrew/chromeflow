@@ -72,7 +72,7 @@ function HeroOctos() {
             transform: `translate(-50%, -50%) scaleX(${octo.flipped ? -1 : 1})`,
             transition:
               'left 2.4s cubic-bezier(0.4, 0, 0.2, 1), top 2.4s cubic-bezier(0.4, 0, 0.2, 1), transform 0.6s ease',
-            opacity: 0.12,
+            opacity: 0.144,
             willChange: 'left, top, transform',
           }}
         />
