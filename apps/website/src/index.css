@@ -71,6 +71,19 @@ code {
 .fade-up.delay-2 { transition-delay: 0.2s; }
 .fade-up.delay-3 { transition-delay: 0.3s; }
 
+/* Sequenced child animation — used inside .fade-up containers to stagger lines
+   in (terminal output, browser-form changes). Each .seq sets its own
+   transition-delay inline. Triggers when an ancestor .fade-up gets .visible. */
+.seq {
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.45s ease, transform 0.45s ease;
+}
+.fade-up.visible .seq {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 /* ── Hero entrance ──────────────────────────────── */
 
 @keyframes heroFadeUp {
