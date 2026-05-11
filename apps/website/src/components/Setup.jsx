@@ -7,57 +7,135 @@ const CMDS = [
 ]
 
 const CopyCommand = () => {
-  const [copied, setCopied] = useState(false)
+  const [copiedIdx, setCopiedIdx] = useState(-1)
+  const [firstDone, setFirstDone] = useState(false)
 
-  const copy = () => {
-    navigator.clipboard.writeText(CMDS.join('\n')).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
+  const copy = (idx) => {
+    navigator.clipboard.writeText(CMDS[idx]).then(() => {
+      setCopiedIdx(idx)
+      if (idx === 0) setFirstDone(true)
+      setTimeout(() => setCopiedIdx((curr) => (curr === idx ? -1 : curr)), 1500)
     })
   }
 
+  const mono = 'JetBrains Mono, monospace'
+  const dim = 'rgba(232,226,216,0.55)'
+
   return (
     <div style={{
-      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
-      gap: '1rem',
       background: '#1a1814',
       border: '1px solid rgba(255,255,255,0.08)',
       borderRadius: 10,
-      padding: '0.85rem 1rem 0.85rem 1.2rem',
+      fontFamily: mono,
+      fontSize: '0.78rem',
+      color: '#e8e2d8',
+      lineHeight: 1.5,
+      overflow: 'hidden',
     }}>
+      {/* Claude Code header */}
       <div style={{
-        fontFamily: 'JetBrains Mono, monospace',
-        fontSize: '0.88rem',
-        color: '#e8e2d8',
-        letterSpacing: '-0.01em',
-        lineHeight: 1.7,
-        display: 'flex', flexDirection: 'column',
+        display: 'flex', gap: '0.85rem', alignItems: 'flex-start',
+        padding: '0.85rem 1rem 0.7rem 1rem',
       }}>
-        {CMDS.map((cmd) => (
-          <span key={cmd}>
-            <span style={{ color: 'var(--amber)', marginRight: '0.5rem' }}>›</span>
-            {cmd}
-          </span>
-        ))}
+        <pre style={{
+          margin: 0,
+          color: 'var(--amber)',
+          fontFamily: mono,
+          fontSize: '0.78rem',
+          lineHeight: 1.15,
+          whiteSpace: 'pre',
+        }}>{` ▐▛███▜▌\n▝▜█████▛▘\n  ▘▘ ▝▝`}</pre>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.05rem' }}>
+          <span>Claude Code <span style={{ color: dim }}>v2.1.138</span></span>
+          <span style={{ color: dim }}>Opus 4.7 (1M context) with high effort · Claude Max</span>
+          <span style={{ color: dim }}>~/dev/chromeflow</span>
+        </div>
       </div>
-      <button
-        onClick={copy}
-        style={{
-          flexShrink: 0,
-          background: copied ? 'rgba(22,160,90,0.15)' : 'rgba(255,255,255,0.07)',
-          border: `1px solid ${copied ? 'rgba(22,160,90,0.3)' : 'rgba(255,255,255,0.1)'}`,
-          borderRadius: 6,
-          padding: '0.35rem 0.75rem',
-          fontFamily: 'JetBrains Mono, monospace',
-          fontSize: '0.72rem',
-          color: copied ? '#28c840' : 'rgba(255,255,255,0.45)',
-          cursor: 'pointer',
-          transition: 'all 0.15s',
-          letterSpacing: '0.02em',
-        }}
-      >
-        {copied ? '✓ copied' : 'copy'}
-      </button>
+
+      {/* Prompt frame mimicking Claude Code's input box */}
+      <div style={{
+        borderTop: '1px solid rgba(255,255,255,0.1)',
+        borderBottom: '1px solid rgba(255,255,255,0.1)',
+        padding: '0.75rem 1rem',
+        display: 'flex', flexDirection: 'column', gap: '0.4rem',
+      }}>
+        {CMDS.map((cmd, idx) => {
+          const isCopied = copiedIdx === idx
+          const dimmed = idx === 0 && firstDone && !isCopied
+          const highlighted = idx === 1 && firstDone && !isCopied
+
+          let bg = 'rgba(255,255,255,0.07)'
+          let border = 'rgba(255,255,255,0.1)'
+          let color = 'rgba(255,255,255,0.6)'
+          let shadow = 'none'
+          let weight = 400
+
+          if (isCopied) {
+            bg = 'rgba(22,160,90,0.18)'
+            border = 'rgba(22,160,90,0.35)'
+            color = '#28c840'
+          } else if (highlighted) {
+            bg = 'linear-gradient(135deg, var(--amber), var(--orange))'
+            border = 'rgba(217,119,6,0)'
+            color = '#fff'
+            shadow = '0 2px 8px rgba(217,119,6,0.3)'
+            weight = 700
+          } else if (dimmed) {
+            bg = 'rgba(255,255,255,0.03)'
+            border = 'rgba(255,255,255,0.06)'
+            color = 'rgba(255,255,255,0.3)'
+          }
+
+          return (
+            <div key={cmd} style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              gap: '0.75rem',
+            }}>
+              <div style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                <span style={{ color: 'var(--amber)', marginRight: '0.6rem' }}>❯</span>
+                <span>{cmd}</span>
+              </div>
+              <button
+                onClick={() => copy(idx)}
+                style={{
+                  flexShrink: 0,
+                  background: bg,
+                  border: `1px solid ${border}`,
+                  borderRadius: 6,
+                  padding: '0.3rem 0.75rem',
+                  fontFamily: mono,
+                  fontSize: '0.7rem',
+                  fontWeight: weight,
+                  color,
+                  cursor: 'pointer',
+                  transition: 'all 0.2s',
+                  letterSpacing: '0.02em',
+                  boxShadow: shadow,
+                }}
+              >
+                {isCopied ? '✓ copied' : `copy ${idx === 0 ? 'first' : 'second'}`}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Status bar */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        gap: '1rem',
+        padding: '0.5rem 1rem',
+        fontSize: '0.7rem',
+        color: dim,
+      }}>
+        <span>
+          <span style={{ color: 'var(--amber)' }}>⏵⏵</span> bypass permissions on{' '}
+          <span style={{ opacity: 0.7 }}>(shift+tab to cycle)</span>
+        </span>
+        <span>
+          <span style={{ color: '#28c840' }}>●</span> high · /effort
+        </span>
+      </div>
     </div>
   )
 }
@@ -81,7 +159,8 @@ export default function Setup() {
   return (
     <section ref={ref} id="setup" style={{
       borderTop: '1px solid var(--border)',
-      padding: '5rem 0',
+      borderBottom: '1px solid var(--border)',
+      padding: '7.5rem 0',
       background: 'var(--surface-2)',
       position: 'relative',
       overflow: 'hidden',
@@ -140,9 +219,6 @@ export default function Setup() {
                 Install the Claude Code plugin
               </h3>
             </div>
-            <p style={{ fontSize: '0.88rem', color: 'var(--muted)', marginBottom: '1.1rem', lineHeight: 1.6 }}>
-              Run these two slash commands inside Claude Code. One-time, machine-wide — no per-project setup.
-            </p>
             <div style={{ marginTop: 'auto' }}>
               <CopyCommand />
             </div>
@@ -155,15 +231,131 @@ export default function Setup() {
             boxShadow: 'var(--shadow)',
             display: 'flex', flexDirection: 'column',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
               <StepNum n="2" />
               <h3 style={{ fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
                 Install the Chrome extension
               </h3>
             </div>
-            <p style={{ fontSize: '0.88rem', color: 'var(--muted)', marginBottom: '1.5rem', lineHeight: 1.6 }}>
-              One time. Persists across Chrome restarts.
-            </p>
+
+            {/* Web-Store-style listing block */}
+            <div style={{
+              display: 'flex', gap: '1rem', alignItems: 'center',
+              padding: '0.9rem',
+              background: 'var(--surface-2)',
+              border: '1px solid var(--border)',
+              borderRadius: 12,
+              marginBottom: '0.9rem',
+            }}>
+              <img
+                src="/chromeflow.png"
+                alt="Chromeflow"
+                width="64"
+                height="64"
+                style={{
+                  flexShrink: 0,
+                  borderRadius: 14,
+                  boxShadow: '0 2px 10px rgba(0,0,0,0.08)',
+                }}
+              />
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>Chromeflow</span>
+                  <span style={{
+                    fontFamily: 'JetBrains Mono, monospace',
+                    fontSize: '0.7rem',
+                    color: 'var(--muted)',
+                  }}>v0.7.1</span>
+                </div>
+                <p style={{ fontSize: '0.83rem', color: 'var(--muted)', margin: '0.15rem 0 0.5rem', lineHeight: 1.4 }}>
+                  Guided web assistance for Claude Code
+                </p>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
+                  {['Free', 'Manifest V3', 'Open source'].map(chip => (
+                    <span key={chip} style={{
+                      fontSize: '0.66rem',
+                      fontFamily: 'JetBrains Mono, monospace',
+                      letterSpacing: '0.02em',
+                      color: 'var(--amber)',
+                      background: 'rgba(217,119,6,0.08)',
+                      border: '1px solid rgba(217,119,6,0.2)',
+                      borderRadius: 999,
+                      padding: '0.15rem 0.5rem',
+                    }}>{chip}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* After-install preview */}
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{
+                fontFamily: 'JetBrains Mono, monospace',
+                fontSize: '0.62rem',
+                letterSpacing: '0.12em',
+                textTransform: 'uppercase',
+                color: 'var(--muted)',
+                marginBottom: '0.4rem',
+              }}>
+                After install — pinned in your toolbar
+              </div>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: '0.3rem',
+                padding: '0.4rem 0.5rem',
+                background: '#fff',
+                border: '1px solid var(--border)',
+                borderRadius: 10,
+                boxShadow: 'inset 0 -1px 0 rgba(0,0,0,0.04)',
+              }}>
+                {['‹', '›', '↻'].map((g, i) => (
+                  <span key={i} style={{
+                    width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '0.85rem', color: 'rgba(0,0,0,0.45)',
+                  }}>{g}</span>
+                ))}
+                <div style={{
+                  flex: 1, minWidth: 0,
+                  display: 'flex', alignItems: 'center', gap: '0.35rem',
+                  padding: '0.25rem 0.6rem',
+                  background: 'rgba(0,0,0,0.045)',
+                  borderRadius: 999,
+                  fontSize: '0.72rem',
+                  color: 'rgba(0,0,0,0.55)',
+                }}>
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                    <rect x="4" y="11" width="16" height="10" rx="2" />
+                    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                  </svg>
+                  <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    chromeflow.tech
+                  </span>
+                </div>
+                {/* Extensions puzzle icon */}
+                <span style={{
+                  width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: '0.95rem', color: 'rgba(0,0,0,0.4)',
+                }}>⊞</span>
+                {/* Pinned Chromeflow icon — pulses to draw the eye */}
+                <div
+                  className="cf-pin"
+                  style={{
+                    flexShrink: 0,
+                    width: 26, height: 26, borderRadius: 7,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'rgba(217,119,6,0.1)',
+                  }}
+                >
+                  <img src="/chromeflow.png" alt="" width="18" height="18" style={{ display: 'block' }} />
+                </div>
+                {/* Avatar */}
+                <div style={{
+                  flexShrink: 0,
+                  width: 22, height: 22, borderRadius: '50%',
+                  background: 'linear-gradient(135deg,#cbd5e1,#94a3b8)',
+                  marginLeft: '0.15rem',
+                }} />
+              </div>
+            </div>
 
             <a
               href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime"
