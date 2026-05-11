@@ -27,8 +27,8 @@ const Note = ({ children }) => (
 
 const TOOLS = [
   { name: 'Chromeflow', src: '/chromeflow.png', highlight: true, height: 36 },
-  { name: 'Playwright', src: '/playwright.png', height: 56 },
-  { name: 'Browser Use', src: '/browseruse.png', height: 28 },
+  { name: 'Playwright', src: '/playwright.png', height: 56, blendMultiply: true },
+  { name: 'Browser Use', src: '/browseruse.png', height: 28, blendMultiply: true },
   { name: 'Computer Use', src: '/computeruse.webp', height: 36, textNext: true },
   { name: 'Stagehand', src: '/browserbase.svg', height: 24 },
 ]
@@ -179,6 +179,7 @@ export default function Comparison() {
                             width: 'auto',
                             objectFit: 'contain',
                             display: 'block',
+                            mixBlendMode: tool.blendMultiply ? 'multiply' : 'normal',
                           }}
                         />
                         {tool.textNext && (
