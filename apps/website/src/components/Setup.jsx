@@ -6,6 +6,13 @@ const CMDS = [
   '/plugin install chromeflow',
 ]
 
+const POINTER_BLOCK = `## Chromeflow
+
+The Chromeflow Claude Code plugin is installed. For ANY task that touches a real browser — opening sites, checking if a page is up, reading content, filling forms, logging in, capturing API keys, OAuth, scraping, navigating dashboards — use the \`mcp__plugin_chromeflow_chromeflow__*\` tools and load the \`chromeflow\` skill for the usage patterns.
+
+Do NOT fall back to Bash / \`curl\` / \`osascript\` / AppleScript / Playwright / Puppeteer for browser tasks. Chromeflow drives the user's real Chrome with their sessions intact; the fallbacks won't have their logins and will fail silently.
+`
+
 const CopyCommand = () => {
   const [copied, setCopied] = useState(false)
 
@@ -168,7 +175,81 @@ export default function Setup() {
             </a>
           </div>
         </div>
+
+        <PointerCallout />
       </div>
     </section>
+  )
+}
+
+const PointerCallout = () => {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard.writeText(POINTER_BLOCK).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div className="fade-up delay-3" style={{
+      marginTop: '1.25rem',
+      background: 'var(--surface)',
+      border: '1px solid var(--border)',
+      borderRadius: 'var(--radius-lg)',
+      padding: '1.5rem 1.75rem',
+      boxShadow: 'var(--shadow)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.75rem', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+        <span style={{
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: '0.66rem', letterSpacing: '0.12em',
+          textTransform: 'uppercase', color: 'var(--amber)',
+          fontWeight: 600,
+        }}>Recommended</span>
+        <h3 style={{ fontWeight: 700, fontSize: '1.02rem', letterSpacing: '-0.01em' }}>
+          Add a pointer to <code style={{ background: 'transparent', color: 'inherit', padding: 0 }}>~/.claude/CLAUDE.md</code>
+        </h3>
+      </div>
+      <p style={{ fontSize: '0.88rem', color: 'var(--muted)', marginBottom: '1rem', lineHeight: 1.6 }}>
+        The plugin's skill loads on demand. This 3-line pointer is always in context — without it, Claude can drift to <code>curl</code> or AppleScript for browser tasks instead of using Chromeflow.
+      </p>
+      <div style={{
+        background: '#1a1814',
+        border: '1px solid rgba(255,255,255,0.08)',
+        borderRadius: 10,
+        padding: '0.85rem 1rem 0.85rem 1.2rem',
+        position: 'relative',
+      }}>
+        <button
+          onClick={copy}
+          style={{
+            position: 'absolute', top: '0.7rem', right: '0.7rem',
+            background: copied ? 'rgba(22,160,90,0.15)' : 'rgba(255,255,255,0.07)',
+            border: `1px solid ${copied ? 'rgba(22,160,90,0.3)' : 'rgba(255,255,255,0.1)'}`,
+            borderRadius: 6,
+            padding: '0.3rem 0.7rem',
+            fontFamily: 'JetBrains Mono, monospace',
+            fontSize: '0.7rem',
+            color: copied ? '#28c840' : 'rgba(255,255,255,0.45)',
+            cursor: 'pointer',
+            transition: 'all 0.15s',
+            letterSpacing: '0.02em',
+          }}
+        >
+          {copied ? '✓ copied' : 'copy block'}
+        </button>
+        <pre style={{
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: '0.78rem',
+          color: '#e8e2d8',
+          lineHeight: 1.55,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          paddingRight: '5rem',
+          margin: 0,
+        }}>{POINTER_BLOCK.trimEnd()}</pre>
+      </div>
+    </div>
   )
 }

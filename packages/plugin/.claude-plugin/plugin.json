@@ -1,6 +1,6 @@
 {
   "name": "chromeflow",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Let Claude Code drive your real browser — clicks, fills forms, grabs API keys, writes them to .env. Bundles the chromeflow MCP server, permission allowlist, and usage skill.",
   "homepage": "https://chromeflow.vercel.app",
   "repository": "https://github.com/NeoDrew/chromeflow",
