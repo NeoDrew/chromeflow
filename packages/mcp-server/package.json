@@ -1,34 +1,11 @@
 {
-  "name": "chromeflow",
-  "version": "0.8.0",
-  "description": "Browser guidance MCP server for Claude Code — highlights, clicks, fills, and captures from the web so you don't have to.",
+  "name": "@chromeflow/mcp-server-source",
+  "version": "0.9.0",
+  "private": true,
+  "description": "Source for the chromeflow MCP server. Bundled into packages/plugin/server/ by the plugin's build script. Not published.",
   "type": "module",
-  "bin": {
-    "chromeflow": "dist/index.js"
-  },
-  "files": [
-    "dist",
-    "CLAUDE.md",
-    "README.md"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/NeoDrew/chromeflow.git"
-  },
-  "homepage": "https://github.com/NeoDrew/chromeflow",
-  "license": "MIT",
-  "keywords": [
-    "mcp",
-    "claude",
-    "claude-code",
-    "browser",
-    "automation",
-    "chrome"
-  ],
   "scripts": {
-    "prebuild": "cp ../../CLAUDE.md ./CLAUDE.md && cp ../../README.md ./README.md",
-    "build": "tsc",
-    "postbuild": "node --input-type=commonjs -e \"const fs=require('fs');const f='dist/index.js';fs.writeFileSync(f,'#!/usr/bin/env node\\n'+fs.readFileSync(f,'utf8'));\"",
+    "build": "node ../plugin/scripts/build-server.sh 2>/dev/null || ../plugin/scripts/build-server.sh",
     "dev": "tsc --watch"
   },
   "dependencies": {
@@ -39,6 +16,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/ws": "^8.5.0",
+    "esbuild": "^0.24.0",
     "typescript": "^5.5.0"
   }
 }
