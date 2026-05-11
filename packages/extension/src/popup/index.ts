@@ -123,17 +123,19 @@ function renderGroup(
   const groupClass = ["group"];
   if (collapsed) groupClass.push("collapsed");
   const headerClass = collapsible ? "group-header" : "group-header static";
-  const toggle = collapsible ? `<span class="group-toggle">▾</span>` : "";
 
   const body = cards.length > 0
     ? `<div class="group-body">${cards.join("")}</div>`
     : `<div class="group-body"><div class="empty">${emptyMessage}</div></div>`;
 
+  const countBadge = cards.length > 0 ? `<span class="group-count">${cards.length}</span>` : "";
+  const toggle = collapsible ? `<span class="group-toggle">▾</span>` : "";
+
   return `
     <div class="${groupClass.join(" ")}" data-group="${key}">
       <div class="${headerClass}" data-toggle-group="${collapsible ? key : ""}">
-        <span>${toggle}${title}</span>
-        ${cards.length > 0 ? `<span class="group-count">${cards.length}</span>` : ""}
+        <span class="group-title">${title}</span>
+        <span class="group-right">${countBadge}${toggle}</span>
       </div>
       ${body}
     </div>
