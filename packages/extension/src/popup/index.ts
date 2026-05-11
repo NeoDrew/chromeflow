@@ -100,7 +100,7 @@ function renderInstanceCard(
   `;
 
   return `
-    <div class="${cardClass.join(" ")}">
+    <div class="${cardClass.join(" ")}" style="view-transition-name: card-${port}">
       <div class="instance-row">
         <div class="dot ${isLive ? "connected" : ""}"></div>
         <div class="${nameClass}">${escapeHtml(displayName)}</div>
@@ -230,10 +230,26 @@ function render(state: State) {
   }
 }
 
+type DocumentWithViewTransitions = Document & {
+  startViewTransition?: (callback: () => void | Promise<void>) => unknown;
+};
+
+function renderAnimated(state: State) {
+  const doc = document as DocumentWithViewTransitions;
+  if (typeof doc.startViewTransition === "function") {
+    doc.startViewTransition(() => {
+      render(state);
+    });
+  } else {
+    render(state);
+  }
+}
+
 groupsEl.addEventListener("click", async (e) => {
   const target = e.target as HTMLElement;
 
-  // Group toggle
+  // Group toggle — pure CSS transition on .group-body (grid-template-rows + opacity)
+  // handles the slide; no view transition needed for collapse/expand.
   const toggleKey = target.closest<HTMLElement>("[data-toggle-group]")?.getAttribute("data-toggle-group");
   if (toggleKey) {
     if (collapsedGroups.has(toggleKey)) collapsedGroups.delete(toggleKey);
@@ -242,7 +258,9 @@ groupsEl.addEventListener("click", async (e) => {
     return;
   }
 
-  // Card buttons
+  // Card buttons — re-render through View Transitions API so each card's
+  // view-transition-name lets the browser interpolate its old → new position
+  // when it moves between groups (slides instead of pops).
   const action = target.getAttribute("data-action");
   const portStr = target.getAttribute("data-port");
   if (!action || !portStr) return;
@@ -258,7 +276,7 @@ groupsEl.addEventListener("click", async (e) => {
   }
 
   await chrome.storage.local.set({ claudeInstances: instances });
-  render(await loadState());
+  renderAnimated(await loadState());
 });
 
 // Default: collapse the bigger groups so "this window" stands out
