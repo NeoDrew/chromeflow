@@ -24,11 +24,12 @@ const LogoYouTube = () => (
 )
 
 const LogoGmail = () => (
-  <svg width="80" height="60" viewBox="0 0 24 24" aria-hidden="true">
-    <path fill="#4285f4" d="M5.319 19.873a1.91 1.91 0 0 1-1.913-1.913V8.182l5.864 4.398L11.998 14h.005l1.728-1.42 5.864-4.397v9.778a1.91 1.91 0 0 1-1.913 1.913H5.319z" />
-    <path fill="#34a853" d="M3.406 8.182v9.778a1.91 1.91 0 0 0 1.913 1.913h1.59l-3.503-11.691z" />
-    <path fill="#fbbc04" d="M17.001 19.873h1.59a1.91 1.91 0 0 0 1.913-1.913V8.182l-3.503 11.691z" />
-    <path fill="#ea4335" d="M3.406 8.182V5.319a1.91 1.91 0 0 1 1.913-1.913h.001L12 9.273l6.682-5.867h.001a1.91 1.91 0 0 1 1.913 1.913v2.863L12 14 3.406 8.182z" />
+  <svg width="78" height="58" viewBox="0 0 24 18" aria-hidden="true">
+    <path fill="#4285f4" d="M1.636 18A1.636 1.636 0 0 1 0 16.364V2.455c0-.502.247-.96.665-1.293L12 9.273l11.336-8.109A1.629 1.629 0 0 1 24 2.455v13.909C24 17.268 23.268 18 22.364 18h-3.819V8.73L12 13.64l-6.545-4.91V18H1.636Z" />
+    <path fill="#34a853" d="M1.636 18A1.636 1.636 0 0 1 0 16.364V2.455l5.455 6.275V18H1.636Z" />
+    <path fill="#fbbc04" d="M22.364 18h-3.819V8.73L24 2.455v13.909c0 .904-.732 1.636-1.636 1.636Z" />
+    <path fill="#ea4335" d="M5.455 8.73 0 2.455A1.629 1.629 0 0 1 1.636.818h.005L12 8.727l10.359-7.909h.005A1.629 1.629 0 0 1 24 2.455L12 11.455 5.455 8.73Z" />
+    <path fill="#c5221f" d="M5.455 8.73V18H12V11.455L5.455 8.73Z" opacity="0" />
   </svg>
 )
 
@@ -196,8 +197,8 @@ const TASKS = [
 const TRIPLE = [...TASKS, ...TASKS, ...TASKS]
 
 const CARD_GAP_PX = 32
-const ADVANCE_MS = 5000
-const PAUSE_AFTER_INTERACTION_MS = 8000
+const ADVANCE_MS = 1500
+const PAUSE_AFTER_INTERACTION_MS = 6000
 
 const TaskCard = ({ task }) => (
   <div
@@ -252,6 +253,7 @@ export default function InfiniteTasks() {
   const ref = useScrollAnimation()
   const trackRef = useRef(null)
   const interactionRef = useRef(0)
+  const hoveringRef = useRef(false)
   const dragRef = useRef({ active: false, startX: 0, startScrollLeft: 0, moved: false })
 
   // Start in the middle copy so we can scroll either direction infinitely
@@ -307,6 +309,7 @@ export default function InfiniteTasks() {
     const id = setInterval(() => {
       const track = trackRef.current
       if (!track) return
+      if (hoveringRef.current) return
       if (Date.now() - interactionRef.current < PAUSE_AFTER_INTERACTION_MS) return
       if (dragRef.current.active) return
       const card = track.querySelector('[data-card]')
@@ -389,8 +392,8 @@ export default function InfiniteTasks() {
           maxWidth: 720, marginBottom: '3rem', lineHeight: 1.6,
         }}>
           Anything you can do in a browser, Claude can do — at your direction,
-          on your accounts, with your codebase open. Drag to browse, or wait
-          5 seconds and it'll flip itself.
+          on your accounts, with your codebase open. Drag to browse, or hover
+          to pause and read.
         </p>
       </div>
 
@@ -409,6 +412,8 @@ export default function InfiniteTasks() {
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
           onWheel={markInteraction}
+          onMouseEnter={() => { hoveringRef.current = true }}
+          onMouseLeave={() => { hoveringRef.current = false }}
           style={{
             display: 'flex',
             overflowX: 'auto',
