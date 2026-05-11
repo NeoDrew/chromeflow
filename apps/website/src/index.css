@@ -145,9 +145,27 @@ code {
 .task-track {
   scrollbar-width: none;
   -ms-overflow-style: none;
+  padding: 0.5rem 20vw 1.5rem 20vw;
 }
 .task-track::-webkit-scrollbar {
   display: none;
+}
+.task-track [data-card] {
+  flex: 0 0 60vw;
+  min-width: min(480px, 88vw);
+  padding: clamp(1.5rem, 2.6vw, 2.5rem) clamp(1.5rem, 2.9vw, 3rem);
+}
+@media (max-width: 768px) {
+  .task-track {
+    /* Smaller side-padding so the 88vw cards still snap to viewport centre */
+    padding: 0.5rem 6vw 1.5rem 6vw;
+  }
+  .task-track [data-card] {
+    flex: 0 0 88vw;
+    min-width: 0;
+    height: auto;
+    min-height: 320px;
+  }
 }
 
 /* ── Card hover ─────────────────────────────────── */
@@ -192,6 +210,9 @@ code {
   .cols-3 {
     grid-template-columns: 1fr;
   }
+
+  body { -webkit-text-size-adjust: 100%; }
+  .section-hero { min-height: 80vh; }
 
   .section-hero {
     padding: 3.5rem 0 2.5rem;
