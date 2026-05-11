@@ -127,7 +127,6 @@ export default function BeforeAfter() {
 
   return (
     <section ref={ref} style={{
-      borderTop: '1px solid var(--border)',
       padding: '5rem 0',
     }}>
       <div className="wrap">
