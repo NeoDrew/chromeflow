@@ -114,10 +114,8 @@ export default function Privacy() {
           <section>
             <h2 style={h2}>Contact</h2>
             <p>
-              If you have questions about this policy, please open an issue on{' '}
-              <a href="https://github.com/NeoDrew/chromeflow" target="_blank" rel="noreferrer" style={link}>
-                GitHub
-              </a>.
+              For questions about this policy, contact the developer via the
+              support email listed on the Chrome Web Store listing.
             </p>
           </section>
 
