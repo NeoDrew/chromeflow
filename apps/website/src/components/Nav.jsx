@@ -34,13 +34,12 @@ export default function Nav() {
           Chromeflow
         </a>
         <a
-          href="https://github.com/NeoDrew/chromeflow"
-          target="_blank" rel="noreferrer"
+          href="#setup"
           style={s.link}
           onMouseEnter={e => e.target.style.color = 'var(--text)'}
           onMouseLeave={e => e.target.style.color = 'var(--muted)'}
         >
-          GitHub ↗
+          Install
         </a>
       </nav>
     </header>

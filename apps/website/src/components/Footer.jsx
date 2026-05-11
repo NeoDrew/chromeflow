@@ -21,8 +21,6 @@ export default function Footer() {
         </div>
         <div style={{ display: 'flex', gap: '1.5rem' }}>
           {[
-            ['GitHub', 'https://github.com/NeoDrew/chromeflow', true],
-            ['npm', 'https://www.npmjs.com/package/chromeflow', true],
             ['Chrome Store', 'https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime', true],
             ['Privacy', '/privacy', false],
           ].map(([label, href, external]) => (
