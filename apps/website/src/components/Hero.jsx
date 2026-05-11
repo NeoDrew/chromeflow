@@ -3,11 +3,12 @@ import { useEffect, useRef, useState } from 'react'
 const OCTO_COUNT = 36
 const SIZE_PX = 44
 const NEAREST_COUNT = 7
-const JUMP_INTERVAL_MS = 500
+const JUMP_INTERVAL_MS = 1800   // 1.8s between jumps — gives breathing room to "float" in between
 const JUMP_LERP = 1.5           // overshoot — travels 1.5x the gap so it flies past the cursor
-const JUMP_TRANSITION_MS = 450  // fast snap when triggered by the mouse
+const JUMP_TRANSITION_MS = 850  // slower swoop instead of a snap — feels like a graceful arc
 const DRIFT_TRANSITION_MS = 2400 // slow drift between random spots
-const JUMP_FRESH_MS = 1000      // window after a jump where we still use the fast transition
+const JUMP_FRESH_MS = 1400      // window after a jump where we still use the swoop transition
+const JUMP_EASING = 'cubic-bezier(0.16, 1, 0.3, 1)' // ease-out-expo — fast start, soft landing
 
 function randomOcto() {
   return {
@@ -153,7 +154,7 @@ export default function Hero() {
                 width: `${SIZE_PX}px`,
                 height: 'auto',
                 transform: `translate(-50%, -50%) scaleX(${octo.flipped ? -1 : 1})`,
-                transition: `left ${t}ms cubic-bezier(0.4, 0, 0.2, 1), top ${t}ms cubic-bezier(0.4, 0, 0.2, 1), transform 0.4s ease`,
+                transition: `left ${t}ms ${fresh ? JUMP_EASING : 'cubic-bezier(0.4, 0, 0.2, 1)'}, top ${t}ms ${fresh ? JUMP_EASING : 'cubic-bezier(0.4, 0, 0.2, 1)'}, transform 0.4s ease`,
                 opacity: 0.144,
                 willChange: 'left, top, transform',
               }}
