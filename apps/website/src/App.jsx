@@ -2,6 +2,7 @@ import Hero from './components/Hero'
 import Setup from './components/Setup'
 import Demo from './components/Demo'
 import BeforeAfter from './components/BeforeAfter'
+import Comparison from './components/Comparison'
 import Privacy from './components/Privacy'
 
 const path = window.location.pathname.replace(/\/$/, '')
@@ -15,6 +16,7 @@ export default function App() {
       <Setup />
       <Demo />
       <BeforeAfter />
+      <Comparison />
       <section style={{ padding: '5rem 0', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
         <div className="wrap">
           <a
