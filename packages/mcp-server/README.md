@@ -32,29 +32,36 @@ Claude drives the flow. You only touch the browser for things that genuinely nee
 
 ## Setup
 
-**1. Run the setup wizard** from your project directory:
+**1. Install the Claude Code plugin** (one-time, machine-wide):
 
-```bash
-npx chromeflow setup
+```
+/plugin marketplace add NeoDrew/chromeflow
+/plugin install chromeflow
 ```
 
-This:
-- Registers the MCP server in `~/.claude.json`
-- Writes `CLAUDE.md` into your project so Claude knows when and how to use Chromeflow
-- Adds a hint to `~/.claude/CLAUDE.md` so Claude will suggest `npx chromeflow setup` in any project that isn't yet configured
-- Pre-approves Chromeflow tools in `.claude/settings.local.json` (no per-action prompts)
+Run these inside Claude Code. The plugin registers the MCP server, pre-approves Chromeflow tools, and ships the usage skill — no per-project setup needed.
 
 **2. Install the Chrome extension** (one time):
 
-The setup wizard opens the Chrome Web Store for you — click **Add to Chrome**.
-
-Or install directly: [chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime](https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime)
+[chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime](https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime) — click **Add to Chrome**.
 
 The extension persists across Chrome restarts. You only do this once.
 
 **3. Restart Claude Code.**
 
-That's it. Claude will automatically reach for Chromeflow whenever a task needs browser interaction.
+That's it. Claude will automatically reach for Chromeflow whenever a task needs browser interaction, in any project.
+
+<details>
+<summary>Legacy per-project setup (pre-plugin)</summary>
+
+If you're on a Claude Code version without plugin support, or prefer per-project config, the older flow still works:
+
+```bash
+npx chromeflow setup
+```
+
+This registers the MCP server in `~/.claude.json`, writes `CLAUDE.md` into the current project, and pre-approves Chromeflow tools in `.claude/settings.local.json`. You have to run it in every project. The plugin route above replaces all of this in one install.
+</details>
 
 ## Usage
 
@@ -128,19 +135,18 @@ Single-instance usage is unchanged and fully backwards compatible — the old pe
 
 ## Adding to another project
 
-Run setup from the new project's directory — the MCP server is already registered globally, this just drops `CLAUDE.md` and tool permissions into the project:
+Nothing to do — the plugin install above is machine-wide. Open any project and Chromeflow is ready.
 
-```bash
-npx chromeflow setup
-```
+(If you used the legacy `npx chromeflow setup` flow, you'd have to run it in each project. That's why the plugin exists.)
 
 ## Commands
 
 | Command | What it does |
 |---------|-------------|
-| `npx chromeflow setup` | Register MCP server, write project `CLAUDE.md`, pre-approve tools |
+| `npx chromeflow setup` | Legacy: register MCP server, write project `CLAUDE.md`, pre-approve tools (per-project). Prefer the plugin install above. |
 | `npx chromeflow update` | Refresh the project `CLAUDE.md` with the latest instructions |
 | `npx chromeflow uninstall` | Remove all Chromeflow config (MCP entry, `CLAUDE.md` sections, tool permissions) |
+| `npx chromeflow doctor` | Diagnose installed versions and stale caches |
 
 ## Development
 
