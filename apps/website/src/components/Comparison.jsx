@@ -27,8 +27,8 @@ const Note = ({ children }) => (
 
 const TOOLS = [
   { name: 'Chromeflow', src: '/chromeflow.png', highlight: true, height: 36 },
-  { name: 'Playwright', src: '/playwright.png', height: 56, blendMultiply: true },
-  { name: 'Browser Use', src: '/browseruse.png', height: 28, blendMultiply: true },
+  { name: 'Playwright', src: '/playwright.png', height: 68, blendMultiply: true },
+  { name: 'Browser Use', src: '/browseruse.png', height: 42, blendMultiply: true },
   { name: 'Computer Use', src: '/computeruse.webp', height: 36, textNext: true },
   { name: 'Stagehand', src: '/browserbase.svg', height: 24 },
 ]
@@ -168,7 +168,7 @@ export default function Comparison() {
                         alignItems: 'center',
                         justifyContent: 'center',
                         gap: '0.5rem',
-                        height: 60,
+                        minHeight: 72,
                       }}>
                         <img
                           src={tool.src}
