@@ -63,15 +63,30 @@ const BrowserWindow = ({ url, children }) => (
   </div>
 )
 
-const Line = ({ color = '#555', children }) => (
-  <div style={{ color }}>{children}</div>
+const Line = ({ color = '#555', delay, children }) => (
+  <div
+    className={delay !== undefined ? 'seq' : undefined}
+    style={{ color, transitionDelay: delay !== undefined ? `${delay}s` : undefined }}
+  >
+    {children}
+  </div>
 )
 
-const SwitchBadge = ({ label }) => (
-  <div style={{
-    display: 'flex', alignItems: 'center', gap: '0.5rem',
-    padding: '0.5rem 0',
-  }}>
+const Seq = ({ delay, children, style }) => (
+  <div className="seq" style={{ transitionDelay: `${delay}s`, ...style }}>
+    {children}
+  </div>
+)
+
+const SwitchBadge = ({ label, delay }) => (
+  <div
+    className={delay !== undefined ? 'seq' : undefined}
+    style={{
+      display: 'flex', alignItems: 'center', gap: '0.5rem',
+      padding: '0.5rem 0',
+      transitionDelay: delay !== undefined ? `${delay}s` : undefined,
+    }}
+  >
     <div style={{ flex: 1, height: 1, background: 'var(--red-border)' }} />
     <span style={{
       fontFamily: 'JetBrains Mono, monospace',
@@ -85,11 +100,15 @@ const SwitchBadge = ({ label }) => (
   </div>
 )
 
-const ControlsBadge = () => (
-  <div style={{
-    display: 'flex', alignItems: 'center', gap: '0.5rem',
-    padding: '0.5rem 0',
-  }}>
+const ControlsBadge = ({ delay }) => (
+  <div
+    className={delay !== undefined ? 'seq' : undefined}
+    style={{
+      display: 'flex', alignItems: 'center', gap: '0.5rem',
+      padding: '0.5rem 0',
+      transitionDelay: delay !== undefined ? `${delay}s` : undefined,
+    }}
+  >
     <div style={{ flex: 1, height: 1, background: 'var(--green-border)' }} />
     <span style={{
       fontFamily: 'JetBrains Mono, monospace',
@@ -147,42 +166,44 @@ export default function BeforeAfter() {
             </div>
 
             <TerminalWindow>
-              <Line color="#888"># you ask Claude</Line>
-              <Line color="#e8e2d8">{'>'} set up Stripe for this project</Line>
+              <Line color="#888" delay={0.30}># you ask Claude</Line>
+              <Line color="#e8e2d8" delay={0.45}>{'>'} set up Stripe for this project</Line>
               <div style={{ marginTop: '0.5rem' }}>
-                <Line color="#aaa">Here are the steps to follow:</Line>
-                <Line color="#777">1. Go to stripe.com/dashboard</Line>
-                <Line color="#777">2. Click Products → Create product</Line>
-                <Line color="#777">3. Copy the price ID</Line>
-                <Line color="#777">4. Paste into .env manually</Line>
+                <Line color="#aaa" delay={0.75}>Here are the steps to follow:</Line>
+                <Line color="#777" delay={0.90}>1. Go to stripe.com/dashboard</Line>
+                <Line color="#777" delay={1.00}>2. Click Products → Create product</Line>
+                <Line color="#777" delay={1.10}>3. Copy the price ID</Line>
+                <Line color="#777" delay={1.20}>4. Paste into .env manually</Line>
               </div>
             </TerminalWindow>
 
-            <SwitchBadge label="⟷ switch to Chrome" />
+            <SwitchBadge label="⟷ switch to Chrome" delay={1.40} />
 
-            <BrowserWindow url="dashboard.stripe.com/products/create">
-              <div style={{ fontSize: '0.8rem', color: '#333' }}>
-                <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: '#444' }}>Create a product</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Name</span>
-                    <div style={{ flex: 1, height: 26, border: '1px solid #ddd', borderRadius: 4, background: '#fafafa' }} />
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Price</span>
-                    <div style={{ flex: 1, height: 26, border: '1px solid #ddd', borderRadius: 4, background: '#fafafa' }} />
-                  </div>
-                  <div style={{ color: '#999', fontSize: '0.72rem', marginTop: '0.25rem', fontStyle: 'italic' }}>
-                    wait, what was step 3 again?
+            <Seq delay={1.55}>
+              <BrowserWindow url="dashboard.stripe.com/products/create">
+                <div style={{ fontSize: '0.8rem', color: '#333' }}>
+                  <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: '#444' }}>Create a product</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Name</span>
+                      <div style={{ flex: 1, height: 26, border: '1px solid #ddd', borderRadius: 4, background: '#fafafa' }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Price</span>
+                      <div style={{ flex: 1, height: 26, border: '1px solid #ddd', borderRadius: 4, background: '#fafafa' }} />
+                    </div>
+                    <Seq delay={1.95} style={{ color: '#999', fontSize: '0.72rem', marginTop: '0.25rem', fontStyle: 'italic' }}>
+                      wait, what was step 3 again?
+                    </Seq>
                   </div>
                 </div>
-              </div>
-            </BrowserWindow>
+              </BrowserWindow>
+            </Seq>
 
-            <SwitchBadge label="⟷ switch back to Claude" />
-            <SwitchBadge label="⟷ switch to Chrome again" />
+            <SwitchBadge label="⟷ switch back to Claude" delay={2.20} />
+            <SwitchBadge label="⟷ switch to Chrome again" delay={2.40} />
 
-            <div style={{
+            <Seq delay={2.70} style={{
               marginTop: '0.75rem',
               display: 'flex', alignItems: 'center', gap: '0.5rem',
             }}>
@@ -190,7 +211,7 @@ export default function BeforeAfter() {
               <span style={{ fontSize: '0.82rem', color: 'var(--red-accent)', fontWeight: 600 }}>
                 10–20 minutes of context-switching
               </span>
-            </div>
+            </Seq>
           </div>
 
           {/* ── After ── */}
@@ -210,51 +231,53 @@ export default function BeforeAfter() {
             </div>
 
             <TerminalWindow>
-              <Line color="#888"># you ask Claude</Line>
-              <Line color="#e8e2d8">{'>'} set up Stripe for this project</Line>
+              <Line color="#888" delay={0.30}># you ask Claude</Line>
+              <Line color="#e8e2d8" delay={0.45}>{'>'} set up Stripe for this project</Line>
               <div style={{ marginTop: '0.5rem' }}>
-                <Line color="#d97706">● Opening stripe.com/products...</Line>
-                <Line color="#d97706">● Clicking "Create product"</Line>
-                <Line color="#d97706">● Filling in "Pro Plan", £29/mo</Line>
-                <Line color="#28c840">✓ STRIPE_PRICE_ID written to .env</Line>
+                <Line color="#d97706" delay={0.85}>● Opening stripe.com/products...</Line>
+                <Line color="#d97706" delay={1.20}>● Clicking "Create product"</Line>
+                <Line color="#d97706" delay={1.55}>● Filling in "Pro Plan", £29/mo</Line>
+                <Line color="#28c840" delay={1.95}>✓ STRIPE_PRICE_ID written to .env</Line>
               </div>
             </TerminalWindow>
 
-            <ControlsBadge />
+            <ControlsBadge delay={0.60} />
 
-            <BrowserWindow url="dashboard.stripe.com/products/create">
-              <div style={{ fontSize: '0.8rem', color: '#333' }}>
-                <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: '#444' }}>Create a product</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Name</span>
-                    <div style={{
-                      flex: 1, height: 26, border: '1px solid rgba(22,160,90,0.4)', borderRadius: 4,
-                      background: 'rgba(22,160,90,0.05)',
-                      display: 'flex', alignItems: 'center', paddingLeft: 8,
-                      fontSize: '0.75rem', color: '#333',
-                    }}>Pro Plan</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Price</span>
-                    <div style={{
-                      flex: 1, height: 26, border: '1px solid rgba(22,160,90,0.4)', borderRadius: 4,
-                      background: 'rgba(22,160,90,0.05)',
-                      display: 'flex', alignItems: 'center', paddingLeft: 8,
-                      fontSize: '0.75rem', color: '#333',
-                    }}>£29 / month</div>
-                  </div>
-                  <div style={{
-                    marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.4rem',
-                    color: '#16a05a', fontSize: '0.72rem', fontWeight: 600,
-                  }}>
-                    <span>✓</span> Saved — Claude read the price ID
+            <Seq delay={0.85}>
+              <BrowserWindow url="dashboard.stripe.com/products/create">
+                <div style={{ fontSize: '0.8rem', color: '#333' }}>
+                  <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: '#444' }}>Create a product</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Name</span>
+                      <Seq delay={1.55} style={{
+                        flex: 1, height: 26, border: '1px solid rgba(22,160,90,0.4)', borderRadius: 4,
+                        background: 'rgba(22,160,90,0.05)',
+                        display: 'flex', alignItems: 'center', paddingLeft: 8,
+                        fontSize: '0.75rem', color: '#333',
+                      }}>Pro Plan</Seq>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Price</span>
+                      <Seq delay={1.70} style={{
+                        flex: 1, height: 26, border: '1px solid rgba(22,160,90,0.4)', borderRadius: 4,
+                        background: 'rgba(22,160,90,0.05)',
+                        display: 'flex', alignItems: 'center', paddingLeft: 8,
+                        fontSize: '0.75rem', color: '#333',
+                      }}>£29 / month</Seq>
+                    </div>
+                    <Seq delay={1.95} style={{
+                      marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.4rem',
+                      color: '#16a05a', fontSize: '0.72rem', fontWeight: 600,
+                    }}>
+                      <span>✓</span> Saved — Claude read the price ID
+                    </Seq>
                   </div>
                 </div>
-              </div>
-            </BrowserWindow>
+              </BrowserWindow>
+            </Seq>
 
-            <div style={{
+            <Seq delay={2.20} style={{
               marginTop: '1.25rem',
               display: 'flex', alignItems: 'center', gap: '0.5rem',
             }}>
@@ -262,7 +285,7 @@ export default function BeforeAfter() {
               <span style={{ fontSize: '0.82rem', color: 'var(--green)', fontWeight: 600 }}>
                 You approved one thing. Maybe.
               </span>
-            </div>
+            </Seq>
           </div>
 
         </div>
