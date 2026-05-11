@@ -133,8 +133,12 @@ code {
 }
 
 .section-hero {
-  padding: 8rem 0 6rem;
+  padding: 4rem 0;
   text-align: center;
+  min-height: 90vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 @media (max-width: 900px) {
