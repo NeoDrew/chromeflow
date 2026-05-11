@@ -106,11 +106,21 @@ export default function Setup() {
           fontSize: '0.7rem', letterSpacing: '0.12em',
           textTransform: 'uppercase', color: 'var(--amber)',
           marginBottom: '0.75rem',
+          width: 'fit-content',
+          background: 'rgba(255,255,255,0.92)',
+          padding: '0.45rem 0.85rem',
+          borderRadius: '6px',
+          boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
         }}>Installation</p>
         <h2 className="fade-up delay-1" style={{
           fontSize: 'clamp(1.8rem, 3vw, 2.4rem)',
           fontWeight: 700, letterSpacing: '-0.025em',
           marginBottom: '2.5rem',
+          width: 'fit-content',
+          background: 'rgba(255,255,255,0.92)',
+          padding: '0.5rem 1.1rem',
+          borderRadius: '10px',
+          boxShadow: '0 1px 8px rgba(0,0,0,0.08)',
         }}>
           Two steps. That's it.
         </h2>
