@@ -14,6 +14,7 @@ export default function Demo() {
           fontSize: '0.7rem', letterSpacing: '0.12em',
           textTransform: 'uppercase', color: 'var(--amber)',
           marginBottom: '1rem',
+          textAlign: 'center',
         }}>
           Posting a tweet using Claude Code × Chromeflow
         </p>
