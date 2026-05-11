@@ -15,8 +15,9 @@ export default function Hero() {
           fontWeight: 700, lineHeight: 1.0,
           letterSpacing: '-0.035em',
         }}>
-          Let Claude set up{' '}
-          <span style={{ color: 'var(--amber)' }}>anything.</span>
+          The Best Claude Code{' '}
+          <span style={{ color: 'var(--amber)' }}>web interaction</span>{' '}
+          plugin.
         </h1>
       </div>
     </section>
