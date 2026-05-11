@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "chromeflow": {
+      "command": "npx",
+      "args": ["-y", "chromeflow"]
+    }
+  }
+}

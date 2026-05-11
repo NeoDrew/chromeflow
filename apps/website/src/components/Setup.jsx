@@ -1,13 +1,16 @@
 import { useState } from 'react'
 import { useScrollAnimation } from '../hooks/useScrollAnimation'
 
-const CMD = 'npx chromeflow setup'
+const CMDS = [
+  '/plugin marketplace add NeoDrew/chromeflow',
+  '/plugin install chromeflow',
+]
 
 const CopyCommand = () => {
   const [copied, setCopied] = useState(false)
 
   const copy = () => {
-    navigator.clipboard.writeText(CMD).then(() => {
+    navigator.clipboard.writeText(CMDS.join('\n')).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
@@ -15,22 +18,28 @@ const CopyCommand = () => {
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
       gap: '1rem',
       background: '#1a1814',
       border: '1px solid rgba(255,255,255,0.08)',
       borderRadius: 10,
       padding: '0.85rem 1rem 0.85rem 1.2rem',
     }}>
-      <span style={{
+      <div style={{
         fontFamily: 'JetBrains Mono, monospace',
-        fontSize: '0.92rem',
+        fontSize: '0.88rem',
         color: '#e8e2d8',
         letterSpacing: '-0.01em',
+        lineHeight: 1.7,
+        display: 'flex', flexDirection: 'column',
       }}>
-        <span style={{ color: 'var(--amber)', marginRight: '0.5rem' }}>$</span>
-        {CMD}
-      </span>
+        {CMDS.map((cmd) => (
+          <span key={cmd}>
+            <span style={{ color: 'var(--amber)', marginRight: '0.5rem' }}>›</span>
+            {cmd}
+          </span>
+        ))}
+      </div>
       <button
         onClick={copy}
         style={{
@@ -102,11 +111,11 @@ export default function Setup() {
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
               <StepNum n="1" />
               <h3 style={{ fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
-                Run this command
+                Install the Claude Code plugin
               </h3>
             </div>
             <p style={{ fontSize: '0.88rem', color: 'var(--muted)', marginBottom: '1.1rem', lineHeight: 1.6 }}>
-              From your project directory. Registers the MCP server and writes Claude's instructions into your project.
+              Run these two slash commands inside Claude Code. One-time, machine-wide — no per-project setup.
             </p>
             <div style={{ marginTop: 'auto' }}>
               <CopyCommand />

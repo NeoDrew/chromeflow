@@ -322,6 +322,11 @@ export async function runSetup() {
   }
 
   console.log("\nDone. Restart Claude Code to activate chromeflow.\n");
+
+  console.log("Tip — chromeflow is now also distributed as a Claude Code plugin.");
+  console.log("Install it once, machine-wide, and skip per-project setup:");
+  console.log("  /plugin marketplace add NeoDrew/chromeflow");
+  console.log("  /plugin install chromeflow\n");
 }
 
 export async function runUninstall() {
