@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useScrollAnimation } from '../hooks/useScrollAnimation'
 
 // Brand marks — inline SVGs so we don't add a new asset for every card.
@@ -194,54 +194,88 @@ const CARD_GAP_PX = 32
 const ADVANCE_MS = 2500
 const PAUSE_AFTER_INTERACTION_MS = 6000
 
-const TaskCard = ({ task }) => (
-  <div
-    data-card
-    style={{
-      flex: '0 0 60vw',
-      minWidth: 480,
-      height: '40vh',
-      minHeight: 360,
-      scrollSnapAlign: 'center',
-      marginRight: `${CARD_GAP_PX}px`,
-      background: 'var(--surface)',
-      border: '1px solid var(--border)',
-      borderRadius: 'var(--radius-lg)',
-      padding: '2.5rem 3rem',
-      boxShadow: 'var(--shadow)',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: '1.4rem',
-      userSelect: 'none',
-    }}
-  >
-    <div style={{
-      display: 'flex',
-      alignItems: 'center',
-      minHeight: 64,
-    }}>
-      {task.logo}
+const TaskCard = ({ task, isExpanded, onToggleExpand }) => {
+  // Stop pointer events bubbling to the drag handler — the carousel listens
+  // for pointerdown on the track to start dragging, but clicks on the
+  // read-more button shouldn't begin a drag.
+  const stop = (e) => e.stopPropagation()
+  return (
+    <div
+      data-card
+      style={{
+        flex: '0 0 60vw',
+        minWidth: 480,
+        height: isExpanded ? 'auto' : '40vh',
+        minHeight: 360,
+        scrollSnapAlign: 'center',
+        marginRight: `${CARD_GAP_PX}px`,
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)',
+        padding: '2.5rem 3rem',
+        boxShadow: 'var(--shadow)',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '1.4rem',
+        userSelect: 'none',
+        alignSelf: 'flex-start',
+      }}
+    >
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        minHeight: 64,
+      }}>
+        {task.logo}
+      </div>
+      <h3 style={{
+        fontSize: 'clamp(1.5rem, 2.1vw, 2rem)',
+        fontWeight: 700,
+        letterSpacing: '-0.02em',
+        lineHeight: 1.18,
+        color: 'var(--text)',
+      }}>
+        {task.title}
+      </h3>
+      <p style={{
+        fontSize: 'clamp(0.95rem, 1.05vw, 1.05rem)',
+        color: 'var(--muted)',
+        lineHeight: 1.65,
+        flex: isExpanded ? 'unset' : 1,
+        overflow: 'hidden',
+        display: isExpanded ? 'block' : '-webkit-box',
+        WebkitLineClamp: isExpanded ? 'unset' : 5,
+        WebkitBoxOrient: 'vertical',
+        whiteSpace: 'normal',
+      }}>
+        {task.body}
+      </p>
+      <button
+        type="button"
+        onPointerDown={stop}
+        onMouseDown={stop}
+        onTouchStart={stop}
+        onClick={(e) => { e.stopPropagation(); onToggleExpand() }}
+        style={{
+          alignSelf: 'flex-start',
+          background: 'transparent',
+          border: 'none',
+          color: 'var(--amber)',
+          fontFamily: 'JetBrains Mono, monospace',
+          fontSize: '0.78rem',
+          letterSpacing: '0.08em',
+          textTransform: 'uppercase',
+          fontWeight: 600,
+          cursor: 'pointer',
+          padding: 0,
+          marginTop: 'auto',
+        }}
+      >
+        {isExpanded ? '↑ Read less' : 'Read more →'}
+      </button>
     </div>
-    <h3 style={{
-      fontSize: 'clamp(1.5rem, 2.1vw, 2rem)',
-      fontWeight: 700,
-      letterSpacing: '-0.02em',
-      lineHeight: 1.18,
-      color: 'var(--text)',
-    }}>
-      {task.title}
-    </h3>
-    <p style={{
-      fontSize: 'clamp(0.95rem, 1.05vw, 1.05rem)',
-      color: 'var(--muted)',
-      lineHeight: 1.65,
-      flex: 1,
-      overflow: 'hidden',
-    }}>
-      {task.body}
-    </p>
-  </div>
-)
+  )
+}
 
 export default function InfiniteTasks() {
   const ref = useScrollAnimation()
@@ -249,6 +283,12 @@ export default function InfiniteTasks() {
   const interactionRef = useRef(0)
   const hoveringRef = useRef(false)
   const dragRef = useRef({ active: false, startX: 0, lastX: 0, startScrollLeft: 0, moved: false })
+  const [expandedTaskIdx, setExpandedTaskIdx] = useState(null)
+  const expandedRef = useRef(null)
+  useEffect(() => { expandedRef.current = expandedTaskIdx }, [expandedTaskIdx])
+  const toggleExpand = (taskIdx) => {
+    setExpandedTaskIdx((prev) => (prev === taskIdx ? null : taskIdx))
+  }
 
   // Start in the middle copy so we can scroll either direction infinitely
   useEffect(() => {
@@ -303,6 +343,7 @@ export default function InfiniteTasks() {
     const id = setInterval(() => {
       const track = trackRef.current
       if (!track) return
+      if (expandedRef.current !== null) return
       if (hoveringRef.current) return
       if (Date.now() - interactionRef.current < PAUSE_AFTER_INTERACTION_MS) return
       if (dragRef.current.active) return
@@ -441,9 +482,17 @@ export default function InfiniteTasks() {
             userSelect: 'none',
           }}
         >
-          {TRIPLE.map((task, i) => (
-            <TaskCard key={i} task={task} />
-          ))}
+          {TRIPLE.map((task, i) => {
+            const taskIdx = i % TASKS.length
+            return (
+              <TaskCard
+                key={i}
+                task={task}
+                isExpanded={expandedTaskIdx === taskIdx}
+                onToggleExpand={() => toggleExpand(taskIdx)}
+              />
+            )
+          })}
         </div>
       </div>
     </section>
