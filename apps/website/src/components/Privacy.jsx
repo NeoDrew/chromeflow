@@ -105,7 +105,7 @@ export default function Privacy() {
             <h2 style={h2}>Local operation</h2>
             <p>
               Chromeflow communicates exclusively with a local MCP server process running on your machine
-              (started by <code>npx chromeflow setup</code>). No data is sent to any remote server operated
+              (spawned by the Chromeflow Claude Code plugin). No data is sent to any remote server operated
               by Chromeflow. Your data stays on your machine except where you explicitly direct Claude Code
               to interact with external services.
             </p>

@@ -49,19 +49,7 @@ The extension persists across Chrome restarts. You only do this once.
 
 **3. Restart Claude Code.**
 
-That's it. Claude will automatically reach for Chromeflow whenever a task needs browser interaction, in any project.
-
-<details>
-<summary>Legacy per-project setup (pre-plugin)</summary>
-
-If you're on a Claude Code version without plugin support, or prefer per-project config, the older flow still works:
-
-```bash
-npx chromeflow setup
-```
-
-This registers the MCP server in `~/.claude.json`, writes `CLAUDE.md` into the current project, and pre-approves Chromeflow tools in `.claude/settings.local.json`. You have to run it in every project. The plugin route above replaces all of this in one install.
-</details>
+That's it. Claude will automatically reach for Chromeflow whenever a task needs browser interaction, in any project. The plugin's SessionStart hook also cleans up any stale config left over from older `npx chromeflow setup`-based installs on first run.
 
 ## Usage
 
@@ -137,16 +125,23 @@ Single-instance usage is unchanged and fully backwards compatible — the old pe
 
 Nothing to do — the plugin install above is machine-wide. Open any project and Chromeflow is ready.
 
-(If you used the legacy `npx chromeflow setup` flow, you'd have to run it in each project. That's why the plugin exists.)
+## Upgrading
 
-## Commands
+```
+/plugin update chromeflow
+/reload-plugins
+```
 
-| Command | What it does |
-|---------|-------------|
-| `npx chromeflow setup` | Legacy: register MCP server, write project `CLAUDE.md`, pre-approve tools (per-project). Prefer the plugin install above. |
-| `npx chromeflow update` | Refresh the project `CLAUDE.md` with the latest instructions |
-| `npx chromeflow uninstall` | Remove all Chromeflow config (MCP entry, `CLAUDE.md` sections, tool permissions) |
-| `npx chromeflow doctor` | Diagnose installed versions and stale caches |
+Restart Claude Code to pick up the new MCP server binary the plugin ships.
+
+## Migrating from the old `npx chromeflow setup` flow
+
+If you previously installed Chromeflow via `npx chromeflow setup`, do nothing — install the plugin (Setup step 1 above) and the plugin's first SessionStart cleans up:
+
+- The stale `mcpServers.chromeflow` entry in `~/.claude.json`
+- Any leftover `## Chromeflow` section in `~/.claude/CLAUDE.md`
+
+Per-project `CLAUDE.md` files and `.claude/settings.local.json` allowlists are left alone — they may have content you want to keep, so the plugin won't touch them. You can delete the `# Chromeflow — Claude Instructions` section from each project's `CLAUDE.md` by hand whenever it's convenient (the plugin's skill carries the same content now), or just leave it.
 
 ## Development
 
@@ -154,19 +149,23 @@ Nothing to do — the plugin install above is machine-wide. Open any project and
 git clone https://github.com/NeoDrew/chromeflow
 cd chromeflow
 npm install
-npm run build
+packages/plugin/scripts/build-server.sh   # bundle the MCP server into the plugin
 ```
 
-Then run setup using the local build:
+The MCP server source lives at `packages/mcp-server/src/` and is bundled with esbuild into `packages/plugin/server/chromeflow.mjs` — a single-file ESM binary the plugin ships directly.
 
-```bash
-node packages/mcp-server/dist/index.js setup
+Iterate locally by pointing the plugin at this checkout:
+
+```
+/plugin marketplace add /absolute/path/to/this/repo
+/plugin install chromeflow
 ```
 
-To rebuild on changes:
+Rebuild the bundle after editing MCP server source, then `/reload-plugins` (or restart CC) to pick it up.
+
+The Chrome extension lives at `packages/extension/`:
 
 ```bash
-npm run dev:mcp   # watches mcp-server
 npm run dev:ext   # watches extension
 ```
 
