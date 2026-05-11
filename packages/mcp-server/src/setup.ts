@@ -247,28 +247,30 @@ function tryOpenStorePage() {
   }
 }
 
+const LEGACY_GLOBAL_HINT_MARKER = "Run `npx chromeflow setup` in this project directory";
+
 function patchGlobalClaudeMd() {
+  // Plugin-aware: the chromeflow plugin ships a Skill that surfaces itself
+  // to Claude on demand, so the global CLAUDE.md no longer needs a hint.
+  // If a previous setup added the legacy hint, strip it out.
   const globalClaudeMdPath = join(HOME, ".claude", "CLAUDE.md");
-  const hint = `## Chromeflow
+  if (!existsSync(globalClaudeMdPath)) return "absent";
 
-chromeflow is installed globally as an MCP server.
+  const existing = readFileSync(globalClaudeMdPath, "utf8");
+  if (!existing.includes(LEGACY_GLOBAL_HINT_MARKER)) return "absent";
 
-If you are working in a project and the project's CLAUDE.md does not contain chromeflow
-instructions, tell the user: "Run \`npx chromeflow setup\` in this project directory to
-configure chromeflow for it."
-`;
+  // Remove the "## Chromeflow … npx chromeflow setup …" block we previously injected.
+  const sectionStart = existing.indexOf("## Chromeflow");
+  if (sectionStart < 0) return "absent";
 
-  if (existsSync(globalClaudeMdPath)) {
-    const existing = readFileSync(globalClaudeMdPath, "utf8");
-    if (existing.includes("chromeflow")) return "already-present";
-    writeFileSync(globalClaudeMdPath, existing.trimEnd() + "\n\n" + hint);
-    return "appended";
-  }
+  const after = existing.slice(sectionStart);
+  // Section ends at the next top-level heading (## ...) or EOF.
+  const nextHeading = after.slice(2).search(/\n## /);
+  const sectionEnd = nextHeading < 0 ? existing.length : sectionStart + 2 + nextHeading + 1;
 
-  const dir = join(HOME, ".claude");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(globalClaudeMdPath, hint);
-  return "created";
+  const cleaned = (existing.slice(0, sectionStart) + existing.slice(sectionEnd)).trimEnd();
+  writeFileSync(globalClaudeMdPath, cleaned ? cleaned + "\n" : "");
+  return "removed";
 }
 
 export async function runSetup() {
@@ -311,14 +313,10 @@ export async function runSetup() {
     console.log(`  Install from the Chrome Web Store:\n  ${STORE_URL}`);
   }
 
-  // 4. Global ~/.claude/CLAUDE.md hint
+  // 4. Strip the legacy "## Chromeflow" hint from ~/.claude/CLAUDE.md if present
   const globalResult = patchGlobalClaudeMd();
-  if (globalResult === "already-present") {
-    console.log("✓ ~/.claude/CLAUDE.md already has chromeflow hint");
-  } else if (globalResult === "appended") {
-    console.log("✓ Appended chromeflow hint to ~/.claude/CLAUDE.md");
-  } else {
-    console.log("✓ Created ~/.claude/CLAUDE.md with chromeflow hint");
+  if (globalResult === "removed") {
+    console.log("✓ Removed legacy chromeflow hint from ~/.claude/CLAUDE.md (plugin skill handles it now)");
   }
 
   console.log("\nDone. Restart Claude Code to activate chromeflow.\n");
