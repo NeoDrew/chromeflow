@@ -166,20 +166,20 @@ export default function BeforeAfter() {
             </div>
 
             <TerminalWindow>
-              <Line color="#888" delay={0.30}># you ask Claude</Line>
-              <Line color="#e8e2d8" delay={0.45}>{'>'} set up Stripe for this project</Line>
+              <Line color="#888" delay={0.60}># you ask Claude</Line>
+              <Line color="#e8e2d8" delay={0.90}>{'>'} set up Stripe for this project</Line>
               <div style={{ marginTop: '0.5rem' }}>
-                <Line color="#aaa" delay={0.75}>Here are the steps to follow:</Line>
-                <Line color="#777" delay={0.90}>1. Go to stripe.com/dashboard</Line>
-                <Line color="#777" delay={1.00}>2. Click Products → Create product</Line>
-                <Line color="#777" delay={1.10}>3. Copy the price ID</Line>
-                <Line color="#777" delay={1.20}>4. Paste into .env manually</Line>
+                <Line color="#aaa" delay={1.50}>Here are the steps to follow:</Line>
+                <Line color="#777" delay={1.80}>1. Go to stripe.com/dashboard</Line>
+                <Line color="#777" delay={2.00}>2. Click Products → Create product</Line>
+                <Line color="#777" delay={2.20}>3. Copy the price ID</Line>
+                <Line color="#777" delay={2.40}>4. Paste into .env manually</Line>
               </div>
             </TerminalWindow>
 
-            <SwitchBadge label="⟷ switch to Chrome" delay={1.40} />
+            <SwitchBadge label="⟷ switch to Chrome" delay={2.80} />
 
-            <Seq delay={1.55}>
+            <Seq delay={3.10}>
               <BrowserWindow url="dashboard.stripe.com/products/create">
                 <div style={{ fontSize: '0.8rem', color: '#333' }}>
                   <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: '#444' }}>Create a product</div>
@@ -192,7 +192,7 @@ export default function BeforeAfter() {
                       <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Price</span>
                       <div style={{ flex: 1, height: 26, border: '1px solid #ddd', borderRadius: 4, background: '#fafafa' }} />
                     </div>
-                    <Seq delay={1.95} style={{ color: '#999', fontSize: '0.72rem', marginTop: '0.25rem', fontStyle: 'italic' }}>
+                    <Seq delay={3.90} style={{ color: '#999', fontSize: '0.72rem', marginTop: '0.25rem', fontStyle: 'italic' }}>
                       wait, what was step 3 again?
                     </Seq>
                   </div>
@@ -200,10 +200,10 @@ export default function BeforeAfter() {
               </BrowserWindow>
             </Seq>
 
-            <SwitchBadge label="⟷ switch back to Claude" delay={2.20} />
-            <SwitchBadge label="⟷ switch to Chrome again" delay={2.40} />
+            <SwitchBadge label="⟷ switch back to Claude" delay={4.40} />
+            <SwitchBadge label="⟷ switch to Chrome again" delay={4.80} />
 
-            <Seq delay={2.70} style={{
+            <Seq delay={5.40} style={{
               marginTop: '0.75rem',
               display: 'flex', alignItems: 'center', gap: '0.5rem',
             }}>
@@ -220,7 +220,7 @@ export default function BeforeAfter() {
             border: '1px solid var(--green-border)',
             borderRadius: 'var(--radius-lg)',
             padding: '1.75rem',
-            transitionDelay: '3.35s',
+            transitionDelay: '6.70s',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem' }}>
               <span style={{ fontSize: '0.95rem' }}>⚡</span>
@@ -232,26 +232,26 @@ export default function BeforeAfter() {
             </div>
 
             <TerminalWindow>
-              <Line color="#888" delay={3.55}># you ask Claude</Line>
-              <Line color="#e8e2d8" delay={3.70}>{'>'} set up Stripe for this project</Line>
+              <Line color="#888" delay={7.10}># you ask Claude</Line>
+              <Line color="#e8e2d8" delay={7.40}>{'>'} set up Stripe for this project</Line>
               <div style={{ marginTop: '0.5rem' }}>
-                <Line color="#d97706" delay={4.10}>● Opening stripe.com/products...</Line>
-                <Line color="#d97706" delay={4.45}>● Clicking "Create product"</Line>
-                <Line color="#d97706" delay={4.80}>● Filling in "Pro Plan", £29/mo</Line>
-                <Line color="#28c840" delay={5.20}>✓ STRIPE_PRICE_ID written to .env</Line>
+                <Line color="#d97706" delay={8.20}>● Opening stripe.com/products...</Line>
+                <Line color="#d97706" delay={8.90}>● Clicking "Create product"</Line>
+                <Line color="#d97706" delay={9.60}>● Filling in "Pro Plan", £29/mo</Line>
+                <Line color="#28c840" delay={10.40}>✓ STRIPE_PRICE_ID written to .env</Line>
               </div>
             </TerminalWindow>
 
-            <ControlsBadge delay={3.85} />
+            <ControlsBadge delay={7.70} />
 
-            <Seq delay={4.10}>
+            <Seq delay={8.20}>
               <BrowserWindow url="dashboard.stripe.com/products/create">
                 <div style={{ fontSize: '0.8rem', color: '#333' }}>
                   <div style={{ fontWeight: 600, marginBottom: '0.75rem', color: '#444' }}>Create a product</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Name</span>
-                      <Seq delay={4.80} style={{
+                      <Seq delay={9.60} style={{
                         flex: 1, height: 26, border: '1px solid rgba(22,160,90,0.4)', borderRadius: 4,
                         background: 'rgba(22,160,90,0.05)',
                         display: 'flex', alignItems: 'center', paddingLeft: 8,
@@ -260,14 +260,14 @@ export default function BeforeAfter() {
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                       <span style={{ fontSize: '0.72rem', color: '#888', width: 60 }}>Price</span>
-                      <Seq delay={4.95} style={{
+                      <Seq delay={9.90} style={{
                         flex: 1, height: 26, border: '1px solid rgba(22,160,90,0.4)', borderRadius: 4,
                         background: 'rgba(22,160,90,0.05)',
                         display: 'flex', alignItems: 'center', paddingLeft: 8,
                         fontSize: '0.75rem', color: '#333',
                       }}>£29 / month</Seq>
                     </div>
-                    <Seq delay={5.20} style={{
+                    <Seq delay={10.40} style={{
                       marginTop: '0.25rem', display: 'flex', alignItems: 'center', gap: '0.4rem',
                       color: '#16a05a', fontSize: '0.72rem', fontWeight: 600,
                     }}>
@@ -278,7 +278,7 @@ export default function BeforeAfter() {
               </BrowserWindow>
             </Seq>
 
-            <Seq delay={5.45} style={{
+            <Seq delay={10.90} style={{
               marginTop: '1.25rem',
               display: 'flex', alignItems: 'center', gap: '0.5rem',
             }}>
