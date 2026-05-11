@@ -15,7 +15,19 @@ export default function Hero() {
           fontWeight: 700, lineHeight: 1.0,
           letterSpacing: '-0.035em',
         }}>
-          The Best Claude Code{' '}
+          The Best{' '}
+          <img
+            src="/claudecode.png"
+            alt="Claude Code"
+            style={{
+              display: 'inline-block',
+              height: '1.4em',
+              width: 'auto',
+              verticalAlign: '-0.35em',
+              borderRadius: '0.15em',
+              margin: '0 0.15em',
+            }}
+          />{' '}
           <span style={{ color: 'var(--amber)' }}>web interaction</span>{' '}
           plugin.
         </h1>
