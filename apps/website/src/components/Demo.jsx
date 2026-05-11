@@ -1,7 +1,28 @@
+import { useEffect, useRef } from 'react'
 import { useScrollAnimation } from '../hooks/useScrollAnimation'
 
 export default function Demo() {
   const ref = useScrollAnimation()
+  const videoRef = useRef(null)
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          video.play().catch(() => { /* autoplay-with-muted should be allowed; ignore the rare reject */ })
+        } else {
+          video.pause()
+        }
+      },
+      { threshold: 0.6 }
+    )
+
+    observer.observe(video)
+    return () => observer.disconnect()
+  }, [])
 
   return (
     <section ref={ref} style={{
@@ -25,12 +46,13 @@ export default function Demo() {
           background: '#000',
         }}>
           <video
+            ref={videoRef}
             src="/chromeflowDemo.mp4"
-            autoPlay
             loop
             muted
             playsInline
             controls
+            preload="metadata"
             style={{ width: '100%', display: 'block' }}
           />
         </div>
