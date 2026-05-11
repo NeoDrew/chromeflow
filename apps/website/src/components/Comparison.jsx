@@ -26,11 +26,11 @@ const Note = ({ children }) => (
 )
 
 const TOOLS = [
-  { name: 'Chromeflow', highlight: true },
-  { name: 'Playwright' },
-  { name: 'Browser Use' },
-  { name: 'Computer Use' },
-  { name: 'Stagehand' },
+  { name: 'Chromeflow', src: '/chromeflow.png', highlight: true, height: 36 },
+  { name: 'Playwright', src: '/playwright.png', height: 56 },
+  { name: 'Browser Use', src: '/browseruse.png', height: 28 },
+  { name: 'Computer Use', src: '/computeruse.webp', height: 36, textNext: true },
+  { name: 'Stagehand', src: '/browserbase.svg', height: 24 },
 ]
 
 // Order matches TOOLS above. Use 'check', 'dash', or a JSX-friendly note string.
@@ -41,14 +41,24 @@ const ROWS = [
       'Real one-off setup work',
       'Test automation',
       'Autonomous AI tasks',
-      'Autonomous AI tasks',
+      'Generic computer control',
       'Autonomous AI tasks',
     ],
   },
   {
+    label: 'Has your codebase context',
+    cells: ['check', 'dash', 'dash', 'dash', 'dash'],
+    sublabels: ['via Claude Code', null, null, null, null],
+  },
+  {
+    label: 'Reads page DOM (not screenshots)',
+    cells: ['check', 'check', 'dash', 'dash', 'dash'],
+    sublabels: [null, null, 'token-heavy', 'token-heavy', 'token-heavy'],
+  },
+  {
     label: 'Runs in your real Chrome',
     cells: ['check', 'dash', 'dash', 'dash', 'dash'],
-    sublabels: [null, 'headless', 'Chromium', 'VM', 'cloud browser'],
+    sublabels: [null, 'headless', 'sandboxed', 'VM', 'cloud browser'],
   },
   {
     label: 'Uses your existing logins',
@@ -61,14 +71,6 @@ const ROWS = [
   {
     label: 'Writes API keys to .env',
     cells: ['check', 'dash', 'dash', 'dash', 'dash'],
-  },
-  {
-    label: 'Visual on-page callouts',
-    cells: ['check', 'dash', 'dash', 'dash', 'dash'],
-  },
-  {
-    label: 'Zero code — Claude Code drives it',
-    cells: ['check', 'dash', 'dash', 'check', 'dash'],
   },
 ]
 
@@ -159,8 +161,34 @@ export default function Comparison() {
                       borderLeft: i === 0 ? '1px solid var(--border)' : 'none',
                       background: tool.highlight ? 'var(--amber-glow)' : 'var(--surface-2)',
                       whiteSpace: 'nowrap',
+                      minWidth: 130,
                     }}>
-                      {tool.name}
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '0.5rem',
+                        height: 60,
+                      }}>
+                        <img
+                          src={tool.src}
+                          alt={tool.name}
+                          style={{
+                            height: tool.height,
+                            maxWidth: 160,
+                            width: 'auto',
+                            objectFit: 'contain',
+                            display: 'block',
+                          }}
+                        />
+                        {tool.textNext && (
+                          <span style={{
+                            fontSize: '0.95rem',
+                            fontWeight: 700,
+                            color: 'var(--text)',
+                          }}>{tool.name}</span>
+                        )}
+                      </div>
                     </th>
                   ))}
                 </tr>
