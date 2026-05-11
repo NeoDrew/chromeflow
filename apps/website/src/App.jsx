@@ -1,5 +1,6 @@
 import Hero from './components/Hero'
 import Setup from './components/Setup'
+import Demo from './components/Demo'
 import BeforeAfter from './components/BeforeAfter'
 import Privacy from './components/Privacy'
 
@@ -12,6 +13,7 @@ export default function App() {
     <main>
       <Hero />
       <Setup />
+      <Demo />
       <BeforeAfter />
       <section style={{ padding: '5rem 0', textAlign: 'center', borderTop: '1px solid var(--border)' }}>
         <div className="wrap">
