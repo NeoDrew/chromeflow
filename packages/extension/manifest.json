@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chromeflow",
-  "version": "0.7.1",
+  "version": "0.9.0",
   "description": "Guided web assistance for Claude Code",
   "permissions": [
     "tabs",
@@ -10,7 +10,8 @@
     "offscreen",
     "storage",
     "windows",
-    "debugger"
+    "debugger",
+    "tabCapture"
   ],
   "host_permissions": [
     "<all_urls>"

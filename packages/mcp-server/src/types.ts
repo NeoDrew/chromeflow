@@ -8,6 +8,7 @@ export type ServerMessage =
   | { type: "navigate"; requestId: string; url: string; newTab?: boolean; background?: boolean }
   | { type: "switch_to_tab"; requestId: string; query: string }
   | { type: "screenshot"; requestId: string; grid?: boolean }
+  | { type: "record_window"; requestId: string; durationMs: number; includeAudio?: boolean }
   | { type: "find_highlight"; requestId: string; text: string; message: string; valueToType?: string }
   | {
       type: "highlight_region";
@@ -108,6 +109,14 @@ export type ClientMessage =
       image: string;
       width: number;
       height: number;
+    }
+  | {
+      type: "record_window_response";
+      requestId: string;
+      video: string;
+      mimeType: string;
+      durationMs: number;
+      sizeBytes: number;
     }
   | { type: "find_highlight_response"; requestId: string; found: boolean }
   | { type: "action_done"; requestId: string }

@@ -113,3 +113,93 @@ function publishLivePorts() {
     // Background may be starting up, ignore
   });
 }
+
+// ─── Tab recording (record_window) ─────────────────────────────────────────
+// MV3 service workers can't use MediaRecorder, so background forwards each
+// record_window request here with the streamId from chrome.tabCapture.
+
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg?.source !== "chromeflow-background") return false;
+  if (msg.type !== "start_recording") return false;
+  recordTabStream(msg.streamId as string, msg.durationMs as number, msg.includeAudio === true)
+    .then((result) => sendResponse({ ok: true, ...result }))
+    .catch((err) => sendResponse({ ok: false, error: String(err?.message ?? err) }));
+  return true;
+});
+
+async function recordTabStream(
+  streamId: string,
+  durationMs: number,
+  includeAudio: boolean
+): Promise<{ video: string; mimeType: string; durationMs: number; sizeBytes: number }> {
+  const constraints = {
+    video: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId } },
+    audio: includeAudio
+      ? { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId } }
+      : false,
+  } as unknown as MediaStreamConstraints;
+
+  const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+  // tabCapture mutes the tab's own speakers while audio is being captured.
+  // Pipe the stream back to the local destination so the user still hears it.
+  let audioCtx: AudioContext | null = null;
+  if (includeAudio) {
+    audioCtx = new AudioContext();
+    audioCtx.createMediaStreamSource(stream).connect(audioCtx.destination);
+  }
+
+  const candidates = includeAudio
+    ? ["video/webm;codecs=vp9,opus", "video/webm;codecs=vp8,opus", "video/webm"]
+    : ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"];
+  const mimeType = candidates.find((c) => MediaRecorder.isTypeSupported(c)) ?? "";
+  if (!mimeType) {
+    stream.getTracks().forEach((t) => t.stop());
+    await audioCtx?.close();
+    throw new Error("This Chrome build doesn't support any WebM codec we can use.");
+  }
+
+  const chunks: Blob[] = [];
+  const recorder = new MediaRecorder(stream, { mimeType });
+
+  return new Promise<{ video: string; mimeType: string; durationMs: number; sizeBytes: number }>(
+    (resolve, reject) => {
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+      recorder.onerror = (e) =>
+        reject(new Error("MediaRecorder error: " + String((e as unknown as { error?: unknown }).error ?? "unknown")));
+      recorder.onstop = async () => {
+        try {
+          stream.getTracks().forEach((t) => t.stop());
+          await audioCtx?.close();
+          const blob = new Blob(chunks, { type: mimeType });
+          const buf = await blob.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i += 8192) {
+            binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+          }
+          const base64 = btoa(binary);
+          resolve({ video: base64, mimeType, durationMs, sizeBytes: bytes.length });
+        } catch (err) {
+          reject(err as Error);
+        }
+      };
+
+      // If the tab closes mid-recording, the video track ends — finalise the
+      // recording with whatever we already have instead of throwing.
+      const videoTrack = stream.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.onended = () => {
+          if (recorder.state === "recording") recorder.stop();
+        };
+      }
+
+      recorder.start();
+      setTimeout(() => {
+        if (recorder.state === "recording") recorder.stop();
+      }, durationMs);
+    }
+  );
+}
