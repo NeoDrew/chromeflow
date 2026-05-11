@@ -27,16 +27,18 @@ export default function Hero() {
               borderRadius: '0.15em',
               margin: '0 0.15em',
             }}
-          />{' '}
-          plugin for{' '}
+          />
+          <br />
+          Plugin for
+          <br />
           <img
             src="/googlechrome.png"
             alt="Google Chrome"
             style={{
               display: 'inline-block',
-              height: '1em',
+              height: '1.2em',
               width: 'auto',
-              verticalAlign: '-0.18em',
+              verticalAlign: '-0.22em',
               margin: '0 0.1em',
             }}
           />
