@@ -26,9 +26,9 @@ const Note = ({ children }) => (
 )
 
 const TOOLS = [
-  { name: 'Chromeflow', src: '/chromeflow.png', highlight: true, height: 36 },
-  { name: 'Playwright', src: '/playwright.png', height: 68, blendMultiply: true },
-  { name: 'Browser Use', src: '/browseruse.png', height: 42, blendMultiply: true },
+  { name: 'Chromeflow', src: '/chromeflow.png', highlight: true, height: 41, blendMultiply: true, textBelow: true },
+  { name: 'Playwright', src: '/playwright.png', height: 75, blendMultiply: true },
+  { name: 'Browser Use', src: '/browseruse.png', height: 48, blendMultiply: true },
   { name: 'Computer Use', src: '/computeruse.webp', height: 36, textNext: true },
   { name: 'Stagehand', src: '/browserbase.svg', height: 24 },
 ]
@@ -165,9 +165,10 @@ export default function Comparison() {
                     }}>
                       <div style={{
                         display: 'flex',
+                        flexDirection: tool.textBelow ? 'column' : 'row',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        gap: '0.5rem',
+                        gap: tool.textBelow ? '0.35rem' : '0.5rem',
                         minHeight: 72,
                       }}>
                         <img
@@ -182,11 +183,11 @@ export default function Comparison() {
                             mixBlendMode: tool.blendMultiply ? 'multiply' : 'normal',
                           }}
                         />
-                        {tool.textNext && (
+                        {(tool.textNext || tool.textBelow) && (
                           <span style={{
                             fontSize: '0.95rem',
                             fontWeight: 700,
-                            color: 'var(--text)',
+                            color: tool.highlight ? 'var(--amber)' : 'var(--text)',
                           }}>{tool.name}</span>
                         )}
                       </div>
