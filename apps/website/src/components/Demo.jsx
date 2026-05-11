@@ -11,7 +11,7 @@ export default function Demo() {
       <div className="wrap">
         <p className="fade-up" style={{
           fontFamily: 'JetBrains Mono, monospace',
-          fontSize: '0.7rem', letterSpacing: '0.12em',
+          fontSize: '1.05rem', letterSpacing: '0.12em',
           textTransform: 'uppercase', color: 'var(--amber)',
           marginBottom: '1rem',
           textAlign: 'center',
