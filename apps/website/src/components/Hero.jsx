@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-const OCTO_COUNT = 12
+const OCTO_COUNT = 18
 const SIZE_PX = 44
 
 function randomOcto() {
