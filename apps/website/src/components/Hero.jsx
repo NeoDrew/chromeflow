@@ -5,10 +5,10 @@ const SIZE_PX = 44
 const NEAREST_COUNT = 7
 const JUMP_INTERVAL_MS = 1800   // 1.8s between jumps — gives breathing room to "float" in between
 const JUMP_LERP = 1.5           // overshoot — travels 1.5x the gap so it flies past the cursor
-const JUMP_TRANSITION_MS = 850  // slower swoop instead of a snap — feels like a graceful arc
+const JUMP_TRANSITION_MS = 1200 // glide, not zoom — ~3x drift speed instead of an instant flick
 const DRIFT_TRANSITION_MS = 2400 // slow drift between random spots
-const JUMP_FRESH_MS = 1400      // window after a jump where we still use the swoop transition
-const JUMP_EASING = 'cubic-bezier(0.16, 1, 0.3, 1)' // ease-out-expo — fast start, soft landing
+const JUMP_FRESH_MS = 1700      // window after a jump where we still use the glide transition
+const JUMP_EASING = 'cubic-bezier(0.4, 0, 0.4, 1)' // gentle ease-in-out — no fast-start kick
 
 function randomOcto() {
   return {
