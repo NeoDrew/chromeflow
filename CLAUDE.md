@@ -104,13 +104,6 @@ use `take_screenshot(copy_to_clipboard=true, save_to="downloads")` — saves a P
 and copies it to the clipboard. The defaults (`copy_to_clipboard=false, save_to="none"`) return
 the image to Claude only.
 
-To record a short video of the active tab (bug repro, flow demo, hand-off to a teammate),
-use `record_window(duration_ms=10000, copy_to_clipboard=true)` — records a WebM, saves to
-~/Downloads, and copies a file reference to the clipboard so pasting into Slack, Messages,
-or Notion uploads it. Pass `include_audio=true` to also capture tab audio. The video is NOT
-returned inline to Claude (WebM can't be rendered in chat); only a text summary (path, size,
-duration) is. Duration clamps to 500ms..120000ms.
-
 ## Working with complex forms
 - Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory
   of every field (type, label, current value, vertical position, and section heading). Use
