@@ -16,7 +16,7 @@ export function useScrollAnimation() {
           observer.unobserve(el)
         }
       },
-      { threshold: 0.08 }
+      { threshold: 0.4 }
     )
 
     observer.observe(el)
