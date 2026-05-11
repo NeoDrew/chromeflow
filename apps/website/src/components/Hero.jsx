@@ -17,20 +17,34 @@ function HeroOctos() {
   )
 
   useEffect(() => {
+    const timeouts = []
     const intervals = []
     for (let i = 0; i < OCTO_COUNT; i++) {
-      // Stagger each octo's interval so all 12 don't move at the exact same moment.
       const period = 2700 + Math.random() * 600 // 2.7–3.3s
-      const id = setInterval(() => {
+      // Random 0–3s offset before this octo's first move, then keep moving on its
+      // own ~3s cadence. Decouples each octo's phase from every other one so they
+      // never sync up.
+      const initialDelay = Math.random() * 3000
+
+      const moveOne = () => {
         setOctos((prev) => {
           const next = prev.slice()
           next[i] = randomOcto()
           return next
         })
-      }, period)
-      intervals.push(id)
+      }
+
+      const timeoutId = setTimeout(() => {
+        moveOne()
+        const intervalId = setInterval(moveOne, period)
+        intervals.push(intervalId)
+      }, initialDelay)
+      timeouts.push(timeoutId)
     }
-    return () => intervals.forEach(clearInterval)
+    return () => {
+      timeouts.forEach(clearTimeout)
+      intervals.forEach(clearInterval)
+    }
   }, [])
 
   return (
