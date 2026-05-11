@@ -191,7 +191,7 @@ export default function Setup() {
           borderRadius: '6px',
           boxShadow: '0 1px 6px rgba(0,0,0,0.06)',
         }}>Installation</p>
-        <h2 className="fade-up delay-1" style={{
+        <h2 className="fade-up" style={{
           fontSize: 'clamp(1.8rem, 3vw, 2.4rem)',
           fontWeight: 700, letterSpacing: '-0.025em',
           marginBottom: '2.5rem',
@@ -200,18 +200,20 @@ export default function Setup() {
           padding: '0.5rem 1.1rem',
           borderRadius: '10px',
           boxShadow: '0 1px 8px rgba(0,0,0,0.08)',
+          transitionDelay: '0.35s',
         }}>
           Two steps. That's it.
         </h2>
 
-        <div className="fade-up delay-2 cols-2" style={{ gap: '1.25rem' }}>
+        <div className="cols-2" style={{ gap: '1.25rem' }}>
 
           {/* Step 1 */}
-          <div style={{
+          <div className="fade-up" style={{
             background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: 'var(--radius-lg)', padding: '1.75rem',
             boxShadow: 'var(--shadow)',
             display: 'flex', flexDirection: 'column',
+            transitionDelay: '0.75s',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
               <StepNum n="1" />
@@ -225,11 +227,12 @@ export default function Setup() {
           </div>
 
           {/* Step 2 */}
-          <div style={{
+          <div className="fade-up" style={{
             background: 'var(--surface)', border: '1px solid var(--border)',
             borderRadius: 'var(--radius-lg)', padding: '1.75rem',
             boxShadow: 'var(--shadow)',
             display: 'flex', flexDirection: 'column',
+            transitionDelay: '1.15s',
           }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
               <StepNum n="2" />
@@ -327,7 +330,7 @@ export default function Setup() {
                     <path d="M8 11V7a4 4 0 0 1 8 0v4" />
                   </svg>
                   <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    chromeflow.tech
+                    google.com
                   </span>
                 </div>
                 {/* Extensions puzzle icon */}
