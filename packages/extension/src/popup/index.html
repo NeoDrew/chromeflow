@@ -68,38 +68,71 @@
 
     .group { margin-bottom: 16px; }
     .group:last-of-type { margin-bottom: 0; }
+    /* Static section label — "This window" */
     .group-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      font-size: 13px;
-      color: var(--text-muted);
+      font-size: 11px;
+      color: var(--text-faint);
       text-transform: uppercase;
-      letter-spacing: 0.4px;
+      letter-spacing: 0.5px;
       font-weight: 600;
-      padding: 8px 4px;
-      margin-bottom: 10px;
-      cursor: pointer;
+      padding: 4px 0;
+      margin-bottom: 8px;
+      cursor: default;
       user-select: none;
-      border-radius: 6px;
-      transition: background 0.12s;
     }
-    .group-header:not(.static):hover { background: var(--bg-subtle); }
-    .group-header.static { cursor: default; }
-    .group-count {
+    /* Collapsible dropdown — "Other windows", "Unassigned" */
+    .group-header:not(.static) {
+      font-size: 13px;
+      color: var(--text);
+      text-transform: none;
+      letter-spacing: 0;
+      padding: 10px 12px;
+      margin-bottom: 10px;
       background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
+    }
+    .group-header:not(.static):hover {
+      background: #eef0f3;
+      border-color: #d4d8de;
+    }
+    .group-header:not(.static):active {
+      background: #e6e9ee;
+    }
+    .group-right {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .group-count {
+      background: var(--bg);
       color: var(--text-muted);
       padding: 2px 9px;
       border-radius: 999px;
       font-size: 11px;
       font-weight: 600;
       letter-spacing: 0;
+      border: 1px solid var(--border);
+    }
+    .group-header.static .group-count {
+      background: var(--bg-subtle);
+      border: none;
     }
     .group-toggle {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      font-size: 14px;
+      line-height: 1;
+      color: var(--text-muted);
       transition: transform 0.15s ease;
-      margin-right: 4px;
-      color: var(--text-faint);
     }
     .group.collapsed .group-toggle { transform: rotate(-90deg); }
     .group.collapsed .group-body { display: none; }
