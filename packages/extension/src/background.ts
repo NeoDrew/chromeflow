@@ -53,13 +53,23 @@ const recentNavigations = new Map<number, { url: string; time: number }>();
 
 async function ensureOffscreen() {
   const existing = await chrome.offscreen.hasDocument?.();
-  if (!existing) {
-    await chrome.offscreen.createDocument({
-      url: OFFSCREEN_URL,
-      reasons: [chrome.offscreen.Reason.WORKERS],
-      justification: "Maintain persistent WebSocket connection to chromeflow MCP server",
-    });
+  if (existing) {
+    // Offscreen docs created before v0.9.0 only have the WORKERS reason and
+    // can't use getUserMedia. Reasons are immutable on an existing doc, so the
+    // one-time fix is to close it and recreate with both reasons.
+    const { cfOffscreenReasonsV2 } = await chrome.storage.local.get("cfOffscreenReasonsV2");
+    if (cfOffscreenReasonsV2) return;
+    try {
+      await chrome.offscreen.closeDocument();
+    } catch { /* nothing to close */ }
   }
+  await chrome.offscreen.createDocument({
+    url: OFFSCREEN_URL,
+    reasons: [chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.USER_MEDIA],
+    justification:
+      "Maintain persistent WebSocket connection to chromeflow MCP server and run MediaRecorder for record_window",
+  });
+  await chrome.storage.local.set({ cfOffscreenReasonsV2: true });
 }
 
 // Ensure the per-install DOM marker prefix is generated before any content
@@ -558,6 +568,42 @@ async function handleMcpMessage(msg: {
       }
 
       return { type: "screenshot_response", image: base64, width: finalWidth, height: finalHeight };
+    }
+
+    case "record_window": {
+      const tab = await getActiveTab(port);
+      if (!isScriptableUrl(tab.url)) {
+        throw new Error(
+          `Cannot record ${tab.url} — tabCapture is blocked on Chrome internal pages. Navigate to a regular webpage first.`
+        );
+      }
+      await ensureOffscreen();
+      const streamId = await new Promise<string>((resolve, reject) => {
+        chrome.tabCapture.getMediaStreamId({ targetTabId: tab.id! }, (id) => {
+          if (chrome.runtime.lastError || !id) {
+            reject(new Error(chrome.runtime.lastError?.message ?? "Failed to get media stream id"));
+          } else {
+            resolve(id);
+          }
+        });
+      });
+      const res = await chrome.runtime.sendMessage({
+        source: "chromeflow-background",
+        type: "start_recording",
+        streamId,
+        durationMs: msg.durationMs,
+        includeAudio: msg.includeAudio === true,
+      });
+      if (!res?.ok) {
+        throw new Error(res?.error ?? "Recording failed");
+      }
+      return {
+        type: "record_window_response",
+        video: res.video,
+        mimeType: res.mimeType,
+        durationMs: res.durationMs,
+        sizeBytes: res.sizeBytes,
+      };
     }
 
     case "start_click_watch": {

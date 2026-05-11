@@ -130,6 +130,81 @@ IMPORTANT: Do NOT use this to read page content — call get_page_text instead, 
   );
 
   server.tool(
+    "record_window",
+    `Record a video of the active tab as a WebM file. Use when the user wants to share a recording (bug repro, flow demo, hand-off to a teammate) — drag into Slack, paste into Messages, attach to an issue.
+
+The video is NOT returned inline to Claude (WebM can't be rendered in chat, and the bytes would blow context). The response is text-only: saved path, file size, duration. Pass copy_to_clipboard=true to also put the file on the macOS clipboard so it pastes as an upload in Slack/Messages/Notion or as a Finder alias.
+
+The tool blocks for duration_ms while recording. Tab audio is captured only when include_audio=true (default off); when on, the tab continues to play audibly during recording.`,
+    {
+      duration_ms: z
+        .number()
+        .int()
+        .min(500)
+        .max(120_000)
+        .describe("Recording length in milliseconds. Range 500-120000 (0.5s to 2min)."),
+      include_audio: z
+        .boolean()
+        .optional()
+        .describe("Capture the tab's audio in addition to video. Default false."),
+      save_to: z
+        .enum(["downloads", "cwd", "none"])
+        .optional()
+        .describe('Where to save the WebM: "downloads" (~/Downloads, default), "cwd" (Claude\'s working directory), or "none" (only written to /tmp).'),
+      copy_to_clipboard: z
+        .boolean()
+        .optional()
+        .describe("Copy a file reference to the system clipboard so it pastes as an upload (macOS only). Default false."),
+    },
+    async ({ duration_ms, include_audio = false, save_to = "downloads", copy_to_clipboard = false }) => {
+      const wsTimeoutMs = duration_ms + 15_000;
+      const response = await bridge.request(
+        { type: "record_window", durationMs: duration_ms, includeAudio: include_audio },
+        wsTimeoutMs
+      );
+      if (response.type !== "record_window_response") {
+        throw new Error("Unexpected response from extension");
+      }
+
+      const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+      const filename = `chromeflow-${timestamp}.webm`;
+      const videoBuffer = Buffer.from(response.video, "base64");
+      const tmpPath = join(tmpdir(), filename);
+      writeFileSync(tmpPath, videoBuffer);
+
+      let savedPath = tmpPath;
+      const notes: string[] = [];
+      if (save_to !== "none") {
+        savedPath = save_to === "cwd"
+          ? join(process.cwd(), filename)
+          : join(homedir(), "Downloads", filename);
+        copyFileSync(tmpPath, savedPath);
+      }
+
+      let clipboardNote = "";
+      if (copy_to_clipboard) {
+        try {
+          execSync(`osascript -e 'set the clipboard to (POSIX file "${savedPath}")'`);
+          clipboardNote = " Clipboard: file reference copied (paste into Slack/Messages/Finder).";
+        } catch {
+          // best effort — non-mac platforms silently skip
+        }
+      }
+
+      const sizeKb = response.sizeBytes / 1024;
+      const sizeStr = sizeKb >= 1024 ? `${(sizeKb / 1024).toFixed(1)} MB` : `${sizeKb.toFixed(0)} KB`;
+      const durationStr = `${(response.durationMs / 1000).toFixed(1)}s`;
+      const summary = save_to === "none"
+        ? `Recorded ${durationStr} (${sizeStr}). Written to ${tmpPath} (no save_to set).${clipboardNote}`
+        : `Recorded ${durationStr} (${sizeStr}) → ${savedPath}.${clipboardNote}`;
+
+      return {
+        content: [{ type: "text", text: summary }],
+      };
+    }
+  );
+
+  server.tool(
     "capture_terminal",
     `Capture a screenshot of the terminal window (Terminal, iTerm2, Warp, VS Code, Ghostty, etc.) and save it as a PNG.
 Use this when you need a screenshot of terminal output — e.g. test results, build logs, or command output — to upload to a form via set_file_input.
