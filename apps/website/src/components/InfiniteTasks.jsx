@@ -248,7 +248,7 @@ export default function InfiniteTasks() {
   const trackRef = useRef(null)
   const interactionRef = useRef(0)
   const hoveringRef = useRef(false)
-  const dragRef = useRef({ active: false, startX: 0, startScrollLeft: 0, moved: false })
+  const dragRef = useRef({ active: false, startX: 0, lastX: 0, startScrollLeft: 0, moved: false })
 
   // Start in the middle copy so we can scroll either direction infinitely
   useEffect(() => {
@@ -327,6 +327,7 @@ export default function InfiniteTasks() {
     dragRef.current = {
       active: true,
       startX: e.clientX,
+      lastX: e.clientX,
       startScrollLeft: track.scrollLeft,
       moved: false,
     }
@@ -341,6 +342,7 @@ export default function InfiniteTasks() {
     if (!drag.active) return
     const track = trackRef.current
     if (!track) return
+    drag.lastX = e.clientX
     const dx = e.clientX - drag.startX
     if (Math.abs(dx) > 3) drag.moved = true
     track.scrollLeft = drag.startScrollLeft - dx
@@ -355,24 +357,22 @@ export default function InfiniteTasks() {
     track.releasePointerCapture?.(e.pointerId)
     track.style.cursor = 'grab'
 
-    // Manually compute the nearest snap point and smooth-scroll there before
-    // re-enabling scroll-snap, otherwise mandatory snap clips to the target
-    // instantly with no animation.
-    const trackRect = track.getBoundingClientRect()
-    const viewportCenter = trackRect.left + trackRect.width / 2
-    const cards = track.querySelectorAll('[data-card]')
-    let bestDelta = 0
-    let bestDist = Infinity
-    for (const card of cards) {
-      const r = card.getBoundingClientRect()
-      const cardCenter = r.left + r.width / 2
-      const dist = Math.abs(cardCenter - viewportCenter)
-      if (dist < bestDist) {
-        bestDist = dist
-        bestDelta = cardCenter - viewportCenter
-      }
+    // Decide target by drag *direction*, not by which card happens to be
+    // closest. A small flick should advance one card — the user shouldn't
+    // need to drag halfway across the viewport.
+    const dx = drag.lastX - drag.startX
+    const card = track.querySelector('[data-card]')
+    const cardStep = (card?.offsetWidth ?? 0) + CARD_GAP_PX
+    const DRAG_THRESHOLD = 30 // px — barely more than an accidental click jiggle
+
+    let target = drag.startScrollLeft
+    if (Math.abs(dx) >= DRAG_THRESHOLD && cardStep > 0) {
+      const direction = dx < 0 ? 1 : -1 // drag left → advance forward
+      const cardsMoved = Math.max(1, Math.round(Math.abs(dx) / cardStep))
+      target = drag.startScrollLeft + direction * cardsMoved * cardStep
     }
-    track.scrollTo({ left: track.scrollLeft + bestDelta, behavior: 'smooth' })
+
+    track.scrollTo({ left: target, behavior: 'smooth' })
 
     // Re-enable mandatory snap after the smooth-scroll lands so the next
     // drag starts cleanly. Behavior cleared back to default in the same tick.
