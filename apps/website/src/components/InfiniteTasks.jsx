@@ -24,13 +24,7 @@ const LogoYouTube = () => (
 )
 
 const LogoGmail = () => (
-  <svg width="78" height="58" viewBox="0 0 24 18" aria-hidden="true">
-    <path fill="#4285f4" d="M1.636 18A1.636 1.636 0 0 1 0 16.364V2.455c0-.502.247-.96.665-1.293L12 9.273l11.336-8.109A1.629 1.629 0 0 1 24 2.455v13.909C24 17.268 23.268 18 22.364 18h-3.819V8.73L12 13.64l-6.545-4.91V18H1.636Z" />
-    <path fill="#34a853" d="M1.636 18A1.636 1.636 0 0 1 0 16.364V2.455l5.455 6.275V18H1.636Z" />
-    <path fill="#fbbc04" d="M22.364 18h-3.819V8.73L24 2.455v13.909c0 .904-.732 1.636-1.636 1.636Z" />
-    <path fill="#ea4335" d="M5.455 8.73 0 2.455A1.629 1.629 0 0 1 1.636.818h.005L12 8.727l10.359-7.909h.005A1.629 1.629 0 0 1 24 2.455L12 11.455 5.455 8.73Z" />
-    <path fill="#c5221f" d="M5.455 8.73V18H12V11.455L5.455 8.73Z" opacity="0" />
-  </svg>
+  <img src="/gmail.svg" alt="" width="78" height="58" style={{ display: 'block' }} aria-hidden="true" />
 )
 
 const LogoGitHub = () => (
@@ -197,7 +191,7 @@ const TASKS = [
 const TRIPLE = [...TASKS, ...TASKS, ...TASKS]
 
 const CARD_GAP_PX = 32
-const ADVANCE_MS = 1500
+const ADVANCE_MS = 2500
 const PAUSE_AFTER_INTERACTION_MS = 6000
 
 const TaskCard = ({ task }) => (
