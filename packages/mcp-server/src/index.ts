@@ -1,34 +1,16 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { WsBridge } from "./ws-bridge.js";
 import { registerBrowserTools } from "./tools/browser.js";
 import { registerHighlightTools } from "./tools/highlight.js";
 import { registerCaptureTools } from "./tools/capture.js";
 import { registerFlowTools } from "./tools/flow.js";
-import { runSetup, runUpdate, runUninstall, runDoctor } from "./setup.js";
 
-const PACKAGE_VERSION: string = (() => {
-  try {
-    const pkgPath = fileURLToPath(new URL("../package.json", import.meta.url));
-    return JSON.parse(readFileSync(pkgPath, "utf8")).version as string;
-  } catch {
-    return "unknown";
-  }
-})();
+declare const __CHROMEFLOW_VERSION__: string;
+const PACKAGE_VERSION: string =
+  typeof __CHROMEFLOW_VERSION__ !== "undefined" ? __CHROMEFLOW_VERSION__ : "dev";
 
-if (process.argv[2] === "setup") {
-  runSetup().catch((err) => { console.error(err); process.exit(1); });
-} else if (process.argv[2] === "update") {
-  runUpdate().catch((err) => { console.error(err); process.exit(1); });
-} else if (process.argv[2] === "uninstall") {
-  runUninstall().catch((err) => { console.error(err); process.exit(1); });
-} else if (process.argv[2] === "doctor") {
-  runDoctor(PACKAGE_VERSION).catch((err) => { console.error(err); process.exit(1); });
-} else {
-  main().catch((err) => { console.error("[chromeflow] Fatal error:", err); process.exit(1); });
-}
+main().catch((err) => { console.error("[chromeflow] Fatal error:", err); process.exit(1); });
 
 async function main() {
   const bridge = new WsBridge();
@@ -49,7 +31,7 @@ async function main() {
   if (toolNames.length > 0) {
     console.error(`[chromeflow] tools: ${toolNames.join(", ")}`);
   } else {
-    console.error(`[chromeflow] WARNING: no tools registered. Try \`npx chromeflow doctor\`.`);
+    console.error(`[chromeflow] WARNING: no tools registered.`);
   }
 
   // MCP prompts — appear as slash commands in Claude Code
@@ -102,4 +84,3 @@ async function main() {
 
   console.error(`[chromeflow] v${PACKAGE_VERSION} MCP server running. Waiting for Claude...`);
 }
-

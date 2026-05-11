@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "chromeflow": {
-      "command": "npx",
-      "args": ["-y", "chromeflow"]
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/server/chromeflow.mjs"]
     }
   }
 }
