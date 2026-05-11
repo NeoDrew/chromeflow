@@ -77,7 +77,7 @@ code {
 .seq {
   opacity: 0;
   transform: translateY(6px);
-  transition: opacity 0.45s ease, transform 0.45s ease;
+  transition: opacity 0.9s ease, transform 0.9s ease;
 }
 .fade-up.visible .seq {
   opacity: 1;
