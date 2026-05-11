@@ -127,15 +127,48 @@
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      width: 18px;
-      height: 18px;
-      font-size: 14px;
+      width: 36px;
+      height: 36px;
+      font-size: 35px;
       line-height: 1;
       color: var(--text-muted);
-      transition: transform 0.15s ease;
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .group.collapsed .group-toggle { transform: rotate(-90deg); }
-    .group.collapsed .group-body { display: none; }
+    .group-body {
+      overflow: hidden;
+      transition:
+        grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+        opacity 0.22s ease;
+      display: grid;
+      grid-template-rows: 1fr;
+      opacity: 1;
+    }
+    .group-body > * {
+      min-height: 0;
+      overflow: hidden;
+    }
+    .group.collapsed .group-body {
+      grid-template-rows: 0fr;
+      opacity: 0;
+      margin-top: -4px;
+    }
+
+    /* View transitions — animate cards moving between groups when assignment changes.
+       Each card carries a unique view-transition-name (set inline per port). When the
+       DOM is re-rendered inside document.startViewTransition, the browser snapshots
+       each named element before and after, then interpolates position/size between
+       them — producing a smooth slide for reassignments without any layout-math. */
+    @media (prefers-reduced-motion: no-preference) {
+      ::view-transition-group(*) {
+        animation-duration: 0.32s;
+        animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+      }
+      ::view-transition-old(root),
+      ::view-transition-new(root) {
+        animation-duration: 0.18s;
+      }
+    }
 
     .instance {
       background: var(--card);
