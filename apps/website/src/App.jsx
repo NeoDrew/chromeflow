@@ -2,6 +2,7 @@ import Hero from './components/Hero'
 import Setup from './components/Setup'
 import Demo from './components/Demo'
 import BeforeAfter from './components/BeforeAfter'
+import InfiniteTasks from './components/InfiniteTasks'
 import Comparison from './components/Comparison'
 import Privacy from './components/Privacy'
 
@@ -16,6 +17,7 @@ export default function App() {
       <Setup />
       <Demo />
       <BeforeAfter />
+      <InfiniteTasks />
       <Comparison />
     </main>
   )
