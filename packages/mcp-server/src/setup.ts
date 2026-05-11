@@ -248,48 +248,31 @@ function tryOpenStorePage() {
 }
 
 const LEGACY_GLOBAL_HINT_MARKER = "Run `npx chromeflow setup` in this project directory";
-const POINTER_MARKER = "mcp__plugin_chromeflow_chromeflow__";
-const POINTER_BLOCK = `## Chromeflow
-
-The Chromeflow Claude Code plugin is installed. For ANY task that touches a real browser — opening sites, checking if a page is up, reading content, filling forms, logging in, capturing API keys, OAuth, scraping, navigating dashboards — use the \`mcp__plugin_chromeflow_chromeflow__*\` tools and load the \`chromeflow\` skill for the usage patterns.
-
-Do NOT fall back to Bash / \`curl\` / \`osascript\` / AppleScript / Playwright / Puppeteer for browser tasks. Chromeflow drives the user's real Chrome with their sessions intact; the fallbacks won't have their logins and will fail silently.
-`;
+const LEGACY_POINTER_MARKER = "mcp__plugin_chromeflow_chromeflow__";
 
 function patchGlobalClaudeMd() {
-  // Always-loaded pointer in ~/.claude/CLAUDE.md. The plugin's skill is loaded
-  // on demand, but Claude won't always know to look at it for subtle browser
-  // tasks — this short pointer is the safety net.
+  // The chromeflow plugin's SessionStart hook now injects the pointer
+  // automatically — no need to write to ~/.claude/CLAUDE.md. If a previous
+  // version of this CLI wrote either the legacy hint or the manual pointer,
+  // strip it out so it doesn't double up with the hook's injection.
   const globalClaudeMdPath = join(HOME, ".claude", "CLAUDE.md");
-  const dir = join(HOME, ".claude");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-
-  if (!existsSync(globalClaudeMdPath)) {
-    writeFileSync(globalClaudeMdPath, POINTER_BLOCK);
-    return "created";
-  }
+  if (!existsSync(globalClaudeMdPath)) return "absent";
 
   const existing = readFileSync(globalClaudeMdPath, "utf8");
-
-  if (existing.includes(POINTER_MARKER)) return "already-present";
+  const hasLegacy = existing.includes(LEGACY_GLOBAL_HINT_MARKER);
+  const hasManualPointer = existing.includes(LEGACY_POINTER_MARKER);
+  if (!hasLegacy && !hasManualPointer) return "absent";
 
   const sectionStart = existing.indexOf("## Chromeflow");
-  if (sectionStart >= 0 && existing.includes(LEGACY_GLOBAL_HINT_MARKER)) {
-    // Replace the legacy block with the new pointer.
-    const after = existing.slice(sectionStart);
-    const nextHeading = after.slice(2).search(/\n## /);
-    const sectionEnd = nextHeading < 0 ? existing.length : sectionStart + 2 + nextHeading + 1;
-    const before = existing.slice(0, sectionStart).trimEnd();
-    const tail = existing.slice(sectionEnd).trimStart();
-    const next = (before ? before + "\n\n" : "") + POINTER_BLOCK + (tail ? "\n" + tail : "");
-    writeFileSync(globalClaudeMdPath, next);
-    return "replaced";
-  }
+  if (sectionStart < 0) return "absent";
 
-  // Append the pointer block to whatever else lives in there.
-  const next = existing.trimEnd() + (existing.trim() ? "\n\n" : "") + POINTER_BLOCK;
-  writeFileSync(globalClaudeMdPath, next);
-  return "appended";
+  const after = existing.slice(sectionStart);
+  const nextHeading = after.slice(2).search(/\n## /);
+  const sectionEnd = nextHeading < 0 ? existing.length : sectionStart + 2 + nextHeading + 1;
+
+  const cleaned = (existing.slice(0, sectionStart) + existing.slice(sectionEnd)).trimEnd();
+  writeFileSync(globalClaudeMdPath, cleaned ? cleaned + "\n" : "");
+  return "removed";
 }
 
 export async function runSetup() {
@@ -332,14 +315,11 @@ export async function runSetup() {
     console.log(`  Install from the Chrome Web Store:\n  ${STORE_URL}`);
   }
 
-  // 4. Maintain the always-loaded chromeflow pointer in ~/.claude/CLAUDE.md
+  // 4. Strip any legacy chromeflow section from ~/.claude/CLAUDE.md.
+  //    The plugin's SessionStart hook now injects the pointer automatically.
   const globalResult = patchGlobalClaudeMd();
-  if (globalResult === "created") {
-    console.log("✓ Created ~/.claude/CLAUDE.md with chromeflow plugin pointer");
-  } else if (globalResult === "replaced") {
-    console.log("✓ Replaced legacy hint in ~/.claude/CLAUDE.md with plugin pointer");
-  } else if (globalResult === "appended") {
-    console.log("✓ Appended chromeflow plugin pointer to ~/.claude/CLAUDE.md");
+  if (globalResult === "removed") {
+    console.log("✓ Removed legacy chromeflow section from ~/.claude/CLAUDE.md (plugin hook handles it now)");
   }
 
   console.log("\nDone. Restart Claude Code to activate chromeflow.\n");

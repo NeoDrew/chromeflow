@@ -47,19 +47,7 @@ Run these inside Claude Code. The plugin registers the MCP server, pre-approves 
 
 The extension persists across Chrome restarts. You only do this once.
 
-**3. Add a pointer to `~/.claude/CLAUDE.md`** (strongly recommended):
-
-```markdown
-## Chromeflow
-
-The Chromeflow Claude Code plugin is installed. For ANY task that touches a real browser — opening sites, checking if a page is up, reading content, filling forms, logging in, capturing API keys, OAuth, scraping, navigating dashboards — use the `mcp__plugin_chromeflow_chromeflow__*` tools and load the `chromeflow` skill for the usage patterns.
-
-Do NOT fall back to Bash / `curl` / `osascript` / AppleScript / Playwright / Puppeteer for browser tasks. Chromeflow drives the user's real Chrome with their sessions intact; the fallbacks won't have their logins and will fail silently.
-```
-
-The plugin's skill is loaded on demand — but if Claude doesn't realise a task is browser-y, it can skip the skill and reach for `curl` or AppleScript instead. This 3-line pointer is always in context and keeps Claude on the right path.
-
-**4. Restart Claude Code.**
+**3. Restart Claude Code.**
 
 That's it. Claude will automatically reach for Chromeflow whenever a task needs browser interaction, in any project.
 
