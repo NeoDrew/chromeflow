@@ -203,8 +203,6 @@ const TaskCard = ({ task, isExpanded, onToggleExpand }) => {
     <div
       data-card
       style={{
-        flex: '0 0 60vw',
-        minWidth: 480,
         height: isExpanded ? 'auto' : '40vh',
         minHeight: 360,
         scrollSnapAlign: 'center',
@@ -212,7 +210,6 @@ const TaskCard = ({ task, isExpanded, onToggleExpand }) => {
         background: 'var(--surface)',
         border: '1px solid var(--border)',
         borderRadius: 'var(--radius-lg)',
-        padding: '2.5rem 3rem',
         boxShadow: 'var(--shadow)',
         display: 'flex',
         flexDirection: 'column',
@@ -476,7 +473,6 @@ export default function InfiniteTasks() {
             overflowX: 'auto',
             overflowY: 'hidden',
             scrollSnapType: 'x mandatory',
-            padding: '0.5rem 20vw 1.5rem 20vw',
             cursor: 'grab',
             WebkitOverflowScrolling: 'touch',
             userSelect: 'none',

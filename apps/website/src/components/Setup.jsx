@@ -160,7 +160,7 @@ export default function Setup() {
     <section ref={ref} id="setup" style={{
       borderTop: '1px solid var(--border)',
       borderBottom: '1px solid var(--border)',
-      padding: '7.5rem 0',
+      padding: 'clamp(3rem, 7.5vw, 7.5rem) 0',
       background: 'var(--surface-2)',
       position: 'relative',
       overflow: 'hidden',
