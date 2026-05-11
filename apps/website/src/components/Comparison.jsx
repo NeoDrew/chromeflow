@@ -29,7 +29,7 @@ const TOOLS = [
   { name: 'Chromeflow', src: '/chromeflow.png', highlight: true, height: 41, blendMultiply: true, textBelow: true },
   { name: 'Playwright', src: '/playwright.png', height: 75, blendMultiply: true },
   { name: 'Browser Use', src: '/browseruse.png', height: 48, blendMultiply: true },
-  { name: 'Computer Use', src: '/computeruse.webp', height: 36, textNext: true },
+  { name: 'Computer Use', src: '/claude.svg', height: 41, textBelow: true },
   { name: 'Stagehand', src: '/browserbase.svg', height: 24 },
 ]
 
