@@ -72,23 +72,26 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      font-size: 11px;
-      color: var(--text-faint);
+      font-size: 13px;
+      color: var(--text-muted);
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.4px;
       font-weight: 600;
-      padding: 4px 0;
-      margin-bottom: 8px;
+      padding: 8px 4px;
+      margin-bottom: 10px;
       cursor: pointer;
       user-select: none;
+      border-radius: 6px;
+      transition: background 0.12s;
     }
+    .group-header:not(.static):hover { background: var(--bg-subtle); }
     .group-header.static { cursor: default; }
     .group-count {
       background: var(--bg-subtle);
       color: var(--text-muted);
-      padding: 1px 7px;
+      padding: 2px 9px;
       border-radius: 999px;
-      font-size: 10px;
+      font-size: 11px;
       font-weight: 600;
       letter-spacing: 0;
     }
@@ -181,6 +184,14 @@
       padding: 7px 10px;
     }
     .btn-secondary:hover { background: #eef0f3; }
+    .btn:disabled,
+    .btn:disabled:hover {
+      opacity: 0.55;
+      cursor: not-allowed;
+      background: var(--bg-subtle);
+      color: var(--text-muted);
+      border-color: var(--border);
+    }
 
     .empty {
       font-size: 12px;
@@ -192,21 +203,63 @@
       border-radius: 8px;
     }
 
-    .hint {
+    .empty-onboard {
+      text-align: left;
+      padding: 16px;
+    }
+    .empty-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 4px;
+      text-align: center;
+    }
+    .empty-subtitle {
       font-size: 12px;
       color: var(--text-muted);
-      line-height: 1.55;
-      border-top: 1px solid var(--border);
-      padding-top: 12px;
-      margin-top: 16px;
+      margin-bottom: 14px;
+      text-align: center;
     }
-    .hint code {
-      background: var(--bg-subtle);
-      padding: 1px 5px;
+    .empty-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .empty-step {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+    .step-num {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .step-body {
+      font-size: 12px;
+      color: var(--text-muted);
+      line-height: 1.5;
+      flex: 1;
+    }
+    .step-body code {
+      display: block;
+      margin-top: 5px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      padding: 5px 8px;
       border-radius: 4px;
       font-family: ui-monospace, "SF Mono", Menlo, monospace;
       font-size: 11px;
       color: var(--accent);
+      user-select: all;
     }
   </style>
 </head>
@@ -220,10 +273,6 @@
   </div>
 
   <div id="groups"></div>
-
-  <div class="hint">
-    Each Claude Code session gets its own port (<code>7878-7888</code>). Assign one window per session for parallel automations.
-  </div>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -85,13 +85,16 @@ function renderInstanceCard(
   }
   const metaHtml = metaPieces.join('<span class="meta-sep">·</span>');
 
-  const primaryBtn = assignedWindowId
-    ? (isThisWindow ? "Reassign to this window" : "Use this window instead")
-    : "Use this window";
+  const primaryBtn = isThisWindow
+    ? "✓ Assigned to this window"
+    : assignedWindowId
+      ? "Use this window instead"
+      : "Use this window";
+  const primaryDisabled = isThisWindow;
 
   const buttons = `
     <div class="btn-row">
-      <button class="btn btn-primary" data-action="set" data-port="${port}">${primaryBtn}</button>
+      <button class="btn btn-primary" data-action="set" data-port="${port}"${primaryDisabled ? " disabled" : ""}>${primaryBtn}</button>
       ${assignedWindowId ? `<button class="btn btn-secondary" data-action="clear" data-port="${port}">Clear</button>` : ""}
     </div>
   `;
@@ -153,9 +156,25 @@ function render(state: State) {
 
   if (sortedPorts.length === 0) {
     groupsEl.innerHTML = `
-      <div class="empty">
-        No Claude Code instances detected.<br>
-        Start chromeflow MCP in your project to begin.
+      <div class="empty empty-onboard">
+        <div class="empty-title">No Claude Code sessions yet</div>
+        <div class="empty-subtitle">Get connected in two steps:</div>
+        <div class="empty-steps">
+          <div class="empty-step">
+            <div class="step-num">1</div>
+            <div class="step-body">
+              Add &amp; install the Chromeflow plugin in Claude Code:
+              <code>/plugin marketplace add NeoDrew/chromeflow</code>
+              <code>/plugin install chromeflow</code>
+            </div>
+          </div>
+          <div class="empty-step">
+            <div class="step-num">2</div>
+            <div class="step-body">
+              Open Claude Code in your project — sessions show up here automatically.
+            </div>
+          </div>
+        </div>
       </div>
     `;
     return;
