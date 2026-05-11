@@ -83,8 +83,24 @@ export default function Setup() {
       borderTop: '1px solid var(--border)',
       padding: '5rem 0',
       background: 'var(--surface-2)',
+      position: 'relative',
+      overflow: 'hidden',
     }}>
-      <div className="wrap">
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          inset: 0,
+          backgroundImage: 'url(/octoMinecraft.png)',
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+          opacity: 0.32,
+          pointerEvents: 'none',
+          zIndex: 0,
+        }}
+      />
+      <div className="wrap" style={{ position: 'relative', zIndex: 1 }}>
         <p className="fade-up" style={{
           fontFamily: 'JetBrains Mono, monospace',
           fontSize: '0.7rem', letterSpacing: '0.12em',
