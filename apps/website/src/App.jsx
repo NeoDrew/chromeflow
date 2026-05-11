@@ -1,6 +1,7 @@
 import Hero from './components/Hero'
 import Setup from './components/Setup'
 import Demo from './components/Demo'
+import OctoWave from './components/OctoWave'
 import BeforeAfter from './components/BeforeAfter'
 import InfiniteTasks from './components/InfiniteTasks'
 import Comparison from './components/Comparison'
@@ -16,6 +17,7 @@ export default function App() {
       <Hero />
       <Setup />
       <Demo />
+      <OctoWave />
       <BeforeAfter />
       <InfiniteTasks />
       <Comparison />
