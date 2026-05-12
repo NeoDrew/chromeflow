@@ -205,6 +205,37 @@ export default function Hero() {
           />
         </h1>
       </div>
+      <div
+        className="hero-el"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 'clamp(1.5rem, 4vh, 3rem)',
+          textAlign: 'center',
+          zIndex: 1,
+          fontSize: 'clamp(1.05rem, 3vw, 2.5rem)',
+          fontWeight: 500,
+          letterSpacing: '-0.02em',
+          color: 'var(--muted)',
+          lineHeight: 1.2,
+        }}
+      >
+        Also works with{' '}
+        <img
+          src="/codex.png"
+          alt="Codex"
+          style={{
+            display: 'inline-block',
+            height: '1.1em',
+            width: 'auto',
+            verticalAlign: '-0.22em',
+            margin: '0 0.15em',
+            borderRadius: '0.15em',
+          }}
+        />
+        <span style={{ color: 'var(--text)', fontWeight: 600 }}>Codex</span>
+      </div>
     </section>
   )
 }
