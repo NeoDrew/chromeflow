@@ -30,7 +30,10 @@ Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirr
         return { content: [{ type: "text", text: "fill_input: pass textHint OR selector, not both." }] };
       }
       if (selector) {
-        const response = await bridge.request({ type: "react_set_input", selector, value, frame });
+        // Pass "" instead of undefined for frame — chrome.scripting.executeScript
+        // rejects `undefined` in args as unserializable. The extension handler
+        // treats empty string as falsy (no iframe), same as undefined.
+        const response = await bridge.request({ type: "react_set_input", selector, value, frame: frame ?? "" });
         const r = response as { success?: boolean; message?: string };
         return { content: [{ type: "text", text: r.message ?? (r.success ? `Set "${selector}"` : `Failed to set "${selector}"`) }] };
       }

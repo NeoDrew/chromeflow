@@ -25126,7 +25126,7 @@ Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirr
         return { content: [{ type: "text", text: "fill_input: pass textHint OR selector, not both." }] };
       }
       if (selector) {
-        const response2 = await bridge.request({ type: "react_set_input", selector, value, frame });
+        const response2 = await bridge.request({ type: "react_set_input", selector, value, frame: frame ?? "" });
         const r2 = response2;
         return { content: [{ type: "text", text: r2.message ?? (r2.success ? `Set "${selector}"` : `Failed to set "${selector}"`) }] };
       }

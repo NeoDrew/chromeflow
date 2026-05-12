@@ -50,7 +50,7 @@ export async function parseDoc(buffer: ArrayBuffer, format: SupportedFormat): Pr
       return await extractDocx(buffer);
     case "pdf":
       throw new Error(
-        "PDF parsing is not yet implemented in chromeflow 0.9.3. Use `download_file({url})` to save the PDF locally, then run `pdftotext` (poppler-utils) or `textutil -convert txt` (macOS) on the returned path. PDF support is planned for 0.9.4 — see https://github.com/NeoDrew/chromeflow for status."
+        "PDF parsing is not yet implemented in chromeflow. Use `download_file({url})` to save the PDF locally, then run `pdftotext` (poppler-utils) or `textutil -convert txt` (macOS) on the returned path."
       );
   }
 }
