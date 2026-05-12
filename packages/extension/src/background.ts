@@ -7,6 +7,8 @@
  *   Background handles tab ops directly (screenshot, navigate, navigation watch).
  */
 
+import { parseDoc, detectFormat, type SupportedFormat } from "./lib/parse-doc";
+
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 
 // ─── Per-instance Claude window assignments ────────────────────────────────
@@ -803,6 +805,7 @@ async function handleMcpMessage(msg: {
     case "click_element": {
       const tab = await getActiveTab(port);
       const tabId = tab.id!;
+      const before_url = tab.url ?? "";
 
       // Phase 1: ask content script to find, scroll, and tag the element,
       // returning its viewport coordinates (with small jitter).
@@ -822,14 +825,31 @@ async function handleMcpMessage(msg: {
       }
 
       if (!prep || !prep.success) {
-        return { type: "click_element_response", success: false, message: prep?.message ?? "click failed" };
+        return { type: "click_element_response", success: false, message: prep?.message ?? "click failed", before_url, after_url: before_url, navigated: false };
       }
 
       // Pre-flight skip: matched element resolved to an already-checked radio.
       // The page is already in the desired state, so firing the click would
       // toggle it OFF on React-controlled forms.
       if (prep.skipClick) {
-        return { type: "click_element_response", success: true, message: prep.message };
+        return { type: "click_element_response", success: true, message: prep.message, before_url, after_url: before_url, navigated: false };
+      }
+
+      // Pre-flight refusal: matched element is 0×0 (display:none, off-DOM, or
+      // a render-time race). A click at coords inside a 0×0 element doesn't
+      // dispatch any useful event and any until_* clause is guaranteed to
+      // time out (5s wasted per call). Better to fail fast with a clear
+      // message so the caller can wait for visibility first.
+      if (prep.width === 0 && prep.height === 0) {
+        const label = prep.label ?? msg.textHint;
+        return {
+          type: "click_element_response",
+          success: false,
+          message: `Matched element "${label}" is 0×0 (hidden, display:none, or not yet rendered). Refusing to click — a click at this size would dispatch no useful event. Try wait_for_selector with a state-specific selector that only matches the visible state, scroll_to_element to bring it into view, or pass an until_* clause with a higher timeout to wait for the element to materialize.`,
+          before_url,
+          after_url: before_url,
+          navigated: false,
+        };
       }
 
       // Phase 2: dispatch the click via CDP (isTrusted=true events) if possible.
@@ -912,7 +932,9 @@ async function handleMcpMessage(msg: {
         // Fallback: content-script synthetic click (isTrusted=false).
         result = await forwardToContentScript(tab, msg) as { success: boolean; message: string };
         if (!result.success) {
-          return { type: "click_element_response", success: false, message: result.message };
+          const [postFailTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+          const after_url = postFailTab?.url ?? before_url;
+          return { type: "click_element_response", success: false, message: result.message, before_url, after_url, navigated: after_url !== before_url };
         }
       }
 
@@ -1007,6 +1029,14 @@ async function handleMcpMessage(msg: {
         } catch { /* non-scriptable or unloaded tab — ignore */ }
       }
 
+      // Snapshot the post-click URL so callers can spot silent redirects.
+      // A click "Assessment" link on Canvas that bounces to the course home
+      // returns success today with no indication anything went wrong — the
+      // before/after URL pair makes that visible.
+      const [postTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+      const after_url = postTab?.url ?? navigationResult ?? before_url;
+      const navigated = after_url !== before_url;
+
       let message: string;
       if (untilResult) {
         // The until-clause is the authoritative signal — a successful click
@@ -1016,7 +1046,7 @@ async function handleMcpMessage(msg: {
         if (alertMessage) {
           message += `\n\nPAGE ALERT: "${alertMessage}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
         }
-        return { type: "click_element_response", success: untilResult.ok, message };
+        return { type: "click_element_response", success: untilResult.ok, message, before_url, after_url, navigated };
       }
 
       message = navigationResult
@@ -1027,7 +1057,7 @@ async function handleMcpMessage(msg: {
         message += `\n\nPAGE ALERT: "${alertMessage}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
       }
 
-      return { type: "click_element_response", success: true, message };
+      return { type: "click_element_response", success: true, message, before_url, after_url, navigated };
     }
 
     case "type_text": {
@@ -1604,6 +1634,161 @@ async function handleMcpMessage(msg: {
         lines.push("(no headers captured — extra-info event never fired; try again)");
       }
       return { type: "action_done", requestId: msg.requestId, message: lines.join("\n") };
+    }
+
+    case "read_attachment": {
+      const url = msg.url as string;
+      const formatHint = msg.format as string | undefined;
+      const maxChars = (msg.max_chars as number | undefined) ?? 50_000;
+
+      // Use the same privileged-fetch path as fetch_url — extension authority,
+      // full cookie jar, page CSP doesn't apply.
+      const resp = await fetch(url, { credentials: "include" });
+      if (!resp.ok) {
+        throw new Error(`fetch failed: HTTP ${resp.status} ${resp.statusText}`);
+      }
+      const contentType = resp.headers.get("content-type") ?? "";
+      const buf = await resp.arrayBuffer();
+
+      const format = (formatHint as SupportedFormat | undefined) ?? detectFormat(contentType, url);
+      if (!format) {
+        throw new Error(
+          `Could not detect format for ${url} (content-type: "${contentType}"). Pass format: "txt" | "md" | "csv" | "json" | "xml" | "html" | "docx" | "pdf" explicitly.`
+        );
+      }
+
+      const fullText = await parseDoc(buf, format);
+      const truncated = fullText.length > maxChars;
+      const text = truncated ? fullText.slice(0, maxChars) : fullText;
+      return {
+        type: "read_attachment_response",
+        requestId: msg.requestId,
+        text,
+        format,
+        total_chars: fullText.length,
+        truncated,
+        mime: contentType,
+      };
+    }
+
+    case "download_file": {
+      const url = msg.url as string;
+      const filename = msg.filename as string | undefined;
+      const timeoutMs = (msg.timeout_ms as number | undefined) ?? 60000;
+
+      // chrome.downloads goes through the extension's privileged network stack,
+      // so it picks up the user's existing cookies for the URL's origin.
+      // That's what makes authenticated downloads (Canvas docx, Stripe receipts,
+      // GitHub release tarballs behind SSO) work without re-auth.
+      const id = await chrome.downloads.download({
+        url,
+        filename,
+        conflictAction: "uniquify",
+      });
+
+      await new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          chrome.downloads.onChanged.removeListener(onChanged);
+          reject(new Error(`download timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+        const onChanged = (delta: chrome.downloads.DownloadDelta) => {
+          if (delta.id !== id) return;
+          const state = delta.state?.current;
+          if (state === "complete") {
+            chrome.downloads.onChanged.removeListener(onChanged);
+            clearTimeout(timer);
+            resolve();
+          } else if (state === "interrupted") {
+            chrome.downloads.onChanged.removeListener(onChanged);
+            clearTimeout(timer);
+            reject(new Error(`download interrupted: ${delta.error?.current ?? "unknown"}`));
+          }
+        };
+        chrome.downloads.onChanged.addListener(onChanged);
+      });
+
+      const [item] = await chrome.downloads.search({ id });
+      if (!item) throw new Error("download record vanished after completion");
+      return {
+        type: "download_file_response",
+        requestId: msg.requestId,
+        path: item.filename,
+        mime: item.mime ?? "",
+        size: item.fileSize ?? 0,
+      };
+    }
+
+    case "fetch_url": {
+      const url = msg.url as string;
+      const method = (msg.method as string | undefined) ?? "GET";
+      const reqHeaders = (msg.headers as Record<string, string> | undefined) ?? {};
+      const body = msg.body as string | undefined;
+      const binary = !!msg.binary;
+      const timeoutMs = (msg.timeout_ms as number | undefined) ?? 30000;
+      const maxBytes = (msg.max_bytes as number | undefined) ?? 2_000_000;
+
+      // Privileged fetch: runs in the extension service-worker context, so:
+      //  - extension's host_permissions (<all_urls>) apply; no page CSP
+      //  - Chrome's cookie jar is included automatically for any origin
+      //  - page's connect-src directive does not apply
+      // This is what unblocks Canvas-style "page CSP says no" workflows.
+      const ctl = new AbortController();
+      const timer = setTimeout(() => ctl.abort(), timeoutMs);
+      let resp: Response;
+      try {
+        resp = await fetch(url, {
+          method,
+          headers: reqHeaders,
+          body: body !== undefined && method !== "GET" && method !== "HEAD" ? body : undefined,
+          signal: ctl.signal,
+          credentials: "include",
+        });
+      } finally {
+        clearTimeout(timer);
+      }
+
+      const headers: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { headers[k] = v; });
+      const contentType = resp.headers.get("content-type") ?? "";
+
+      const buf = await resp.arrayBuffer();
+      const totalBytes = buf.byteLength;
+      const truncated = totalBytes > maxBytes;
+      const clipped = truncated ? buf.slice(0, maxBytes) : buf;
+
+      if (binary) {
+        // Chunked base64 encode to avoid blowing the call stack on large bodies.
+        const bytes = new Uint8Array(clipped);
+        const CHUNK = 0x8000;
+        const parts: string[] = [];
+        for (let i = 0; i < bytes.length; i += CHUNK) {
+          parts.push(String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + CHUNK))));
+        }
+        const body_base64 = btoa(parts.join(""));
+        return {
+          type: "fetch_url_response",
+          requestId: msg.requestId,
+          status: resp.status,
+          status_text: resp.statusText,
+          headers,
+          content_type: contentType,
+          body_base64,
+          truncated,
+          total_bytes: totalBytes,
+        };
+      }
+      const body_text = new TextDecoder("utf-8", { fatal: false }).decode(clipped);
+      return {
+        type: "fetch_url_response",
+        requestId: msg.requestId,
+        status: resp.status,
+        status_text: resp.statusText,
+        headers,
+        content_type: contentType,
+        body_text,
+        truncated,
+        total_bytes: totalBytes,
+      };
     }
 
     default: {

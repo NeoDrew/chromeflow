@@ -257,4 +257,151 @@ Pass level="error" to see only errors, or omit to see all levels.`,
       }
     }
   );
+
+  server.tool(
+    "read_attachment",
+    `Fetch a file from a URL using the user's Chrome session and return its text content directly, with no intermediate save-to-disk step.
+
+This is the "I just need the text" companion to download_file. It uses the same privileged fetch (Chrome cookie jar, page CSP doesn't apply), but parses the body inside the extension instead of writing to disk.
+
+Supported formats:
+- **docx** — parsed via in-browser ZIP extraction (no local CLI needed)
+- **txt, md, csv, json** — decoded as UTF-8
+- **html, xml** — UTF-8 decoded then tags stripped
+- **pdf** — DEFERRED to chromeflow 0.9.4. For now, use \`download_file({url})\` then run \`pdftotext\` (poppler-utils) or \`textutil -convert txt\` (macOS) on the returned path. The error message includes this fallback recipe.
+
+Pass \`format\` to override auto-detection (auto-detection looks at the Content-Type header and the URL extension).
+
+The response is truncated to max_chars (default 50000); the response always reports total_chars and truncated so the caller can decide whether to call again with a larger budget or paginate.`,
+    {
+      url: z.string().describe("The full URL of the attachment (https://...). Uses Chrome's cookie jar — works on authenticated URLs."),
+      format: z
+        .enum(["txt", "md", "csv", "json", "xml", "html", "docx", "pdf"])
+        .optional()
+        .describe("Override format auto-detection. Useful when Content-Type is wrong or missing."),
+      max_chars: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Maximum characters to return (default 50000). Response reports total_chars + truncated so you can paginate or expand."),
+    },
+    async ({ url, format, max_chars }) => {
+      const response = await bridge.request({ type: "read_attachment", url, format, max_chars });
+      if (response.type !== "read_attachment_response") throw new Error(`Unexpected response: ${response.type}`);
+      const r = response as { text: string; format: string; total_chars: number; truncated: boolean; mime: string };
+      const header = `${url}\nformat: ${r.format} | mime: ${r.mime || "unknown"} | total_chars: ${r.total_chars}${r.truncated ? ` (truncated to ${max_chars ?? 50_000})` : ""}\n${"─".repeat(40)}\n`;
+      return {
+        content: [{ type: "text", text: header + r.text }],
+      };
+    }
+  );
+
+  server.tool(
+    "download_file",
+    `Download a file from a URL to the user's local disk using Chrome's authenticated download flow.
+
+Uses the user's existing Chrome session, so this works on authenticated URLs (Canvas attachments, Stripe document downloads, GitHub release tarballs behind SSO) without any auth setup on chromeflow's side. Returns the absolute path where the file landed, plus MIME type and byte size.
+
+Use this when you need the BYTES of a file (binary parsing, large content, anything you'll process with another tool). For "I just need the text content of this attachment" use read_attachment instead — it downloads + parses in one call.
+
+The file is saved to the user's default downloads directory (usually ~/Downloads). Pass filename to suggest a name; Chrome will add a numeric suffix if a file with that name already exists.`,
+    {
+      url: z.string().describe("The full URL to download (https://...). Chrome's cookie jar is automatically used."),
+      filename: z.string().optional().describe("Suggested filename (Chrome will uniquify if it collides). Default: derived from URL or Content-Disposition header."),
+      timeout_ms: z.number().int().min(1000).optional().describe("Abort if the download isn't complete in this many ms (default 60000)."),
+    },
+    async ({ url, filename, timeout_ms }) => {
+      const response = await bridge.request({ type: "download_file", url, filename, timeout_ms }, Math.max(30_000, (timeout_ms ?? 60_000) + 5_000));
+      if (response.type !== "download_file_response") throw new Error(`Unexpected response: ${response.type}`);
+      const r = response as { path: string; mime: string; size: number };
+      return {
+        content: [{
+          type: "text",
+          text: `Downloaded ${url} → ${r.path}\nMIME: ${r.mime || "unknown"}\nSize: ${r.size} bytes`,
+        }],
+      };
+    }
+  );
+
+  server.tool(
+    "fetch_url",
+    `Make an HTTP request to a URL from the extension's privileged context, bypassing the page's Content-Security-Policy.
+
+This is the "privileged context for network access" companion to execute_script. The mental model:
+- **execute_script (page context):** DOM access, page CSP applies, fetch() blocked by connect-src.
+- **fetch_url (privileged context):** no DOM, full extension host_permissions (<all_urls>), Chrome's cookie jar included automatically, page CSP does not apply.
+
+Use this when:
+- You need bytes from an authenticated URL the user is already signed into (Canvas attachments, Stripe document downloads, internal API JSON).
+- fetch() inside execute_script returns "Failed to fetch" or hits a Content-Security-Policy connect-src error.
+- You want a clean response object (status, headers, body) instead of having to wire up your own request handling in page-context JS.
+
+Returns: { status, status_text, headers, content_type, body_text or body_base64 (when binary), truncated, total_bytes }.
+Cookies and Origin headers are set by Chrome — pass any extra request headers via the headers param.
+Set binary=true for non-text responses (PDFs, images, zips) — the body is returned base64-encoded.`,
+    {
+      url: z.string().describe("The full URL to fetch (https://...). Same-origin or cross-origin, both work."),
+      method: z
+        .enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"])
+        .optional()
+        .describe("HTTP method (default GET)"),
+      headers: z
+        .record(z.string())
+        .optional()
+        .describe("Extra request headers (e.g. {'X-CSRF-Token': '...', 'Accept': 'application/json'}). Cookies are added automatically; do not set them here."),
+      body: z
+        .string()
+        .optional()
+        .describe("Request body for POST/PUT/PATCH/DELETE (ignored for GET/HEAD). Pass JSON as a string."),
+      binary: z
+        .boolean()
+        .optional()
+        .describe("If true, return body as base64 (body_base64). Use for PDFs, images, zips. Default false (UTF-8 text in body_text)."),
+      timeout_ms: z
+        .number()
+        .int()
+        .min(1000)
+        .optional()
+        .describe("Abort the request after this many ms (default 30000)."),
+      max_bytes: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Truncate body at this many bytes (default 2000000 ≈ 2MB). The response reports truncated:true and total_bytes for paginating."),
+    },
+    async ({ url, method, headers, body, binary, timeout_ms, max_bytes }) => {
+      const response = await bridge.request({
+        type: "fetch_url",
+        url,
+        method,
+        headers,
+        body,
+        binary,
+        timeout_ms,
+        max_bytes,
+      });
+      if (response.type !== "fetch_url_response") throw new Error(`Unexpected response: ${response.type}`);
+      const r = response as {
+        status: number;
+        status_text: string;
+        headers: Record<string, string>;
+        content_type: string;
+        body_text?: string;
+        body_base64?: string;
+        truncated: boolean;
+        total_bytes: number;
+      };
+      const header = `HTTP ${r.status} ${r.status_text} — ${r.content_type || "no content-type"} — ${r.total_bytes} bytes${r.truncated ? ` (truncated to ${max_bytes ?? 2_000_000})` : ""}`;
+      const bodyPart = r.body_base64
+        ? `\n\n[base64, ${r.body_base64.length} chars]\n${r.body_base64}`
+        : r.body_text !== undefined
+          ? `\n\n${r.body_text}`
+          : "";
+      return {
+        content: [{ type: "text", text: header + bodyPart }],
+      };
+    }
+  );
 }
