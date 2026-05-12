@@ -4,31 +4,13 @@ import type { WsBridge } from "../ws-bridge.js";
 
 export function registerFlowTools(server: McpServer, bridge: WsBridge) {
   server.tool(
-    "scroll_page",
-    "Scroll the page or the focused panel up or down. Use this when the target location is unknown. If you know which field or element you need, use scroll_to_element instead — it scrolls precisely without guessing. After scrolling, call get_page_text to read the new content — NEVER call take_screenshot after scrolling.",
-    {
-      direction: z.enum(["down", "up"]).describe("Scroll direction"),
-      amount: z.number().optional().describe("Pixels to scroll (default 400)"),
-    },
-    async ({ direction, amount = 400 }) => {
-      await bridge.request({ type: "scroll_page", direction, amount });
-      return { content: [{ type: "text", text: `Scrolled ${direction} ${amount}px.` }] };
-    }
-  );
-
-  server.tool(
     "click_element",
-    `Click a button, link, or interactive element on the page by its visible text or aria-label.
-Use this whenever Claude can press a button without needing user input — e.g. "Save", "Continue", "Create product", "Add pricing", "Confirm", "Next".
-After clicking, use get_page_text to check the result — only use take_screenshot if you need pixel positions.
-Do NOT use for: elements that require the user to make a personal choice, consent to terms, or enter sensitive data.
-When multiple elements share the same label (e.g. many "Remove" buttons), use nth to target a specific one (1 = first/topmost, 2 = second, etc.).
+    `Click an interactive element by its visible text or aria-label. Optionally pass an until_* clause to verify the click took effect:
+- until_selector — CSS selector that should appear after the click
+- until_url_contains — substring that should appear in the URL
+- until_text_contains — substring that should appear in page text
 
-Verifying the click took effect: on React-heavy sites the synthetic click sometimes returns success but the handler never ran. Pass an "until" condition that should hold AFTER the click — click_element will then poll for it and return success only if the page actually changed:
-- until_selector: a CSS selector that should appear (e.g. ".success-toast", "#confirm-modal")
-- until_url_contains: a substring that should appear in the URL (e.g. "/listing-published")
-- until_text_contains: a substring that should appear anywhere in page text (e.g. "Listing created")
-If the until-condition is not met within until_timeout_ms (default 5000ms), click_element returns success=false with a clear message so the caller can retry or take a different path.`,
+Returns {success, message, before_url, after_url, navigated}. \`navigated\` is true when the post-click URL differs from the pre-click URL — surfaces silent redirects without a second list_tabs call. Refuses to click 0×0 elements. Use \`nth\` (1-based) when multiple elements share the same label.`,
     {
       textHint: z
         .string()
@@ -144,102 +126,54 @@ If the click causes page navigation, this resolves when the new page finishes lo
   );
 
   server.tool(
-    "wait_for_selector",
-    `Wait for a CSS selector to appear on the page. Use this instead of polling with take_screenshot.
-Examples: wait for a build to finish, a success/error message to appear, a modal to open.
-After it resolves, use get_page_text to read the result rather than taking a screenshot.
-For long-running server-side processes (e.g. a query job that may take minutes), set poll_interval
-to 15 seconds so the page is checked gently rather than hammered every 500ms.
-
-Pierces open shadow roots automatically — selectors for elements inside web components
-(Outlier task UI, Lit/Stencil widgets) match without needing a shadow-DOM-aware caller.
-
-Pass \`shadow_root: true\` when the matched element is itself a shadow host whose tree
-hasn't attached yet — common after SPA route transitions where the host element appears
-seconds before its shadow content hydrates. Without this, wait_for_selector("the-host")
-resolves on the empty host and the next execute_script(host.shadowRoot) returns null.`,
+    "wait_for",
+    `Wait for one of: a CSS selector to appear, a text substring to appear, or an existing element's subtree to mutate. Pass exactly one of \`selector\`, \`text\`, or \`change_in\`. Pierces open shadow roots. Pass \`shadow_root: true\` when waiting for the host's shadowRoot to attach (post-SPA-navigation hydration). \`scope_selector\` limits text-mode search; \`regex: true\` interprets text as a case-insensitive regex; \`frame: "iframe.selector"\` waits inside a same-origin iframe (text mode).`,
     {
-      selector: z
-        .string()
-        .describe(
-          "CSS selector to wait for (e.g. '.deploy-ready', '[data-status=\"error\"]', '.toast-error')"
-        ),
-      timeout: z.number().optional().describe("Max seconds to wait (default 30)"),
-      poll_interval: z
-        .number()
-        .optional()
-        .describe(
-          "How often to check for the selector, in seconds (default 0.5). Set to 15 when waiting for a slow server-side process."
-        ),
-      shadow_root: z
-        .boolean()
-        .optional()
-        .describe(
-          "If true, also require the matched element to have an attached shadowRoot (not null). Use after SPA navigations where the shadow host appears before its tree hydrates. Default false."
-        ),
+      selector: z.string().optional().describe("CSS selector to wait for."),
+      text: z.string().optional().describe("Text substring (or regex with regex=true) to wait for."),
+      change_in: z.string().optional().describe("CSS selector of an existing element whose subtree should mutate (MutationObserver)."),
+      timeout_ms: z.number().int().optional().describe("Max ms to wait (default 30000)."),
+      poll_interval_ms: z.number().int().optional().describe("Selector-mode poll interval (default 500). Set to 15000 for slow server-side jobs."),
+      shadow_root: z.boolean().optional().describe("Selector mode: require the matched host to have an attached shadowRoot. Default false."),
+      scope_selector: z.string().optional().describe("Text mode: limit search to this CSS selector's subtree."),
+      regex: z.boolean().optional().describe("Text mode: interpret query as a case-insensitive regex."),
+      frame: z.string().optional().describe("Same-origin iframe CSS selector to wait inside (text mode)."),
+      settle_ms: z.number().int().optional().describe("change_in mode: ms to wait after the first mutation for batching (default 150)."),
     },
-    async ({ selector, timeout = 30, poll_interval, shadow_root }) => {
-      const timeoutMs = timeout * 1000;
-      const pollMs = poll_interval ? poll_interval * 1000 : undefined;
-      await bridge.request(
-        { type: "wait_for_selector", selector, timeout: timeoutMs, refresh: pollMs, shadow_root },
-        timeoutMs + 5000
-      );
-      const suffix = shadow_root ? " (with attached shadowRoot)" : "";
-      return {
-        content: [{ type: "text", text: `Selector "${selector}" found on page${suffix}.` }],
-      };
-    }
-  );
-
-  server.tool(
-    "wait_for_change",
-    `Block until the element matching \`selector\` mutates, then return its text content.
-Uses a MutationObserver — no polling, no screenshots. Ideal after an action where you expect
-a specific UI region to update: click Save, then wait_for_change(".toast") to capture the
-confirmation. wait_for_change(".chat-messages") after sending a message to get the reply.
-
-The element must exist at call time (use wait_for_selector first if needed). After the first
-mutation fires, waits a brief settle window (default 150ms) for the update to batch, then
-returns the element's current text with secrets redacted.
-
-Only observes changes within the matched element's subtree. Mutations in deeper shadow roots
-or in sibling elements are not detected. For form inputs whose \`value\` changes without a
-DOM mutation, this won't fire — use execute_script to read the value directly.`,
-    {
-      selector: z
-        .string()
-        .describe(
-          "CSS selector of the element whose changes you want to observe (e.g. '.toast', '.chat-messages', '[role=\"alert\"]')"
-        ),
-      timeout: z.number().optional().describe("Max seconds to wait for a mutation (default 30)"),
-      settle: z
-        .number()
-        .optional()
-        .describe(
-          "Milliseconds to wait AFTER the first mutation for subsequent mutations to batch (default 150). Increase to 500-1000 if the page renders in multiple rapid steps."
-        ),
-    },
-    async ({ selector, timeout = 30, settle }) => {
-      const timeoutMs = timeout * 1000;
-      const settleMs = settle ?? 150;
-      const response = await bridge.request(
-        { type: "wait_for_change", selector, timeout: timeoutMs, settle: settleMs },
-        timeoutMs + 5000
-      );
-      const r = response as unknown as { ok: boolean; reason: "mutation" | "timeout"; text?: string; message?: string };
-      if (!r.ok) {
-        return { content: [{ type: "text", text: r.message ?? `wait_for_change timed out on "${selector}"` }] };
+    async (args) => {
+      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, settle_ms } = args;
+      const set = [selector, text, change_in].filter((v) => v !== undefined && v !== null && v !== "").length;
+      if (set !== 1) {
+        return { content: [{ type: "text", text: "wait_for: pass exactly one of selector, text, or change_in." }] };
       }
+      const timeoutMs = timeout_ms ?? 30_000;
+      if (selector !== undefined) {
+        await bridge.request(
+          { type: "wait_for_selector", selector, timeout: timeoutMs, refresh: poll_interval_ms, shadow_root },
+          timeoutMs + 5_000
+        );
+        const suffix = shadow_root ? " (with attached shadowRoot)" : "";
+        return { content: [{ type: "text", text: `Selector "${selector}" found on page${suffix}.` }] };
+      }
+      if (text !== undefined) {
+        const response = await bridge.request(
+          { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame },
+          timeoutMs + 5_000
+        );
+        const r = response as { found: boolean; selector?: string; text?: string; context?: string; elapsed_ms: number; frame_error?: string };
+        if (r.frame_error) return { content: [{ type: "text", text: r.frame_error }] };
+        if (!r.found) return { content: [{ type: "text", text: `Text "${text}" did not appear within ${timeoutMs}ms.` }] };
+        return { content: [{ type: "text", text: `Found "${text}" after ${r.elapsed_ms}ms.\nselector: ${r.selector}\ncontext: ${r.context}` }] };
+      }
+      // change_in mode
+      const response = await bridge.request(
+        { type: "wait_for_change", selector: change_in!, timeout: timeoutMs, settle: settle_ms ?? 150 },
+        timeoutMs + 5_000
+      );
+      const r = response as unknown as { ok: boolean; text?: string; message?: string };
+      if (!r.ok) return { content: [{ type: "text", text: r.message ?? `wait_for change_in timed out on "${change_in}"` }] };
       const preview = (r.text ?? "").slice(0, 5000);
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Element "${selector}" changed.\n\n${preview}`,
-          },
-        ],
-      };
+      return { content: [{ type: "text", text: `Element "${change_in}" changed.\n\n${preview}` }] };
     }
   );
 
@@ -260,62 +194,25 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
 
   server.tool(
     "find_text",
-    `Search the page for text and get back actionable matches without dumping the whole DOM. Use this instead of get_page_text when you only need to know "is X on the page?" or "where is the Save button?".
-
-For each match, returns the surrounding context, the nearest meaningful element (button/link/heading/role/label/etc.), a best-effort CSS selector, and a clickable flag. If a match is clickable, pipe the matched text into click_element to act on it.
-
-Use when:
-- Checking whether a toast / error message / heading appeared after an action
-- Locating one of multiple buttons by text
-- Finding all instances of a phrase to count or inspect them
-
-Do NOT use for: reading large blocks of body text — use get_page_text(selector=...) for that. find_text returns one short snippet per match, not the full content.
-
-Pierces open shadow roots. Pass frame="iframe.selector" to search inside a same-origin iframe.`,
+    `Search the active page for text and return actionable matches (text, surrounding context, best-effort CSS selector, clickable flag). Use this instead of get_page_text when checking "is X on the page?" or locating a clickable target. Pierces open shadow roots. Pass \`frame: "iframe.selector"\` for same-origin iframe search.`,
     {
-      query: z
-        .string()
-        .describe(
-          "Text to search for. Substring match by default; pass regex=true to interpret as a case-insensitive regex."
-        ),
-      max: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe("Maximum matches to return (default 10). total_matches is reported even when truncated."),
-      scope_selector: z
-        .string()
-        .optional()
-        .describe('Limit search to descendants of this CSS selector (e.g. ".main-panel", "#dialog"). Default searches the whole body.'),
-      regex: z
-        .boolean()
-        .optional()
-        .describe("Treat query as a regex (case-insensitive). Default false."),
-      visible_only: z
-        .boolean()
-        .optional()
-        .describe("Skip matches inside display:none / visibility:hidden / aria-hidden=true ancestors. Default true."),
-      context_chars: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .describe("Characters of surrounding context to include before/after each match. Default 60."),
-      frame: z
-        .string()
-        .optional()
-        .describe('Same-origin iframe CSS selector (e.g. "iframe.editor") to search inside. Cross-origin iframes are not supported.'),
+      query: z.string().describe("Text to search for. Substring by default; regex=true → case-insensitive regex."),
+      max: z.number().int().min(1).optional().describe("Maximum matches to return (default 5). total_matches is reported even when truncated."),
+      scope_selector: z.string().optional().describe("Limit search to a CSS selector's subtree."),
+      regex: z.boolean().optional().describe("Treat query as regex (case-insensitive). Default false."),
+      visible_only: z.boolean().optional().describe("Skip display:none / visibility:hidden / aria-hidden=true. Default true."),
+      context_chars: z.number().int().min(0).optional().describe("Surrounding context chars per match (default 40)."),
+      frame: z.string().optional().describe("Same-origin iframe CSS selector to search inside."),
     },
     async ({ query, max, scope_selector, regex, visible_only, context_chars, frame }) => {
       const response = await bridge.request({
         type: "find_text",
         query,
-        max,
+        max: max ?? 5,
         scope_selector,
         regex,
         visible_only,
-        context_chars,
+        context_chars: context_chars ?? 40,
         frame,
       });
       const r = response as unknown as {
@@ -363,179 +260,6 @@ Pierces open shadow roots. Pass frame="iframe.selector" to search inside a same-
         : `Found ${r.matches.length} match${r.matches.length === 1 ? "" : "es"} for "${query}":`;
       return {
         content: [{ type: "text", text: `${header}\n${lines.join("\n")}` }],
-      };
-    }
-  );
-
-  server.tool(
-    "find_input",
-    `Locate form inputs whose label / placeholder / aria-label / name / id matches a hint, returning the top N with their section heading. Use this instead of get_form_fields when you only need a couple of fields — it's the targeted lookup, not the full inventory.
-
-Match strength is reported as match_kind: aria-eq / placeholder-eq / label-text-eq / name-eq / id-eq are exact matches; *-includes are partial matches; fuzzy-text-walk is the lowest-confidence fallback.
-
-Returned labels are designed to be piped straight into fill_input(label, value), which uses the same fuzzy ranks to find the same field again. No CSS selector is returned — fill_input matches by label text, not by selector.
-
-Use when:
-- "Is the Email field on this page?"
-- "Find the price input below the fold"
-- "Which input has placeholder 'you@example.com'?"
-
-Do NOT use for: filling fields (use fill_input / fill_form). For the full form inventory (every field including hidden ones), use get_form_fields.
-
-Pierces open shadow roots. Pass frame="iframe.selector" to search inside a same-origin iframe. Pass exact=true to refuse fuzzy text-walk and *-includes matches when the hint is short and could collide with neighbours.`,
-    {
-      query: z
-        .string()
-        .describe(
-          "Hint to match against the field's label, placeholder, aria-label, name, or id (e.g. 'Email', 'price', 'Card number')"
-        ),
-      type_filter: z
-        .string()
-        .optional()
-        .describe(
-          'Restrict to a specific input type — "email", "checkbox", "file", "textarea", "select", "number", etc. Default "any".'
-        ),
-      max: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe("Maximum fields to return (default 5). total_matches is reported even when truncated."),
-      exact: z
-        .boolean()
-        .optional()
-        .describe(
-          "If true, return only exact equality matches (aria-eq / placeholder-eq / label-text-eq / name-eq / id-eq). Skips fuzzy text-walk and *-includes. Default false."
-        ),
-      frame: z
-        .string()
-        .optional()
-        .describe('Same-origin iframe CSS selector to search inside. Cross-origin iframes are not supported.'),
-    },
-    async ({ query, type_filter, max, exact, frame }) => {
-      const response = await bridge.request({
-        type: "find_input",
-        query,
-        type_filter,
-        max,
-        exact,
-        frame,
-      });
-      const r = response as unknown as {
-        fields: Array<{
-          label: string;
-          placeholder: string;
-          type: string;
-          value: string;
-          under?: string;
-          position: { x: number; y: number; width: number; height: number } | null;
-          match_kind: string;
-        }>;
-        total_matches: number;
-        truncated: boolean;
-        frame_error?: string;
-      };
-      if (r.frame_error) {
-        return { content: [{ type: "text", text: r.frame_error }] };
-      }
-      if (r.fields.length === 0) {
-        return {
-          content: [{ type: "text", text: `No input fields found matching "${query}".` }],
-        };
-      }
-      const lines = r.fields.map((f, i) => {
-        const placeholderPart = f.placeholder ? ` placeholder="${f.placeholder}"` : "";
-        const valuePart = f.value ? ` value="${f.value}"` : "";
-        const underPart = f.under ? ` [under: "${f.under}"]` : "";
-        const posPart = f.position ? ` at y=${f.position.y}` : "";
-        return `  ${i + 1}. "${f.label}" type=${f.type}${placeholderPart}${valuePart}${underPart} — match: ${f.match_kind}${posPart}`;
-      });
-      const header = r.truncated
-        ? `Found ${r.fields.length} of ${r.total_matches} input(s) for "${query}":`
-        : `Found ${r.fields.length} input${r.fields.length === 1 ? "" : "s"} for "${query}":`;
-      return {
-        content: [{ type: "text", text: `${header}\n${lines.join("\n")}\n\nTo fill: fill_input("${r.fields[0].label}", "<value>")` }],
-      };
-    }
-  );
-
-  server.tool(
-    "wait_for_text",
-    `Wait for text to appear in the DOM. Complement to wait_for_selector for the case where you only know the message text — no selector required. Uses a MutationObserver under the hood, no polling.
-
-Resolves on the first match (or if the text is already present). Returns the elapsed time, the matched text, and the surrounding context.
-
-Use when:
-- "Click Save, then wait for 'Saved successfully' to show"
-- "Wait until the deploy log says 'Build complete'"
-- Any case where the post-action signal is a phrase, not a known selector
-
-Do NOT use for: waiting on a known CSS selector (use wait_for_selector — slightly cheaper).
-
-Pierces open shadow roots. Pass frame="iframe.selector" to wait for text inside a same-origin iframe.`,
-    {
-      query: z
-        .string()
-        .describe("Text to wait for (substring by default; pass regex=true for a regex)"),
-      timeout_ms: z
-        .number()
-        .int()
-        .min(100)
-        .optional()
-        .describe("Maximum milliseconds to wait (default 10000)"),
-      scope_selector: z
-        .string()
-        .optional()
-        .describe("Limit the observation to a CSS selector's subtree (e.g. '.toast-region')"),
-      regex: z
-        .boolean()
-        .optional()
-        .describe("Treat query as a regex (case-insensitive). Default false."),
-      frame: z
-        .string()
-        .optional()
-        .describe('Same-origin iframe CSS selector to wait inside. Cross-origin iframes are not supported.'),
-    },
-    async ({ query, timeout_ms, scope_selector, regex, frame }) => {
-      const wsTimeout = Math.max(15_000, (timeout_ms ?? 10_000) + 5_000);
-      const response = await bridge.request(
-        {
-          type: "wait_for_text",
-          query,
-          timeout_ms,
-          scope_selector,
-          regex,
-          frame,
-        },
-        wsTimeout
-      );
-      const r = response as unknown as {
-        found: boolean;
-        selector?: string;
-        text?: string;
-        context?: string;
-        elapsed_ms: number;
-        frame_error?: string;
-      };
-      if (r.frame_error) {
-        return { content: [{ type: "text", text: r.frame_error }] };
-      }
-      if (!r.found) {
-        return {
-          content: [
-            { type: "text", text: `Timed out after ${r.elapsed_ms}ms waiting for "${query}".` },
-          ],
-        };
-      }
-      const ctx = r.context ? `\ncontext: ${r.context}` : "";
-      const sel = r.selector ? `\nselector: ${r.selector}` : "";
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Found "${r.text}" after ${r.elapsed_ms}ms.${sel}${ctx}`,
-          },
-        ],
       };
     }
   );

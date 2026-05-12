@@ -1,83 +1,44 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { appendFileSync, readFileSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { join, resolve, relative, isAbsolute } from "path";
+import { resolve, relative, isAbsolute } from "path";
 import type { WsBridge } from "../ws-bridge.js";
-
-const PAGE_STATE_FILE = join(tmpdir(), "chromeflow_page_state.json");
 
 export function registerCaptureTools(server: McpServer, bridge: WsBridge) {
   server.tool(
     "fill_input",
-    `Fill a form input field with a value automatically.
-Use this for fields Claude knows the answer to (product name, price, description, tier name, URLs, etc.).
-DO NOT use for: email address, password, payment/billing info, phone number — highlight those instead and tell the user what to enter.
-After filling, call wait_for_click only if the user needs to review/confirm; otherwise proceed directly to the next step.
+    `Fill a form input by visible label / placeholder / aria-label (\`textHint\`) OR by direct CSS selector (\`selector\`). Pass exactly one.
 
-The response always includes the matched element's identifying attributes (e.g. \`<input name="title" id="..." placeholder="...">\`) and the match-strength (aria-eq, name-eq, fuzzy-text-walk, etc.). VERIFY this is the field you intended — fuzzy-text-walk matches are the lowest-confidence kind and have historically caused fill_input to land on the wrong field on dense forms.
+\`textHint\` mode: fuzzy-rank against label/placeholder/aria-label/name/id. Response includes the matched element's identifying attributes and match-strength (aria-eq, placeholder-eq, label-text-eq, name-eq, id-eq, *-includes, fuzzy-text-walk). Verify the match — fuzzy-text-walk is the lowest-confidence kind. Pass \`exact: true\` to refuse fuzzy and *-includes matches.
 
-Pass \`exact: true\` to refuse fuzzy text-walk matches entirely. Use this for short generic labels like "Rate", "Price", or "Amount" on dense forms with many similarly-labeled fields. If no exact match exists, fill_input returns success=false instead of silently filling the wrong field.`,
+\`selector\` mode (replaces the old react_set_input): targets the input directly and routes through the React-aware native value-setter so React's onChange picks up the change. Handles same-origin iframe inputs via \`frame\`.
+
+Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirror 6 editors. Use \`nth\` (1-based) when multiple inputs share the same label.`,
     {
-      textHint: z
-        .string()
-        .describe("The label, placeholder, or nearby text identifying the input (e.g. 'Product name', 'Amount', 'Description')"),
-      value: z
-        .string()
-        .describe("The value to fill in"),
-      nth: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe("Which match to fill when multiple inputs share the same label (1 = first/topmost, default 1)"),
-      exact: z
-        .boolean()
-        .optional()
-        .describe("If true, only match aria-label/placeholder/name/id/label-text equal to the hint — refuse fuzzy text-walk matches. Default false."),
+      textHint: z.string().optional().describe("Label / placeholder / aria-label identifying the input. Exactly one of textHint or selector must be set."),
+      selector: z.string().optional().describe("CSS selector of the input (e.g. 'input[name=email]'). Bypasses fuzzy matching."),
+      value: z.string().describe("Value to fill"),
+      nth: z.number().int().min(1).optional().describe("Which match to fill when multiple inputs share the same label (1 = first, default 1). textHint mode only."),
+      exact: z.boolean().optional().describe("Refuse fuzzy text-walk and *-includes matches. textHint mode only. Default false."),
+      frame: z.string().optional().describe("Same-origin iframe CSS selector for selector-mode targeting of inputs inside an iframe."),
     },
-    async ({ textHint, value, nth, exact }) => {
+    async ({ textHint, selector, value, nth, exact, frame }) => {
+      if (!textHint && !selector) {
+        return { content: [{ type: "text", text: "fill_input requires either textHint or selector." }] };
+      }
+      if (textHint && selector) {
+        return { content: [{ type: "text", text: "fill_input: pass textHint OR selector, not both." }] };
+      }
+      if (selector) {
+        const response = await bridge.request({ type: "react_set_input", selector, value, frame });
+        const r = response as { success?: boolean; message?: string };
+        return { content: [{ type: "text", text: r.message ?? (r.success ? `Set "${selector}"` : `Failed to set "${selector}"`) }] };
+      }
       const response = await bridge.request({ type: "fill_input", textHint, value, nth, exact });
       if (response.type !== "fill_response") throw new Error("Unexpected response");
       const r = response as { success: boolean; message: string };
       return {
         content: [{ type: "text", text: r.success ? `Filled "${textHint}": ${r.message}` : `Could not fill "${textHint}": ${r.message}` }],
-      };
-    }
-  );
-
-  server.tool(
-    "read_element",
-    "Read the text value of an element on the page, identified by nearby visible text. Use this to capture API keys, IDs, or other values shown on the page.",
-    {
-      textHint: z
-        .string()
-        .describe(
-          "Visible text near or within the element whose value you want to read (e.g. 'Publishable key', 'sk-live')"
-        ),
-    },
-    async ({ textHint }) => {
-      const response = await bridge.request({ type: "read_element", textHint });
-      if (response.type !== "read_response") {
-        throw new Error("Unexpected response from extension");
-      }
-      if (response.value === null) {
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Could not find a value near "${textHint}". Try take_screenshot to locate it.`,
-            },
-          ],
-        };
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Value captured: ${response.value}`,
-          },
-        ],
       };
     }
   );
@@ -109,46 +70,6 @@ Never use take_screenshot just to read page content — paginate with startIndex
       const text = (response as { text: string }).text;
       return {
         content: [{ type: "text", text: text || "(no text found on page)" }],
-      };
-    }
-  );
-
-  server.tool(
-    "save_page_state",
-    `Snapshot the current values of all form fields (inputs, textareas, checkboxes, selects, CodeMirror editors) to a local file.
-Use this before a context window runs out or any time you want a checkpoint mid-form.
-A future session can call restore_page_state to pick up exactly where you left off.`,
-    {},
-    async () => {
-      const response = await bridge.request({ type: "save_page_state" });
-      if (response.type !== "save_state_response") throw new Error("Unexpected response");
-      const state = (response as { state: unknown[] }).state;
-      writeFileSync(PAGE_STATE_FILE, JSON.stringify(state, null, 2), "utf-8");
-      return {
-        content: [{ type: "text", text: `Saved ${state.length} field values to ${PAGE_STATE_FILE}. Call restore_page_state in a future session to reload them.` }],
-      };
-    }
-  );
-
-  server.tool(
-    "restore_page_state",
-    `Restore form field values from a previously saved snapshot (created by save_page_state).
-Use this at the start of a new session when resuming a long form-filling task.
-The snapshot is read from the local temp file written by save_page_state.`,
-    {},
-    async () => {
-      let state: import("../types.js").PageFieldState[];
-      try {
-        state = JSON.parse(readFileSync(PAGE_STATE_FILE, "utf-8")) as import("../types.js").PageFieldState[];
-      } catch {
-        return {
-          content: [{ type: "text", text: `No saved page state found at ${PAGE_STATE_FILE}. Call save_page_state first.` }],
-        };
-      }
-      const response = await bridge.request({ type: "restore_page_state", state });
-      const msg = (response as { message?: string }).message ?? "Done";
-      return {
-        content: [{ type: "text", text: msg }],
       };
     }
   );
@@ -260,37 +181,18 @@ Pass level="error" to see only errors, or omit to see all levels.`,
 
   server.tool(
     "read_attachment",
-    `Fetch a file from a URL using the user's Chrome session and return its text content directly, with no intermediate save-to-disk step.
-
-This is the "I just need the text" companion to download_file. It uses the same privileged fetch (Chrome cookie jar, page CSP doesn't apply), but parses the body inside the extension instead of writing to disk.
-
-Supported formats:
-- **docx** — parsed via in-browser ZIP extraction (no local CLI needed)
-- **txt, md, csv, json** — decoded as UTF-8
-- **html, xml** — UTF-8 decoded then tags stripped
-- **pdf** — DEFERRED to chromeflow 0.9.4. For now, use \`download_file({url})\` then run \`pdftotext\` (poppler-utils) or \`textutil -convert txt\` (macOS) on the returned path. The error message includes this fallback recipe.
-
-Pass \`format\` to override auto-detection (auto-detection looks at the Content-Type header and the URL extension).
-
-The response is truncated to max_chars (default 50000); the response always reports total_chars and truncated so the caller can decide whether to call again with a larger budget or paginate.`,
+    `Fetch a URL via Chrome's privileged context (uses cookie jar, bypasses page CSP) and return parsed text. Supports docx (in-extension ZIP+XML extraction), txt/md/csv/json (UTF-8), html/xml (tag-stripped). For PDF, the response is a structured error pointing at download_file + local pdftotext. Truncates to max_chars (default 20000); reports total_chars + truncated for pagination.`,
     {
-      url: z.string().describe("The full URL of the attachment (https://...). Uses Chrome's cookie jar — works on authenticated URLs."),
-      format: z
-        .enum(["txt", "md", "csv", "json", "xml", "html", "docx", "pdf"])
-        .optional()
-        .describe("Override format auto-detection. Useful when Content-Type is wrong or missing."),
-      max_chars: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe("Maximum characters to return (default 50000). Response reports total_chars + truncated so you can paginate or expand."),
+      url: z.string().describe("The full URL of the attachment. Uses Chrome's cookie jar — works on authenticated URLs."),
+      format: z.enum(["txt", "md", "csv", "json", "xml", "html", "docx", "pdf"]).optional().describe("Override format auto-detection."),
+      max_chars: z.number().int().min(1).optional().describe("Maximum characters to return (default 20000)."),
     },
     async ({ url, format, max_chars }) => {
-      const response = await bridge.request({ type: "read_attachment", url, format, max_chars });
+      const effective_max = max_chars ?? 20_000;
+      const response = await bridge.request({ type: "read_attachment", url, format, max_chars: effective_max });
       if (response.type !== "read_attachment_response") throw new Error(`Unexpected response: ${response.type}`);
       const r = response as { text: string; format: string; total_chars: number; truncated: boolean; mime: string };
-      const header = `${url}\nformat: ${r.format} | mime: ${r.mime || "unknown"} | total_chars: ${r.total_chars}${r.truncated ? ` (truncated to ${max_chars ?? 50_000})` : ""}\n${"─".repeat(40)}\n`;
+      const header = `${url}\nformat: ${r.format} | mime: ${r.mime || "unknown"} | total_chars: ${r.total_chars}${r.truncated ? ` (truncated to ${effective_max})` : ""}\n${"─".repeat(40)}\n`;
       return {
         content: [{ type: "text", text: header + r.text }],
       };
