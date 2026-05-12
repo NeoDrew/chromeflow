@@ -18,21 +18,23 @@ Chromeflow works in **your actual Chrome browser**, where you're already logged 
 | **Auth / 2FA** | Already handled — pauses when needed | Can't handle — blocks completely |
 | **Page understanding** | DOM queries (fast, cheap, reliable) | Screenshots + vision model (slow, expensive) |
 | **Human-in-the-loop** | Highlights, pauses on sensitive input | Fully autonomous, no interaction |
-| **Integration** | MCP server for Claude Code | Standalone, not Claude Code aware |
+| **Integration** | MCP server for Claude Code & Codex CLI | Standalone, not agent-aware |
 | **Credential capture** | Reads API keys → writes to `.env` | Not designed for this |
 
 ## How it works
 
 Chromeflow is two things that work together:
 
-- **MCP server** — gives Claude Code a set of browser tools (`open_page`, `click_element`, `fill_form`, `set_file_input`, `read_element`, `write_to_env`, etc.)
+- **MCP server** — gives your coding agent (Claude Code or Codex) a set of browser tools (`open_page`, `click_element`, `fill_form`, `set_file_input`, `read_element`, `write_to_env`, etc.)
 - **Chrome extension** — receives those commands and acts on the active tab (highlights, clicks, fills, uploads files, captures screenshots)
 
 Claude drives the flow. You only touch the browser for things that genuinely need you — login, passwords, payment details, personal choices.
 
 ## Setup
 
-**1. Install the Claude Code plugin** (one-time, machine-wide):
+### Claude Code
+
+**1. Install the plugin** (one-time, machine-wide):
 
 ```
 /plugin marketplace add NeoDrew/chromeflow
@@ -50,6 +52,28 @@ The extension persists across Chrome restarts. You only do this once.
 **3. Restart Claude Code.**
 
 That's it. Claude will automatically reach for Chromeflow whenever a task needs browser interaction, in any project. The plugin's SessionStart hook also cleans up any stale config left over from older `npx chromeflow setup`-based installs on first run.
+
+### Codex CLI
+
+**1. Install the plugin** (one-time, machine-wide):
+
+```
+codex plugin marketplace add NeoDrew/chromeflow
+```
+
+Then inside Codex:
+
+```
+/plugins install chromeflow
+```
+
+The plugin registers the MCP server and ships the same usage skill that Claude Code uses, host-adjusted for Codex.
+
+**2. Install the Chrome extension** (one time) — same Web Store link as above. The extension is host-agnostic and serves both Claude Code and Codex from the same install.
+
+**3. Restart Codex.**
+
+Codex will reach for Chromeflow on browser tasks the same way Claude Code does.
 
 ## Usage
 
@@ -101,23 +125,23 @@ set_file_input("Upload", "/Users/you/Downloads/task.zip")
 
 Click the Chromeflow extension icon and use **"Use this window for Claude"** to lock Claude's browser operations to a specific Chrome window. This lets you freely use other Chrome windows without Claude interfering.
 
-### Running multiple Claude Code instances in parallel
+### Running multiple agent sessions in parallel
 
-Chromeflow supports up to 11 Claude Code sessions running in parallel, each automating a different Chrome window without touching the others.
+Chromeflow supports up to 11 agent sessions (Claude Code, Codex, or a mix) running in parallel, each automating a different Chrome window without touching the others.
 
 **How it works:**
-- Each CC session spawns its own Chromeflow MCP server, which auto-discovers a free port in the range `7878-7888` (first session gets 7878, second gets 7879, etc.).
+- Each agent session spawns its own Chromeflow MCP server, which auto-discovers a free port in the range `7878-7888` (first session gets 7878, second gets 7879, etc.).
 - The Chrome extension maintains one WebSocket connection per port and tracks per-port window assignments.
 - Every browser tool call is routed to the Chrome window assigned to the port the request came in on.
 
 **Setup:**
-1. Start your first Claude Code session as normal — its Chromeflow will claim port 7878.
-2. Start a second CC session in another terminal — its Chromeflow auto-falls-back to 7879.
+1. Start your first agent session as normal — its Chromeflow will claim port 7878.
+2. Start a second agent session in another terminal — its Chromeflow auto-falls-back to 7879.
 3. Click the Chromeflow extension icon. The popup now shows **one row per instance** (Port 7878, Port 7879, ...) each with a green dot when live.
 4. In Chrome **window A**, open the popup and click **"Use this window"** next to Port 7878.
 5. Switch to **window B**, open the popup, and click **"Use this window"** next to Port 7879.
 
-That's it. Each CC session now drives its own Chrome window — you can run a DataAnnotation task in one window while the other session fills out a Stripe dashboard in another, with zero collision.
+That's it. Each session now drives its own Chrome window — you can run a DataAnnotation task in one window while the other session fills out a Stripe dashboard in another, with zero collision.
 
 Single-instance usage is unchanged and fully backwards compatible — the old per-window assignment is auto-migrated on first load.
 
@@ -127,12 +151,20 @@ Nothing to do — the plugin install above is machine-wide. Open any project and
 
 ## Upgrading
 
+In Claude Code:
+
 ```
 /plugin update chromeflow
 /reload-plugins
 ```
 
-Restart Claude Code to pick up the new MCP server binary the plugin ships.
+In Codex:
+
+```
+/plugins update chromeflow
+```
+
+Restart the host afterward to pick up the new MCP server binary the plugin ships.
 
 ## Migrating from the old `npx chromeflow setup` flow
 
@@ -154,14 +186,21 @@ packages/plugin/scripts/build-server.sh   # bundle the MCP server into the plugi
 
 The MCP server source lives at `packages/mcp-server/src/` and is bundled with esbuild into `packages/plugin/server/chromeflow.mjs` — a single-file ESM binary the plugin ships directly.
 
-Iterate locally by pointing the plugin at this checkout:
+Iterate locally by pointing the plugin at this checkout. In Claude Code:
 
 ```
 /plugin marketplace add /absolute/path/to/this/repo
 /plugin install chromeflow
 ```
 
-Rebuild the bundle after editing MCP server source, then `/reload-plugins` (or restart CC) to pick it up.
+In Codex:
+
+```
+codex plugin marketplace add /absolute/path/to/this/repo
+/plugins install chromeflow
+```
+
+Rebuild the bundle after editing MCP server source, then `/reload-plugins` (Claude Code) or restart the host (Codex) to pick it up.
 
 The Chrome extension lives at `packages/extension/`:
 
@@ -173,6 +212,6 @@ After rebuilding the extension, reload it from `chrome://extensions`.
 
 ## Requirements
 
-- Claude Code
+- Claude Code or Codex CLI
 - Chrome (or any Chromium browser)
 - Node.js 22+

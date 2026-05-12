@@ -17,6 +17,7 @@ async function build() {
   cpSync("src/popup/index.html", "dist/popup.html");
   cpSync("src/offscreen.html", "dist/offscreen.html");
   cpSync("manifest.json", "dist/manifest.json");
+  cpSync("src/icons", "dist/icons", { recursive: true });
 
   const contexts = await Promise.all([
     esbuild.context({
