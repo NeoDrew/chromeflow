@@ -65,13 +65,22 @@ export class WsBridge {
         }
         if (msg.type === "ready") {
           console.error("[chromeflow] Extension ready");
-          // Send identity so the extension knows which project this server belongs to
+          // Send identity so the extension knows which project this server belongs to.
+          // `host` tells the popup whether this MCP server was spawned by Claude Code
+          // or Codex CLI:
+          //   - Claude Code sets CLAUDE_PLUGIN_ROOT on the spawned process.
+          //   - Codex doesn't forward any plugin env, so its launcher script in
+          //     `.mcp.codex.json` sets CHROMEFLOW_HOST=codex before importing.
+          // When neither is present (legacy npx flow, ad-hoc invocation) it stays unset.
           const cwd = process.cwd();
+          const host = process.env.CHROMEFLOW_HOST
+            ?? (process.env.CLAUDE_PLUGIN_ROOT ? "claude" : undefined);
           ws.send(JSON.stringify({
             type: "identity",
             cwd,
             label: path.basename(cwd),
             port: this.port,
+            host,
           }));
           return;
         }

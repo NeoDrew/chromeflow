@@ -2,21 +2,28 @@
 // SessionStart hook for chromeflow plugin.
 //
 // Two jobs:
-// 1. Emit the pointer block as additionalContext so Claude always has the
+// 1. Emit the pointer block as additionalContext so the agent always has the
 //    "use chromeflow tools, don't fall back to Bash/curl" rules in context.
-// 2. One-time migration cleanup: strip stale entries left behind by the
-//    legacy `npx chromeflow setup` flow (which is gone in 0.9.0). User-scope
-//    files only — never touches per-project CLAUDE.md or settings.local.json
-//    because those may contain user content we shouldn't risk losing.
+// 2. One-time migration cleanup (Claude Code only): strip stale entries left
+//    behind by the legacy `npx chromeflow setup` flow (which is gone in 0.9.0).
+//    User-scope files only — never touches per-project CLAUDE.md or
+//    settings.local.json because those may contain user content we shouldn't
+//    risk losing.
 //
 // Hook output: a single JSON object with hookSpecificOutput.additionalContext.
+// Both Claude Code and Codex CLI consume this same shape from a SessionStart
+// hook, so the same script serves both hosts.
 // Failures never crash the session — we fall back to empty output silently.
 
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT || path.resolve(__dirname, '..');
+const pluginRoot =
+  process.env.CLAUDE_PLUGIN_ROOT ||
+  process.env.CODEX_PLUGIN_ROOT ||
+  path.resolve(__dirname, '..');
+const isClaudeCode = !!process.env.CLAUDE_PLUGIN_ROOT;
 const pointerPath = path.join(pluginRoot, 'hooks', 'pointer.md');
 
 function readPointer() {
@@ -96,7 +103,9 @@ function migrateUserClaudeMd() {
 }
 
 const pointer = readPointer();
-const cleanupNotes = [migrateClaudeJson(), migrateUserClaudeMd()].filter(Boolean);
+const cleanupNotes = isClaudeCode
+  ? [migrateClaudeJson(), migrateUserClaudeMd()].filter(Boolean)
+  : [];
 
 let additionalContext = pointer;
 if (cleanupNotes.length > 0) {

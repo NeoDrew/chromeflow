@@ -11,13 +11,19 @@
 const groupsEl = document.getElementById("groups")!;
 const statusPill = document.getElementById("status-pill")!;
 
-type PortInfo = { port: number; label?: string };
+type Host = "claude" | "codex";
+type PortInfo = { port: number; label?: string; host?: Host };
 
 type State = {
   livePorts: PortInfo[];
   instances: Record<string, number>; // port → windowId
   currentWindowId: number;
   validWindowIds: Set<number>;
+};
+
+const HOST_ICONS: Record<Host, { src: string; alt: string }> = {
+  claude: { src: "icons/host-claude.png", alt: "Claude Code" },
+  codex: { src: "icons/host-codex.png", alt: "Codex CLI" },
 };
 
 const collapsedGroups = new Set<string>();
@@ -59,6 +65,7 @@ function escapeHtml(s: string): string {
 function renderInstanceCard(
   port: number,
   label: string | undefined,
+  host: Host | undefined,
   isLive: boolean,
   assignedWindowId: number | undefined,
   currentWindowId: number,
@@ -99,10 +106,15 @@ function renderInstanceCard(
     </div>
   `;
 
+  const hostIcon = host
+    ? `<img class="host-icon" src="${HOST_ICONS[host].src}" alt="${HOST_ICONS[host].alt}" title="${HOST_ICONS[host].alt}" />`
+    : "";
+
   return `
     <div class="${cardClass.join(" ")}" style="view-transition-name: card-${port}">
       <div class="instance-row">
         <div class="dot ${isLive ? "connected" : ""}"></div>
+        ${hostIcon}
         <div class="${nameClass}">${escapeHtml(displayName)}</div>
       </div>
       <div class="instance-meta">${metaHtml}</div>
@@ -143,10 +155,12 @@ function renderGroup(
 }
 
 function render(state: State) {
-  // Build label map
+  // Build label and host maps
   const labelMap = new Map<number, string>();
+  const hostMap = new Map<number, Host>();
   for (const p of state.livePorts) {
     if (p.label) labelMap.set(p.port, p.label);
+    if (p.host) hostMap.set(p.port, p.host);
   }
 
   // All known ports = live + assigned (even if offline)
@@ -189,8 +203,9 @@ function render(state: State) {
   for (const port of sortedPorts) {
     const isLive = state.livePorts.some((p) => p.port === port);
     const label = labelMap.get(port);
+    const host = hostMap.get(port);
     const assignedWindowId = state.instances[String(port)];
-    const card = renderInstanceCard(port, label, isLive, assignedWindowId, state.currentWindowId);
+    const card = renderInstanceCard(port, label, host, isLive, assignedWindowId, state.currentWindowId);
     if (assignedWindowId === state.currentWindowId) {
       thisWindow.push(card);
     } else if (assignedWindowId) {
