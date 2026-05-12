@@ -32,14 +32,31 @@ Set background=true (only with new_tab=true) to open the new tab WITHOUT switchi
     "switch_to_tab",
     `Switch the active tab to a different open tab. Use this after open_page(new_tab=true) to switch back to the original tab, or to jump between tabs.
 Accepts: a tab number (1-based), a URL substring, or a title substring.
-Example: switch_to_tab("1") to go to the first tab, switch_to_tab("form") to find a tab whose URL or title contains "form".`,
+Pass it as either \`tab\` (mirrors the verb in the tool name — natural when targeting by index) or \`query\` (clearer when matching by URL/title substring). Both work identically.
+Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}) or switch_to_tab({query: "form"}) for a tab whose URL or title contains "form".`,
     {
-      query: z.string().describe("Tab number (1-based), URL substring, or title substring to match"),
+      query: z
+        .union([z.string(), z.number()])
+        .optional()
+        .describe("Tab number (1-based), URL substring, or title substring to match. Alias for `tab`."),
+      tab: z
+        .union([z.string(), z.number()])
+        .optional()
+        .describe("Tab number (1-based), URL substring, or title substring to match. Alias for `query`."),
     },
-    async ({ query }) => {
-      await bridge.request({ type: "switch_to_tab", query });
+    async ({ query, tab }) => {
+      const raw = query ?? tab;
+      if (raw === undefined || raw === null || raw === "") {
+        return {
+          content: [
+            { type: "text", text: "switch_to_tab requires either `tab` or `query` — a 1-based index, URL substring, or title substring." },
+          ],
+        };
+      }
+      const q = String(raw);
+      await bridge.request({ type: "switch_to_tab", query: q });
       return {
-        content: [{ type: "text", text: `Switched to tab matching "${query}"` }],
+        content: [{ type: "text", text: `Switched to tab matching "${q}"` }],
       };
     }
   );

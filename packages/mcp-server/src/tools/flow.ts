@@ -87,19 +87,24 @@ If the until-condition is not met within until_timeout_ms (default 5000ms), clic
           ],
         };
       }
-      const r = response as { success: boolean; message: string };
+      const r = response as { success: boolean; message: string; before_url?: string; after_url?: string; navigated?: boolean };
+      // Surface silent redirects: a click whose post-URL differs from the
+      // pre-URL is the canonical Canvas "Assessment link → course home" case.
+      // Only emit the line when navigation actually happened so the
+      // common-case output stays one line.
+      const navLine = r.navigated && r.after_url ? `\n→ Navigated: ${r.after_url}` : "";
       if (!r.success) {
         return {
           content: [
             {
               type: "text",
-              text: `Could not click "${textHint}": ${r.message}`,
+              text: `Could not click "${textHint}": ${r.message}${navLine}`,
             },
           ],
         };
       }
       return {
-        content: [{ type: "text", text: r.message }],
+        content: [{ type: "text", text: `${r.message}${navLine}` }],
       };
     }
   );
@@ -567,6 +572,39 @@ Pass \`exact: true\` for forms with short generic labels (like "Rate" or "Amount
           text: `Filled ${r.succeeded}/${r.total} fields:\n${lines.join("\n")}`,
         }],
       };
+    }
+  );
+
+  server.tool(
+    "list_frames",
+    `List every top-level iframe/frame on the active page, with its origin, whether its contentDocument is accessible (same-origin), and its on-screen position.
+
+Use this BEFORE calling find_text({frame: "..."}) or other frame-targeted tools — it shows you which frames exist and which are reachable. Knowing a frame is cross-origin up front means you can route to read_attachment (for the frame's src URL) or take_screenshot instead of getting a "frame not accessible" error from another tool.
+
+Per-frame fields:
+- selector: CSS selector you can pass to other tools' \`frame\` parameter
+- src: the iframe's src attribute (may be empty for about:blank frames)
+- origin: parsed origin (e.g. "https://canvadoc.instructure.com") — empty when src is data:/javascript:/empty
+- accessible: true if contentDocument is reachable (same-origin), false otherwise
+- title: the iframe's title attribute, often the most human-readable identifier
+- x, y, width, height: bounding-box position in viewport CSS pixels
+
+Note: this returns top-level frames only. Nested cross-origin frame trees are not enumerated.`,
+    {},
+    async () => {
+      const response = await bridge.request({ type: "list_frames" });
+      if (response.type !== "list_frames_response") throw new Error(`Unexpected response: ${response.type}`);
+      const r = response as { frames: Array<{ index: number; selector: string; src: string; origin: string; title: string; accessible: boolean; x: number; y: number; width: number; height: number }> };
+      if (r.frames.length === 0) {
+        return { content: [{ type: "text", text: "No iframes or frames on this page." }] };
+      }
+      const lines = r.frames.map((f) => {
+        const access = f.accessible ? "accessible" : "cross-origin";
+        const titleBit = f.title ? ` "${f.title}"` : "";
+        const originBit = f.origin || "(no origin)";
+        return `${f.index}. ${f.selector}${titleBit} — ${originBit} [${access}] — ${f.width}×${f.height} @ (${f.x},${f.y})${f.src ? `\n   src: ${f.src}` : ""}`;
+      });
+      return { content: [{ type: "text", text: `Found ${r.frames.length} frame${r.frames.length === 1 ? "" : "s"}:\n${lines.join("\n")}` }] };
     }
   );
 
