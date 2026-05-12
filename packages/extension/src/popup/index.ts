@@ -21,9 +21,9 @@ type State = {
   validWindowIds: Set<number>;
 };
 
-const HOST_ICONS: Record<Host, { src: string; alt: string }> = {
-  claude: { src: "icons/host-claude.png", alt: "Claude Code" },
-  codex: { src: "icons/host-codex.png", alt: "Codex CLI" },
+const HOST_ICONS: Record<Host, { src: string; label: string }> = {
+  claude: { src: "icons/host-claude.png", label: "Claude" },
+  codex: { src: "icons/host-codex.png", label: "Codex" },
 };
 
 const collapsedGroups = new Set<string>();
@@ -106,16 +106,16 @@ function renderInstanceCard(
     </div>
   `;
 
-  const hostIcon = host
-    ? `<img class="host-icon" src="${HOST_ICONS[host].src}" alt="${HOST_ICONS[host].alt}" title="${HOST_ICONS[host].alt}" />`
+  const hostBadge = host
+    ? `<div class="host-badge" title="${HOST_ICONS[host].label} session"><span class="host-label">${HOST_ICONS[host].label}</span><img class="host-icon" src="${HOST_ICONS[host].src}" alt="" /></div>`
     : "";
 
   return `
     <div class="${cardClass.join(" ")}" style="view-transition-name: card-${port}">
       <div class="instance-row">
         <div class="dot ${isLive ? "connected" : ""}"></div>
-        ${hostIcon}
         <div class="${nameClass}">${escapeHtml(displayName)}</div>
+        ${hostBadge}
       </div>
       <div class="instance-meta">${metaHtml}</div>
       ${buttons}
