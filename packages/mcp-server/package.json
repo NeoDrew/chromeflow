@@ -1,6 +1,6 @@
 {
   "name": "@chromeflow/mcp-server-source",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "private": true,
   "description": "Source for the chromeflow MCP server. Bundled into packages/plugin/server/ by the plugin's build script. Not published.",
   "type": "module",

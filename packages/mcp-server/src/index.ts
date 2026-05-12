@@ -82,5 +82,28 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
+  // Watchdog: exit when the host (Claude Code / Codex) disconnects.
+  // Codex does not always SIGTERM its MCP subprocesses on session end, so
+  // without this the WS server keeps listening and the popup accumulates
+  // ghost instances on ports 7878-7888.
+  //
+  // Two complementary signals:
+  //   1. stdin close — fires when the host closes its end of the stdio pipe
+  //   2. PPID reparented to 1 — fires when the parent dies and we're
+  //      reparented to init (orphaned). Polled every 5s.
+  const exitClean = (reason: string) => {
+    console.error(`[chromeflow] host disconnected (${reason}), exiting.`);
+    process.exit(0);
+  };
+  process.stdin.on("end", () => exitClean("stdin end"));
+  process.stdin.on("close", () => exitClean("stdin close"));
+  const originalPpid = process.ppid;
+  setInterval(() => {
+    const ppid = process.ppid;
+    if (ppid === 1 || (originalPpid !== 1 && ppid !== originalPpid)) {
+      exitClean(`ppid changed ${originalPpid}→${ppid}`);
+    }
+  }, 5000).unref();
+
   console.error(`[chromeflow] v${PACKAGE_VERSION} MCP server running. Waiting for the agent...`);
 }
