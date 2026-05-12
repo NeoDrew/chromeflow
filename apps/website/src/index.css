@@ -182,7 +182,7 @@ code {
 
 .cols-2 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .cols-3 {
@@ -193,7 +193,7 @@ code {
 .section-hero {
   padding: 4rem 0;
   text-align: center;
-  min-height: 90vh;
+  min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -212,7 +212,7 @@ code {
   }
 
   body { -webkit-text-size-adjust: 100%; }
-  .section-hero { min-height: 80vh; }
+  .section-hero { min-height: 100vh; }
 
   .section-hero {
     padding: 3.5rem 0 2.5rem;
