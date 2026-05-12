@@ -1,0 +1,21 @@
+{
+  "name": "chromeflow",
+  "plugins": [
+    {
+      "name": "chromeflow",
+      "source": {
+        "source": "local",
+        "path": "./packages/plugin"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Productivity",
+      "description": "Let Codex drive your real browser — clicks, fills forms, grabs API keys, writes them to .env.",
+      "version": "0.9.1",
+      "homepage": "https://chromeflow.vercel.app",
+      "repository": "https://github.com/NeoDrew/chromeflow",
+      "license": "MIT"
+    }
+  ]
+}

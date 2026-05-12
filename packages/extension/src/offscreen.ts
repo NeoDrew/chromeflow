@@ -12,12 +12,15 @@ const PORT_MAX = 7888;
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 30000;
 
+type Host = "claude" | "codex";
+
 type Conn = {
   port: number;
   ws: WebSocket | null;
   reconnectDelay: number;
   connected: boolean;
   label?: string;
+  host?: Host;
 };
 
 const connections: Conn[] = [];
@@ -52,9 +55,12 @@ function connect(conn: Conn) {
       return;
     }
 
-    // Identity message — store label and re-publish so popup can show project name
+    // Identity message — store label/host and re-publish so popup can show
+    // the project name and the originating host (Claude Code or Codex).
     if (msg.type === "identity") {
       conn.label = (msg.label as string) || undefined;
+      const host = msg.host as string | undefined;
+      conn.host = host === "claude" || host === "codex" ? host : undefined;
       publishLivePorts();
       return;
     }
@@ -108,7 +114,7 @@ function publishLivePorts() {
   // persist to storage and broadcast to the popup.
   const livePorts = connections
     .filter((c) => c.connected)
-    .map((c) => ({ port: c.port, label: c.label }));
+    .map((c) => ({ port: c.port, label: c.label, host: c.host }));
   chrome.runtime.sendMessage({ source: "chromeflow-offscreen", type: "status", livePorts }).catch(() => {
     // Background may be starting up, ignore
   });

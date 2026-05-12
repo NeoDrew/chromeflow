@@ -82,5 +82,5 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error(`[chromeflow] v${PACKAGE_VERSION} MCP server running. Waiting for Claude...`);
+  console.error(`[chromeflow] v${PACKAGE_VERSION} MCP server running. Waiting for the agent...`);
 }
