@@ -90,7 +90,33 @@ export type ServerMessage =
       scope_selector?: string;
       regex?: boolean;
       frame?: string;
-    };
+    }
+  | {
+      type: "fetch_url";
+      requestId: string;
+      url: string;
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+      binary?: boolean;
+      timeout_ms?: number;
+      max_bytes?: number;
+    }
+  | {
+      type: "download_file";
+      requestId: string;
+      url: string;
+      filename?: string;
+      timeout_ms?: number;
+    }
+  | {
+      type: "read_attachment";
+      requestId: string;
+      url: string;
+      format?: string;
+      max_chars?: number;
+    }
+  | { type: "list_frames"; requestId: string };
 
 export type PageFieldState = {
   selector: string;
@@ -115,7 +141,15 @@ export type ClientMessage =
   | { type: "click_detected"; requestId: string }
   | { type: "navigation_complete"; requestId: string; url: string }
   | { type: "fill_response"; requestId: string; success: boolean; message: string; matched?: string }
-  | { type: "click_element_response"; requestId: string; success: boolean; message: string }
+  | {
+      type: "click_element_response";
+      requestId: string;
+      success: boolean;
+      message: string;
+      before_url?: string;
+      after_url?: string;
+      navigated?: boolean;
+    }
   | { type: "page_text_response"; requestId: string; text: string }
   | { type: "script_response"; requestId: string; result: string; alert?: string | null }
   | { type: "error"; requestId: string; message: string }
@@ -166,4 +200,48 @@ export type ClientMessage =
       context?: string;
       elapsed_ms: number;
       frame_error?: string;
+    }
+  | {
+      type: "fetch_url_response";
+      requestId: string;
+      status: number;
+      status_text: string;
+      headers: Record<string, string>;
+      content_type: string;
+      body_text?: string;
+      body_base64?: string;
+      truncated: boolean;
+      total_bytes: number;
+    }
+  | {
+      type: "download_file_response";
+      requestId: string;
+      path: string;
+      mime: string;
+      size: number;
+    }
+  | {
+      type: "read_attachment_response";
+      requestId: string;
+      text: string;
+      format: string;
+      total_chars: number;
+      truncated: boolean;
+      mime: string;
+    }
+  | {
+      type: "list_frames_response";
+      requestId: string;
+      frames: Array<{
+        index: number;
+        selector: string;
+        src: string;
+        origin: string;
+        title: string;
+        accessible: boolean;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+      }>;
     };

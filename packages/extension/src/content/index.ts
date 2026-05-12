@@ -639,6 +639,56 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       return { type: "action_done", requestId: msg.requestId };
     }
 
+    case "list_frames": {
+      const iframes = Array.from(document.querySelectorAll<HTMLIFrameElement | HTMLFrameElement>("iframe, frame"));
+      const frames = iframes.map((el, index) => {
+        const src = el.getAttribute("src") ?? "";
+        let origin = "";
+        try {
+          origin = src ? new URL(src, location.href).origin : "";
+        } catch {
+          // src may be a `javascript:` scheme or otherwise unparseable.
+          origin = "";
+        }
+        let accessible = false;
+        try {
+          accessible = !!(el as HTMLIFrameElement).contentDocument;
+        } catch {
+          accessible = false;
+        }
+        const rect = el.getBoundingClientRect();
+        // Build a usable CSS selector — prefer #id, fall back to class chain
+        // bounded by the tag, fall back to nth-of-type. The selector is
+        // intended to be passed back into find_text/find_input via frame=.
+        let selector: string;
+        if (el.id) {
+          selector = `#${CSS.escape(el.id)}`;
+        } else if (el.className && typeof el.className === "string" && el.className.trim()) {
+          const cls = el.className.trim().split(/\s+/).map((c) => `.${CSS.escape(c)}`).join("");
+          selector = `${el.tagName.toLowerCase()}${cls}`;
+        } else {
+          // nth-of-type among siblings sharing the same tag (iframe/frame).
+          const tag = el.tagName.toLowerCase();
+          const sameTagSiblings = Array.from(document.querySelectorAll(tag));
+          const idx = sameTagSiblings.indexOf(el) + 1;
+          selector = `${tag}:nth-of-type(${idx})`;
+        }
+        return {
+          index: index + 1,
+          selector,
+          src,
+          origin,
+          title: el.getAttribute("title") ?? "",
+          accessible,
+          x: Math.round(rect.x),
+          y: Math.round(rect.y),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+      });
+      return { type: "list_frames_response", requestId: msg.requestId, frames };
+    }
+
     default:
       return {
         type: "error",

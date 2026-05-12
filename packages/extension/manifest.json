@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chromeflow",
-  "version": "0.9.1",
+  "version": "0.9.3",
   "description": "Guided web assistance for Claude Code and Codex CLI",
   "permissions": [
     "tabs",
@@ -10,7 +10,8 @@
     "offscreen",
     "storage",
     "windows",
-    "debugger"
+    "debugger",
+    "downloads"
   ],
   "host_permissions": [
     "<all_urls>"

@@ -104,6 +104,27 @@ After a secret key or API key is revealed:
 
 Use the absolute path for `envPath` — it's the Codex working directory + `/.env`.
 
+## Privileged context — `fetch_url`, `download_file`, `read_attachment`
+
+`execute_script` runs in **page context**: it can touch the DOM but is subject to the page's `Content-Security-Policy` (specifically `connect-src`, which routinely blocks `fetch()` against authenticated APIs on sites like Canvas, banking dashboards, internal portals).
+
+For authenticated network access, use the **privileged-context** tools — they run in the extension's background service worker with full host_permissions, automatically include the user's Chrome cookies, and bypass page CSP entirely:
+
+- `fetch_url(url, method?, headers?, body?, binary?)` — generic HTTP request, returns `{status, headers, body_text or body_base64, truncated, total_bytes}`. Use for AJAX endpoints, JSON APIs, anything where you need a clean response object. Pass `binary: true` for non-text bodies (PDFs, images, zips).
+- `download_file(url, filename?)` — Chrome's authenticated download flow, returns the absolute path the file landed at. Use when you need the bytes saved to disk for another tool to read (or to hand the path to the user).
+- `read_attachment(url, format?, max_chars?)` — privileged fetch + format-aware text extraction in one call. Supports docx (via in-extension ZIP extraction, no local CLI), txt, md, csv, json, xml, html. PDF returns a structured error pointing you at `download_file` + your local `pdftotext`/`textutil` (PDF native support is planned for v0.9.4).
+
+**Mental model**: page context for DOM manipulation, privileged context for network access. If `execute_script("...await fetch(...)...")` returns "Failed to fetch" or a `Content-Security-Policy` error, switch to `fetch_url` (or `read_attachment` if you just want the text).
+
+## Discoverability — `list_frames`
+
+Before reaching into an iframe with `find_text({frame: "selector"})` or other frame-targeted tools, call `list_frames()` to see what's actually on the page. Each result includes:
+- `selector` — drop this directly into another tool's `frame` parameter
+- `origin` — the iframe's origin (parsed from `src`)
+- `accessible` — `true` for same-origin frames (`find_text` etc. work), `false` for cross-origin (use `read_attachment(src)` or `take_screenshot` instead)
+
+This is how you avoid "frame not accessible" errors after the fact. Top-level frames only — nested cross-origin trees aren't enumerated.
+
 To capture and share a screenshot (e.g. for uploading to a form or pasting into a chat),
 use `take_screenshot(copy_to_clipboard=true, save_to="downloads")` — saves a PNG to ~/Downloads
 and copies it to the clipboard. The defaults (`copy_to_clipboard=false, save_to="none"`) return
@@ -238,6 +259,12 @@ click_element("Save", until_selector=".success-toast")
 click_element("Confirm", until_text_contains="Order placed")
 ```
 If success=false: try `react_set_input` to fire the click via the page's own React handler, or use `execute_script("document.querySelector(...).click()")` directly.
+
+**Spotting silent redirects**: every `click_element` response now includes `before_url`, `after_url`, and `navigated`. The agent-facing text appends a `→ Navigated: <url>` line whenever `before_url !== after_url`. This catches the "I clicked Assessment but the page bounced me to course home" case without needing a separate `list_tabs` round-trip. If the URL didn't change but the click is supposed to navigate, that's a sign the click never registered.
+
+**0×0 hidden elements are refused immediately**: if the matched element has `width: 0; height: 0` (display:none, off-DOM, or a render-time race), `click_element` returns success=false with a clear "refusing to click" message instead of attempting the click and waiting for an `until_*` clause to time out. Use `wait_for_selector` with a state-specific selector that only matches the visible state, or `scroll_to_element` to bring it into view first.
+
+**`switch_to_tab` accepts `tab` as a synonym for `query`**: `switch_to_tab({tab: 1})`, `switch_to_tab({tab: "github"})`, and `switch_to_tab({query: "github"})` all work. Use whichever reads more naturally — `tab` for indices, `query` for substring matches.
 
 **`click_element` timed out (the WS request, not until-polling)**: the message will say "the click MAY have already fired". On a busy React reconciliation, the click does land but the response read can outrun the 30s WS timeout. Don't blindly retry — re-clicking can toggle React radios OFF or fire a duplicate submit. Verify with `get_page_text`, `wait_for_selector`, or `wait_for_text` first; only retry if the page state confirms the click never took effect.
 
