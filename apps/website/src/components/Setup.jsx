@@ -1,17 +1,39 @@
 import { useState } from 'react'
 import { useScrollAnimation } from '../hooks/useScrollAnimation'
 
-const CMDS = [
-  '/plugin marketplace add NeoDrew/chromeflow',
-  '/plugin install chromeflow',
-]
+const HOST_CONFIG = {
+  claude: {
+    title: 'Install the Claude Code plugin',
+    cmds: [
+      '/plugin marketplace add NeoDrew/chromeflow',
+      '/plugin install chromeflow',
+    ],
+    name: 'Claude Code',
+    version: 'v2.1.138',
+    sub: 'Opus 4.7 (1M context) with high effort · Claude Max',
+    logo: 'ascii',
+  },
+  codex: {
+    title: 'Install the Codex CLI plugin',
+    cmds: [
+      'codex plugin marketplace add NeoDrew/chromeflow',
+      '/plugins install chromeflow',
+    ],
+    name: 'Codex CLI',
+    version: 'v0.9.1',
+    sub: 'OpenAI · gpt-5-codex',
+    logo: 'codex',
+  },
+}
 
-const CopyCommand = () => {
+const CopyCommand = ({ host }) => {
+  const cfg = HOST_CONFIG[host]
+  const cmds = cfg.cmds
   const [copiedIdx, setCopiedIdx] = useState(-1)
   const [firstDone, setFirstDone] = useState(false)
 
   const copy = (idx) => {
-    navigator.clipboard.writeText(CMDS[idx]).then(() => {
+    navigator.clipboard.writeText(cmds[idx]).then(() => {
       setCopiedIdx(idx)
       if (idx === 0) setFirstDone(true)
       setTimeout(() => setCopiedIdx((curr) => (curr === idx ? -1 : curr)), 1500)
@@ -32,22 +54,34 @@ const CopyCommand = () => {
       lineHeight: 1.5,
       overflow: 'hidden',
     }}>
-      {/* Claude Code header */}
+      {/* Host header */}
       <div style={{
         display: 'flex', gap: '0.85rem', alignItems: 'flex-start',
         padding: '0.85rem 1rem 0.7rem 1rem',
       }}>
-        <pre style={{
-          margin: 0,
-          color: 'var(--amber)',
-          fontFamily: mono,
-          fontSize: '0.78rem',
-          lineHeight: 1.15,
-          whiteSpace: 'pre',
-        }}>{` ▐▛███▜▌\n▝▜█████▛▘\n  ▘▘ ▝▝`}</pre>
+        {cfg.logo === 'ascii' ? (
+          <pre style={{
+            margin: 0,
+            color: 'var(--amber)',
+            fontFamily: mono,
+            fontSize: '0.78rem',
+            lineHeight: 1.15,
+            whiteSpace: 'pre',
+          }}>{` ▐▛███▜▌\n▝▜█████▛▘\n  ▘▘ ▝▝`}</pre>
+        ) : (
+          <img
+            src="/codex.png"
+            alt="Codex"
+            style={{
+              width: 40, height: 40, flexShrink: 0,
+              objectFit: 'contain',
+              borderRadius: 6,
+            }}
+          />
+        )}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.05rem' }}>
-          <span>Claude Code <span style={{ color: dim }}>v2.1.138</span></span>
-          <span style={{ color: dim }}>Opus 4.7 (1M context) with high effort · Claude Max</span>
+          <span>{cfg.name} <span style={{ color: dim }}>{cfg.version}</span></span>
+          <span style={{ color: dim }}>{cfg.sub}</span>
           <span style={{ color: dim }}>~/dev/chromeflow</span>
         </div>
       </div>
@@ -59,7 +93,7 @@ const CopyCommand = () => {
         padding: '0.75rem 1rem',
         display: 'flex', flexDirection: 'column', gap: '0.4rem',
       }}>
-        {CMDS.map((cmd, idx) => {
+        {cmds.map((cmd, idx) => {
           const isCopied = copiedIdx === idx
           const dimmed = idx === 0 && firstDone && !isCopied
           const highlighted = idx === 1 && firstDone && !isCopied
@@ -128,12 +162,19 @@ const CopyCommand = () => {
         fontSize: '0.7rem',
         color: dim,
       }}>
+        {host === 'claude' ? (
+          <span>
+            <span style={{ color: 'var(--amber)' }}>⏵⏵</span> bypass permissions on{' '}
+            <span style={{ opacity: 0.7 }}>(shift+tab to cycle)</span>
+          </span>
+        ) : (
+          <span>
+            <span style={{ color: 'var(--amber)' }}>⏵</span> chromeflow plugin loaded
+          </span>
+        )}
         <span>
-          <span style={{ color: 'var(--amber)' }}>⏵⏵</span> bypass permissions on{' '}
-          <span style={{ opacity: 0.7 }}>(shift+tab to cycle)</span>
-        </span>
-        <span>
-          <span style={{ color: '#28c840' }}>●</span> high · /effort
+          <span style={{ color: '#28c840' }}>●</span>{' '}
+          {host === 'claude' ? 'high · /effort' : 'gpt-5-codex'}
         </span>
       </div>
     </div>
@@ -153,8 +194,69 @@ const StepNum = ({ n }) => (
   </div>
 )
 
+const HostToggle = ({ host, onChange }) => {
+  const mono = 'JetBrains Mono, monospace'
+  const Option = ({ value, label, icon }) => {
+    const active = host === value
+    return (
+      <button
+        type="button"
+        onClick={() => onChange(value)}
+        aria-pressed={active}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: '0.35rem',
+          padding: '0.3rem 0.6rem 0.3rem 0.45rem',
+          fontFamily: mono,
+          fontSize: '0.7rem',
+          fontWeight: active ? 700 : 500,
+          letterSpacing: '0.02em',
+          color: active ? '#fff' : 'var(--muted)',
+          background: active
+            ? 'linear-gradient(135deg, var(--amber), var(--orange))'
+            : 'transparent',
+          border: 'none',
+          borderRadius: 7,
+          cursor: 'pointer',
+          transition: 'color 0.15s, background 0.15s',
+          boxShadow: active ? '0 1px 4px rgba(217,119,6,0.25)' : 'none',
+        }}
+      >
+        <img
+          src={icon}
+          alt=""
+          style={{
+            width: 16, height: 16,
+            objectFit: 'contain',
+            borderRadius: 3,
+            filter: active ? 'none' : 'grayscale(0.4)',
+            opacity: active ? 1 : 0.85,
+          }}
+        />
+        {label}
+      </button>
+    )
+  }
+  return (
+    <div
+      role="group"
+      aria-label="Host"
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: '0.15rem',
+        padding: '0.2rem',
+        background: 'var(--surface-2)',
+        border: '1px solid var(--border)',
+        borderRadius: 9,
+      }}
+    >
+      <Option value="claude" label="Claude" icon="/claudeOcto.png" />
+      <Option value="codex" label="Codex" icon="/codex.png" />
+    </div>
+  )
+}
+
 export default function Setup() {
   const ref = useScrollAnimation()
+  const [host, setHost] = useState('claude')
 
   return (
     <section ref={ref} id="setup" style={{
@@ -214,15 +316,29 @@ export default function Setup() {
             boxShadow: 'var(--shadow)',
             display: 'flex', flexDirection: 'column',
             transitionDelay: '0.75s',
+            position: 'relative',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+            <div style={{
+              position: 'absolute',
+              top: '1rem',
+              right: '1rem',
+              zIndex: 2,
+            }}>
+              <HostToggle host={host} onChange={setHost} />
+            </div>
+            <div style={{
+              display: 'flex', alignItems: 'center',
+              gap: '0.75rem',
+              marginBottom: '0.75rem',
+              paddingRight: '9.5rem',
+            }}>
               <StepNum n="1" />
               <h3 style={{ fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
-                Install the Claude Code plugin
+                {HOST_CONFIG[host].title}
               </h3>
             </div>
             <div style={{ marginTop: 'auto' }}>
-              <CopyCommand />
+              <CopyCommand host={host} />
             </div>
           </div>
 
