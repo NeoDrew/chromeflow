@@ -4,85 +4,41 @@ import type { WsBridge } from "../ws-bridge.js";
 
 export function registerHighlightTools(server: McpServer, bridge: WsBridge) {
   server.tool(
-    "find_and_highlight",
-    "Find an element on the page by its visible text and highlight it with an instructional callout. Try this before using highlight_region. Returns whether the element was found.",
-    {
-      text: z
-        .string()
-        .describe(
-          "Visible text of the element or text near it (e.g. 'API Keys', 'Create account')"
-        ),
-      message: z
-        .string()
-        .describe(
-          "Instruction to show the user in the callout (e.g. 'Click here to create your API key'). When the user needs to type something, use a short instruction like 'Type this in the field:' and pass the text as valueToType."
-        ),
-      valueToType: z
-        .string()
-        .optional()
-        .describe(
-          "Only use when the user must personally type the value (password, email, personal data). Do NOT use when Claude will auto-fill after the click — in that case, omit this and use message: 'Click here — I'll fill it in'."
-        ),
-    },
-    async ({ text, message, valueToType }) => {
-      const response = await bridge.request({
-        type: "find_highlight",
-        text,
-        message,
-        valueToType,
-      });
-      if (response.type !== "find_highlight_response") {
-        throw new Error("Unexpected response from extension");
-      }
-      return {
-        content: [
-          {
-            type: "text",
-            text: response.found
-              ? `Element containing "${text}" highlighted.`
-              : `Element containing "${text}" not found. Try get_elements() to get exact DOM coordinates, or take_screenshot() only if you need to see the visual layout.`,
-          },
-        ],
-      };
-    }
-  );
-
-  server.tool(
     "highlight_region",
-    `Highlight a region on the page with an instructional callout.
-Prefer passing a CSS selector — the extension will find the element, scroll it into view, and highlight its exact bounds automatically. This is more robust than pixel coordinates, which go stale if the user scrolls.
-Only pass x/y/width/height when you have no selector and already have fresh coordinates from get_elements.`,
+    `Show the user where to look with an instructional callout. Pass exactly one of:
+- text — search the page for this visible text, highlight the match
+- selector — CSS selector, highlight the matched element
+- x/y/width/height — pixel rectangle (use only when DOM lookup failed)
+
+Returns whether the element was found. Set valueToType only when the user must personally type a sensitive value (password, payment data) — otherwise Claude should auto-fill after the click.`,
     {
-      selector: z.string().optional().describe("CSS selector of the element to highlight (e.g. '#upload-zone', '.drop-area'). Preferred over raw coordinates."),
-      x: z.number().optional().describe("Left edge in CSS pixels — only needed if no selector"),
-      y: z.number().optional().describe("Top edge in CSS pixels — only needed if no selector"),
-      width: z.number().optional().describe("Width in CSS pixels — only needed if no selector"),
-      height: z.number().optional().describe("Height in CSS pixels — only needed if no selector"),
-      message: z
-        .string()
-        .describe(
-          "Instruction to show the user in the callout. When the user needs to type something, use a short instruction like 'Type this in the field:' and pass the text as valueToType."
-        ),
-      valueToType: z
-        .string()
-        .optional()
-        .describe(
-          "Only use when the user must personally type the value (password, email, personal data). Do NOT use when Claude will auto-fill after the click — in that case, omit this and use message: \"Click here — I'll fill it in\"."
-        ),
+      text: z.string().optional().describe("Visible text of the target element or text near it (e.g. 'API Keys', 'Create account')."),
+      selector: z.string().optional().describe("CSS selector of the element to highlight (e.g. '#upload-zone'). The extension scrolls it into view automatically."),
+      x: z.number().optional().describe("Left edge in CSS pixels — only when no selector/text."),
+      y: z.number().optional().describe("Top edge in CSS pixels — only when no selector/text."),
+      width: z.number().optional().describe("Width in CSS pixels — only when no selector/text."),
+      height: z.number().optional().describe("Height in CSS pixels — only when no selector/text."),
+      message: z.string().describe("Instruction to show the user in the callout."),
+      valueToType: z.string().optional().describe("Only when the user must personally type a sensitive value. Omit when Claude will auto-fill."),
     },
-    async ({ selector, x, y, width, height, message, valueToType }) => {
+    async ({ text, selector, x, y, width, height, message, valueToType }) => {
+      if (text) {
+        const response = await bridge.request({ type: "find_highlight", text, message, valueToType });
+        if (response.type !== "find_highlight_response") throw new Error("Unexpected response");
+        return {
+          content: [{
+            type: "text",
+            text: response.found ? `Element containing "${text}" highlighted.` : `Element containing "${text}" not found.`,
+          }],
+        };
+      }
       await bridge.request({ type: "highlight_region", selector, x, y, width, height, message, valueToType });
       return {
-        content: [
-          {
-            type: "text",
-            text: selector
-              ? `Highlighted element matching "${selector}".`
-              : `Region highlighted at (${x ?? 0}, ${y ?? 0}) ${width ?? 0}×${height ?? 0}.`,
-          },
-        ],
+        content: [{
+          type: "text",
+          text: selector ? `Highlighted "${selector}".` : `Region highlighted at (${x ?? 0},${y ?? 0}) ${width ?? 0}×${height ?? 0}.`,
+        }],
       };
     }
   );
-
 }
