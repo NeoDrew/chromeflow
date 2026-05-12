@@ -78,9 +78,7 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
 
   server.tool(
     "take_screenshot",
-    `Capture a screenshot of the current page. By default returns the image to Claude only; pass copy_to_clipboard or save_to to also share the image outside Claude (paste into a chat, upload to a form, keep as a file).
-
-IMPORTANT: Do NOT use this to read page content — call get_page_text instead, which is faster and returns searchable text. Screenshots are ONLY for locating an element's pixel coordinates when DOM queries have already failed. Never take a screenshot immediately after open_page, scroll_page, or click_element. Never take more than 1-2 screenshots in a row.`,
+    `Capture a screenshot of the active tab. By default returns the PNG to the agent only; set save_to or copy_to_clipboard to also share it. Reserved for cases where DOM lookup has already failed — use get_page_text and find_text for reading content.`,
     {
       copy_to_clipboard: z
         .boolean()
@@ -224,26 +222,6 @@ The saved file path can be passed directly to set_file_input(hint, file_path) to
   );
 
   server.tool(
-    "set_dialog_response",
-    `Pre-set the return value for the next window.prompt() or window.confirm() dialog.
-Call this BEFORE triggering an action that will show a dialog (e.g. a "Save As" button that calls prompt()).
-The response is consumed once — after the dialog fires, it resets to default behavior.
-For prompt: the value string is returned to the page. For confirm: true/false is returned.`,
-    {
-      type: z.enum(["prompt", "confirm"]).describe('Which dialog type to pre-fill: "prompt" or "confirm"'),
-      value: z.string().describe('For prompt: the string to return. For confirm: "true" or "false"'),
-    },
-    async ({ type, value }) => {
-      const jsValue = type === "confirm" ? (value === "true") : value;
-      const code = `window._chromeflowDialogResponse = window._chromeflowDialogResponse || {}; window._chromeflowDialogResponse.${type} = ${JSON.stringify(jsValue)}; "set"`;
-      await bridge.request({ type: "execute_script", code });
-      return {
-        content: [{ type: "text", text: `Next ${type}() will return ${JSON.stringify(jsValue)}. Now trigger the action that shows the dialog.` }],
-      };
-    }
-  );
-
-  server.tool(
     "clear_overlays",
     "Remove all highlights and callout annotations from the current page.",
     {},
@@ -256,69 +234,52 @@ For prompt: the value string is returned to the page. For confirm: true/false is
   );
 
   server.tool(
-    "get_elements",
-    `Get the exact pixel positions of all visible interactive elements on the page (inputs, buttons, links, selects).
-Use this INSTEAD OF take_screenshot when you need coordinates for highlight_region — the coordinates are exact DOM values, not estimates.
-Returns a numbered list with element type, label, and precise x/y/width/height in CSS pixels.
-IMPORTANT: x/y are VIEWPORT-relative (0,0 = top-left of the visible area). Use these exact values directly in highlight_region — do not add window.scrollY.
-Use get_form_fields instead if you need document y positions or fields below the fold.`,
-    {},
-    async () => {
-      const response = await bridge.request({ type: "get_elements" });
-      if (response.type !== "elements_response") throw new Error("Unexpected response");
-      const els = (response as { elements: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> }).elements;
-      if (els.length === 0) {
-        return { content: [{ type: "text", text: "No visible interactive elements found on page." }] };
-      }
-      const lines = els.map(e => {
-        const val = e.value ? ` [currently: "${e.value}"]` : "";
-        return `${e.index}. ${e.type} "${e.label}"${val} — x:${e.x} y:${e.y} w:${e.width} h:${e.height}`;
-      });
-      return {
-        content: [{ type: "text", text: `Visible interactive elements:\n${lines.join("\n")}\n\nUse these exact x/y values in highlight_region.` }],
-      };
-    }
-  );
-
-  server.tool(
     "get_form_fields",
-    `Get a full inventory of all form fields on the page: inputs, textareas, selects, and CodeMirror editors.
-Run this once at the start of a complex form to understand what fields exist, their labels, current values, and vertical positions.
-Returns fields sorted by their y-position on the page (top to bottom).
-Unlike get_elements, this includes ALL fields (even far below the fold) and is not limited to 60 items.`,
-    {},
-    async () => {
+    `Inventory form fields on the active page (inputs, textareas, selects, CodeMirror editors). Sorted top-to-bottom by y-position; includes fields below the fold.
+
+Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old find_input behavior — match strength reported as aria-eq / placeholder-eq / label-text-eq / name-eq / id-eq / *-includes / fuzzy-text-walk). Pass \`exact: true\` to refuse fuzzy text-walk matches.`,
+    {
+      query: z.string().optional().describe("If set, filter+rank fields by hint matching label/placeholder/aria-label/name/id."),
+      max: z.number().int().min(1).optional().describe("Maximum fields to return when query is set (default 5). Ignored without query (full inventory)."),
+      type_filter: z.string().optional().describe('Restrict to a specific input type (e.g. "email", "checkbox", "file"). Only with query.'),
+      exact: z.boolean().optional().describe("Refuse fuzzy text-walk and *-includes matches. Only with query."),
+      frame: z.string().optional().describe("Same-origin iframe CSS selector to search inside. Cross-origin iframes are not supported."),
+    },
+    async ({ query, max, type_filter, exact, frame }) => {
+      if (query !== undefined) {
+        // Filtered mode — route to find_input bridge message.
+        const response = await bridge.request({ type: "find_input", query, type_filter, max, exact, frame });
+        if (response.type !== "find_input_response") throw new Error("Unexpected response");
+        const r = response as { fields: Array<{ label: string; placeholder: string; type: string; value: string; under?: string; position: unknown; match_kind: string }>; total_matches: number; truncated: boolean; frame_error?: string };
+        if (r.frame_error) return { content: [{ type: "text", text: r.frame_error }] };
+        if (r.fields.length === 0) return { content: [{ type: "text", text: `No form fields matched "${query}".` }] };
+        const header = `Found ${r.fields.length}${r.truncated ? ` of ${r.total_matches}` : ""} input(s) for "${query}":`;
+        const lines = r.fields.map((f, i) => {
+          const ph = f.placeholder ? ` placeholder="${f.placeholder}"` : "";
+          const val = f.value ? ` value="${f.value}"` : "";
+          const under = f.under ? ` [under: "${f.under}"]` : "";
+          return `  ${i + 1}. "${f.label}" type=${f.type}${ph}${val}${under} — match: ${f.match_kind}`;
+        });
+        return { content: [{ type: "text", text: `${header}\n${lines.join("\n")}\n\nTo fill: fill_input("${r.fields[0].label}", "<value>")` }] };
+      }
+      // Inventory mode.
       const response = await bridge.request({ type: "get_form_fields" });
       if (response.type !== "form_fields_response") throw new Error("Unexpected response");
       const r = response as { fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string }>; warning?: string };
       const fields = r.fields;
-      if (fields.length === 0) {
-        return { content: [{ type: "text", text: "No form fields found on page." + (r.warning ?? "") }] };
-      }
+      if (fields.length === 0) return { content: [{ type: "text", text: "No form fields found on page." + (r.warning ?? "") }] };
       const lines = fields.map(f => {
         const val = f.value ? ` [currently: "${f.value}"]` : "";
         const ctx = f.context ? ` [under: "${f.context}"]` : "";
         return `${f.index}. [${f.type}] "${f.label}"${val}${ctx} — y:${f.y}`;
       });
-      return {
-        content: [{ type: "text", text: `Form fields (${fields.length} total, sorted top-to-bottom):\n${lines.join("\n")}${r.warning ?? ""}` }],
-      };
+      return { content: [{ type: "text", text: `Form fields (${fields.length} total, sorted top-to-bottom):\n${lines.join("\n")}${r.warning ?? ""}` }] };
     }
   );
 
   server.tool(
     "type_text",
-    `Type text into the currently focused element using trusted keyboard events via Chrome DevTools Protocol.
-Unlike fill_input (which sets .value programmatically), this produces real keystrokes that pass isTrusted checks. Use this when:
-- fill_input fails because the site validates event.isTrusted (e.g. Outlier, DataAnnotation code editors)
-- The target is a shadow DOM input, custom web component, or heavily guarded editor
-- You need to type into a CodeMirror/Monaco/Ace editor that rejects programmatic value changes
-- The target lives inside a same-origin iframe (e.g. eBay's "se-rte" rich-text description editor) — pass the iframe's CSS selector via the \`frame\` parameter
-
-Usage: first click_element or execute_script to focus the target field, then call type_text with the content.
-To clear existing content before typing, use execute_script("document.execCommand('selectAll')") first.
-
-For iframe contenteditables: pass \`frame\` (a CSS selector for the iframe). type_text descends into the iframe, focuses its first editable element, types via CDP, then dispatches input/change in the iframe's context so React picks up the change. Same-origin iframes only — cross-origin iframes will return an error.`,
+    `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). The caller is responsible for focusing the target first (via click_element or execute_script). Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.`,
     {
       text: z.string().describe("The text to type into the focused element"),
       frame: z
@@ -372,69 +333,6 @@ For iframe contenteditables: pass \`frame\` (a CSS selector for the iframe). typ
   );
 
   server.tool(
-    "react_set_input",
-    `Set the value of a React-controlled input via the native value-setter, dispatching the input/change events that React's onChange handler listens for.
-
-Use this instead of writing your own \`Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set\` script — this helper handles the prototype-from-instance gotcha automatically (inputs inside iframes have their own HTMLInputElement constructor, and using the outer-window prototype throws "Illegal invocation").
-
-Common cases:
-- A standard input that fill_input fails on because the page validates event.isTrusted or uses an exotic React Hook Form setup.
-- An input inside a same-origin iframe (pass frame="iframe.selector").
-- A hidden React-Select combobox input (selector='input[id*="react-select-3-input"]').
-
-Returns the matched element's tag/name/id/type so you can verify it was the right field, and the read-back value so you can spot when React rejected the new value.`,
-    {
-      selector: z.string().describe("CSS selector of the input to set (e.g. 'input[name=email]', '#promoted-rate-input')"),
-      value: z.string().describe("The value to set"),
-      frame: z
-        .string()
-        .optional()
-        .describe('Optional CSS selector for a same-origin iframe whose contents contain the input (e.g. "iframe.se-rte-frame"). Cross-origin iframes are not supported.'),
-    },
-    async ({ selector, value, frame }) => {
-      const response = await bridge.request({ type: "react_set_input", selector, value, frame });
-      const r = response as { success?: boolean; message?: string };
-      return {
-        content: [{ type: "text", text: r.message ?? (r.success ? "Set" : "Failed to set") }],
-      };
-    }
-  );
-
-  server.tool(
-    "react_call_prop",
-    `Walk up the React fiber from a DOM element and call a named prop on the nearest component that has it. Use this as an escape hatch when the UI swallows clicks or a modal never renders — e.g. calling handleForceSubmitConfirmation directly to bypass a stuck submit modal.
-
-Common cases:
-- A submit button whose onClick opens a modal that never appears (validation thinks the form is incomplete because the form-level state is stale, even though the inputs look filled). Walk up to the page-level component and call the bypass handler directly.
-- An onChange handler that the synthetic-event path didn't reach (when click_element fired but React's form-level store wasn't updated).
-
-args MUST be JSON-serializable (primitives, arrays, plain objects). Functions, DOM nodes, and Promises cannot be passed in.
-
-Returns the component name (when available), the fiber depth where the prop was found, and a stringified version of the return value. If the prop function returned a Promise, react_call_prop awaits it before returning.`,
-    {
-      selector: z.string().describe("CSS selector of any element inside the target component's subtree (e.g. 'input[name=\"justification\"]', '#submit-button')"),
-      prop_name: z.string().describe("Name of the prop function to call (e.g. 'handleForceSubmitConfirmation', 'onChange', 'onSubmit')"),
-      args: z.array(z.any()).optional().describe("Arguments to pass; must be JSON-serializable (primitives, arrays, plain objects). Default: empty."),
-      max_depth: z.number().int().min(1).optional().describe("How many fiber levels to walk up before giving up (default 30)"),
-      frame: z.string().optional().describe('Optional CSS selector for a same-origin iframe whose contents contain the element (e.g. "iframe.se-rte-frame"). Cross-origin iframes are not supported.'),
-    },
-    async ({ selector, prop_name, args = [], max_depth = 30, frame }) => {
-      const response = await bridge.request({
-        type: "react_call_prop",
-        selector,
-        prop_name,
-        args,
-        max_depth,
-        frame,
-      }, 30_000);
-      const r = response as { success?: boolean; message?: string };
-      return {
-        content: [{ type: "text", text: r.message ?? (r.success ? "Called" : "Failed to call prop") }],
-      };
-    }
-  );
-
-  server.tool(
     "execute_script",
     `Execute JavaScript in the current page's context and return the result. Use for reading framework state or DOM properties not visible in text — prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
 
@@ -462,18 +360,26 @@ CSP-strict pages (Stripe, GitHub) silently fall through to a CDP eval path. Page
 
   server.tool(
     "inspect_request_headers",
-    `Navigate to a URL and capture the exact HTTP request headers Chrome sends for the main document request.
-Use this to diagnose server-side bot detection — e.g. when a site returns a "mobile" or "switch devices" page despite the client reporting desktop.
-Returns the request method, URL, and all headers including Sec-CH-UA-* client hints.
-This tool DOES navigate the active tab to the URL.`,
+    `Navigate to a URL and capture the request headers Chrome sends for the main document — useful for diagnosing server-side bot detection. Returns method, URL, and all headers. Cookie values are redacted by default to avoid leaking session tokens into the agent context; pass redact_cookies: false to see them. This tool DOES navigate the active tab.`,
     {
       url: z.string().url().describe("URL to navigate to and capture headers for"),
+      redact_cookies: z.boolean().optional().describe("Replace each cookie's value with [REDACTED]. Default true. Set false only when you genuinely need the cookie content for debugging."),
     },
-    async ({ url }) => {
+    async ({ url, redact_cookies = true }) => {
       const response = await bridge.request({ type: "inspect_request_headers", url }, 20_000);
       const r = response as { message?: string };
+      let text = r.message ?? "(no headers captured)";
+      if (redact_cookies) {
+        // Redact the `cookie:` header value. Format from the extension is
+        // "cookie: name1=val1; name2=val2" — replace each value with [REDACTED].
+        text = text.replace(/^(cookie:\s*)(.+)$/gim, (_m, prefix, body) => {
+          const pairs = String(body).split(";").map(s => s.trim()).filter(Boolean);
+          const names = pairs.map(p => p.split("=")[0]);
+          return `${prefix}[REDACTED — ${pairs.length} cookies: ${names.join(", ")}]`;
+        });
+      }
       return {
-        content: [{ type: "text", text: r.message ?? "(no headers captured)" }],
+        content: [{ type: "text", text }],
       };
     }
   );

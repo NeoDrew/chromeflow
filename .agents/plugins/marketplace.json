@@ -12,7 +12,7 @@
       },
       "category": "Productivity",
       "description": "Let Codex drive your real browser — clicks, fills forms, grabs API keys, writes them to .env.",
-      "version": "0.9.3",
+      "version": "0.9.4",
       "homepage": "https://chromeflow.vercel.app",
       "repository": "https://github.com/NeoDrew/chromeflow",
       "license": "MIT"

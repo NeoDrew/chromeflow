@@ -24,18 +24,17 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 ## HARD RULES — never break these
 
 1. **Never use Bash as a fallback for browser tasks.** If `click_element` fails, use
-   `scroll_page` then retry, or use `highlight_region` to show the user. Never use
+   `scroll_to_element` then retry, or use `highlight_region` to show the user. Never use
    `osascript`, `applescript`, or any shell command to control the browser.
 
-2. **Never use `take_screenshot` to read page content.** After `scroll_page`, after
-   `click_element`, after navigation — always call `get_page_text`, not `take_screenshot`.
-   `get_page_text` returns up to 10,000 characters; if truncated it tells you the next
-   `startIndex` to paginate. When you only need to confirm a specific phrase is present,
-   prefer `find_text("phrase")` — it returns matches with context and selectors instead of
-   dumping the whole page. Screenshots are only for locating an element's pixel position
-   when DOM queries have already failed. Never take more than 1–2 screenshots in a row.
+2. **Never use `take_screenshot` to read page content.** After `click_element`, after
+   navigation — always call `get_page_text` (or `find_text` if you only need to check for a
+   specific phrase). `get_page_text` returns up to 10,000 characters; if truncated it tells
+   you the next `startIndex` to paginate. Screenshots are only for locating an element's
+   pixel position when DOM queries have already failed. Never take more than 1–2 screenshots
+   in a row.
 
-3. **Use `wait_for_selector` to wait for async page changes** (build completion, modals,
+3. **Use `wait_for(selector=…)` to wait for async page changes** (build completion, modals,
    toasts). Never poll with repeated `take_screenshot` calls.
 
 ## Guided flow pattern
@@ -46,24 +45,23 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
    a. Codex acts directly:
         click_element("Save")               — press buttons/links Codex can press
         click_element("Save", until_selector=".success-toast")  — when synthetic clicks may silently no-op on a React-heavy site, require an observable post-click condition (or until_url_contains / until_text_contains)
-        get_page_text() or wait_for_selector(".success") — confirm after click without an until-clause; click_element returns after 600ms regardless of outcome unless until_* was used
         fill_form([{label, value}, ...], exact=true)  — fill multiple fields in one call; pass exact=true on dense forms to refuse fuzzy text-walk matches
-        fill_input("Product name", "Pro")   — fill a single field (works on React, CodeMirror, and contenteditable). Always check the response — it names the matched element so you can spot wrong-field matches
-        fill_input("Rate", "5", exact=true) — exact-match mode for short generic labels that may collide with neighbouring fields
-        react_set_input("input[name=email]", "x@y") — for inputs where fill_input fails (or for iframe-hosted inputs via frame=...) — handles the prototype-from-instance gotcha automatically
+        fill_input(textHint="Product name", value="Pro")   — fill a single field by label hint (works on React, CodeMirror, and contenteditable). Always check the response — it names the matched element so you can spot wrong-field matches
+        fill_input(textHint="Rate", value="5", exact=true) — exact-match mode for short generic labels that may collide with neighbouring fields
+        fill_input(selector="input[name=email]", value="x@y") — selector-mode (replaces the old react_set_input). Bypasses fuzzy matching and uses the React-aware native value-setter so React's onChange picks up the change. Supports `frame` for same-origin iframe inputs.
         type_text("hello world")            — type via trusted keyboard events (use when fill_input fails isTrusted checks)
         type_text("description", frame="iframe.se-rte")  — type into a same-origin iframe's contenteditable (eBay description editor pattern)
         set_file_input("Upload", "/abs/path/to/file.zip") — upload a file; returns success only after the upload is observably committed (no manual sleep needed between rapid uploads)
         clear_overlays()                    — call this immediately after fill_input/fill_form succeeds
-        scroll_to_element("label text")     — jump directly to a known field; prefer this over scroll_page when the target is known
-        scroll_page("down")                 — reveal off-screen content when target location is unknown
+        scroll_to_element("label text")     — jump directly to a known field by CSS selector or visible text; use execute_script("window.scrollBy(0, 400)") only for blind incremental scrolls
    b. Check results with text, not vision:
         get_page_text()                     — read errors/status after actions
-        wait_for_selector(".success")       — wait for a new element to appear
-        wait_for_change(".toast")          — wait for an existing element's content to mutate, then read it (uses MutationObserver, cheaper than polling)
+        wait_for(selector=".success")       — wait for a CSS selector to appear (replaces wait_for_selector)
+        wait_for(text="Saved")              — wait for a text substring to appear (replaces wait_for_text)
+        wait_for(change_in=".toast")        — wait for an existing element's subtree to mutate, then read its text (replaces wait_for_change)
         execute_script("return await fetch('/api/x').then(r => r.json())")  — top-level await is supported, no window.__variable + sleep dance needed
    c. When an element can't be found or clicked:
-        scroll_page("down") and retry      — always try this first
+        scroll_to_element("label text") and retry — always try this first
         get_elements()                      — get EXACT DOM coords when needed
         highlight_region(selector,msg)      — highlight by CSS selector (preferred; scrolls element into view automatically)
         highlight_region(x,y,w,h,msg)       — highlight by coords only if no selector available (coords go stale on scroll)
@@ -400,3 +398,65 @@ Object.defineProperty(document, 'visibilityState', { get: () => 'visible', confi
 Re-apply after every navigation.
 
 **Never use Bash to work around a stuck browser interaction.**
+
+## Recipes for tools removed in 0.9.4
+
+The following tools were demoted from the surface to keep the tool list lean. The
+underlying mechanics still work — they're just inlined into `execute_script` recipes now.
+
+**`read_element` → `find_text` + read context, or `execute_script`**
+```js
+// Capture an API key shown after a label
+const el = [...document.querySelectorAll('*')].find(n => n.textContent?.startsWith('sk-'));
+return el?.textContent.trim();
+```
+Or use `find_text("sk-", max: 1)` and read the matched context.
+
+**`scroll_page` → `scroll_to_element` or `execute_script`**
+```
+scroll_to_element("Section heading text")     // by visible text
+scroll_to_element("#submit-btn")              // by CSS selector
+execute_script("window.scrollBy(0, 400)")     // blind incremental scroll (rarely needed)
+```
+
+**`get_elements` → `find_text` for targeted lookup**
+```
+find_text("Save", max: 3)                     // finds the button, returns selector + coords
+```
+`get_elements` was a 3K-char dump every call; `find_text` returns 200–500 chars for the same lookup.
+
+**`react_call_prop` → `execute_script` walking React fibers directly**
+```js
+// Walk up from a known element, find a prop function, call it
+function findFiberProp(el, propName) {
+  let node = Object.keys(el).find(k => k.startsWith('__reactFiber'));
+  let fiber = el[node];
+  while (fiber) {
+    const props = fiber.memoizedProps || fiber.pendingProps;
+    if (props && typeof props[propName] === 'function') return props[propName];
+    fiber = fiber.return;
+  }
+  return null;
+}
+const fn = findFiberProp(document.querySelector('input[name=justification]'), 'handleForceSubmitConfirmation');
+return await fn('my justification');
+```
+
+**`save_page_state` / `restore_page_state` → `execute_script` + a local JSON file**
+```js
+// Save
+const fields = [...document.querySelectorAll('input,textarea,select')].map(f => ({
+  selector: `[name="${f.name}"]`, type: f.type, value: f.value, checked: f.checked,
+}));
+return JSON.stringify(fields);   // write the returned string to a temp file via your tooling
+```
+Restore reverses the process: read JSON, set values, dispatch `input`/`change` events.
+
+**`set_dialog_response` → `execute_script` override**
+```js
+// Before triggering the action that shows a prompt():
+window.prompt = () => 'my response';
+window.confirm = () => true;
+// Then trigger the action.
+```
+
