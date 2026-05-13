@@ -18,6 +18,10 @@
   <a href="#setup">Install</a> · <a href="#what-claude-can-do">Tools</a> · <a href="https://chromeflow.run">Website</a> · <a href="https://github.com/NeoDrew/chromeflow/blob/main/SECURITY.md">Security</a>
 </p>
 
+<p align="center">
+  <img src="assets/chromeflowDemo.gif" alt="Chromeflow demo — Claude Code driving real Chrome" width="720" />
+</p>
+
 ---
 
 **The problem**: Playwright, Browser Use, and Puppeteer launch a fresh empty browser every time — no cookies, no sessions, no 2FA. Your AI agent gets stuck at the first login screen.
