@@ -2,7 +2,7 @@
   "name": "chromeflow",
   "version": "0.9.4",
   "description": "Let Codex drive your real browser — clicks, fills forms, grabs API keys, writes them to .env. Bundles the chromeflow MCP server and usage skill.",
-  "homepage": "https://chromeflow.vercel.app",
+  "homepage": "https://chromeflow.run",
   "repository": "https://github.com/NeoDrew/chromeflow",
   "license": "MIT",
   "keywords": [

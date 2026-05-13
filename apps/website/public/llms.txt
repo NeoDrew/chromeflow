@@ -19,11 +19,11 @@ Chromeflow ships as two halves: a **Model Context Protocol (MCP) server** that e
 
 ## Reference
 
-- [Comparison vs Playwright / Browser Use / Puppeteer](https://chromeflow.vercel.app/compare): why a real-Chrome approach matters
-- [FAQ](https://chromeflow.vercel.app/faq): common questions about installation, security, compatibility, and the privileged-context model
+- [Comparison vs Playwright / Browser Use / Puppeteer](https://chromeflow.run/compare): why a real-Chrome approach matters
+- [FAQ](https://chromeflow.run/faq): common questions about installation, security, compatibility, and the privileged-context model
 - [Security policy](https://github.com/NeoDrew/chromeflow/blob/main/SECURITY.md): vulnerability reporting + past advisories (e.g. the inspect_request_headers cookie-redaction fix in v0.9.4)
 
 ## Optional
 
 - [Latest releases](https://github.com/NeoDrew/chromeflow/releases): every version since 0.9.0 with release notes
-- [Full LLM-ingest file (llms-full.txt)](https://chromeflow.vercel.app/llms-full.txt): the README, the skill, and the tool catalogue concatenated into one file for full ingest
+- [Full LLM-ingest file (llms-full.txt)](https://chromeflow.run/llms-full.txt): the README, the skill, and the tool catalogue concatenated into one file for full ingest
