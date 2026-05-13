@@ -2,7 +2,7 @@
 
 > Chromeflow connects your AI coding agent (Claude Code or OpenAI's Codex CLI) to your real Chrome browser. The agent clicks buttons, fills forms, uploads files, and captures API keys directly to your `.env` — using your existing Chrome session, your existing cookies, your existing logged-in state. Unlike Playwright or Browser Use (which launch fresh empty browsers), Chromeflow drives your actual Chrome where you're already signed into Stripe, GitHub, Canvas, AWS, and every other service you use.
 
-Chromeflow ships as two halves: a **Model Context Protocol (MCP) server** that exposes 26 browser tools to your coding agent, and a **Chrome extension** that receives those commands and acts on the active tab. Free, MIT-licensed, works with both Claude Code and Codex CLI.
+Chromeflow ships as two halves: a **Model Context Protocol (MCP) server** that exposes 26 browser tools to your coding agent, and a **Chrome extension** that receives those commands and acts on the active tab. Free, MIT-licensed, works with both Claude Code and Codex CLI. **Battle-tested by 400+ hours of real agentic browser work** before public v0.9 release — every error-handling recipe in the skill came from patching a real failure.
 
 ## Install
 
