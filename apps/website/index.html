@@ -72,6 +72,67 @@
     }
     </script>
 
+    <!-- Structured data: HowTo (cited by Google AI Overviews + Perplexity for "how do I install" queries) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "HowTo",
+      "name": "How to install Chromeflow for Claude Code or Codex CLI",
+      "description": "Install Chromeflow as a plugin for Claude Code or Codex CLI, then add the Chrome extension. Two commands total. Works in any project with no per-project setup.",
+      "totalTime": "PT2M",
+      "supply": [
+        {"@type": "HowToSupply", "name": "Claude Code or Codex CLI installed"},
+        {"@type": "HowToSupply", "name": "Google Chrome (or any Chromium-based browser)"}
+      ],
+      "step": [
+        {
+          "@type": "HowToStep",
+          "position": 1,
+          "name": "Add the Chromeflow marketplace",
+          "text": "In Claude Code, run: /plugin marketplace add NeoDrew/chromeflow. In Codex CLI, run: codex plugin marketplace add NeoDrew/chromeflow",
+          "url": "https://chromeflow.run/#setup"
+        },
+        {
+          "@type": "HowToStep",
+          "position": 2,
+          "name": "Install the plugin",
+          "text": "In Claude Code: /plugin install chromeflow. In Codex CLI: open /plugins and select chromeflow.",
+          "url": "https://chromeflow.run/#setup"
+        },
+        {
+          "@type": "HowToStep",
+          "position": 3,
+          "name": "Install the Chrome extension",
+          "text": "One-time: install the Chromeflow Chrome extension from the Chrome Web Store. The same extension serves both Claude Code and Codex CLI.",
+          "url": "https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime"
+        },
+        {
+          "@type": "HowToStep",
+          "position": 4,
+          "name": "Use it",
+          "text": "Ask your agent to do anything that involves a browser — set up Stripe, capture API keys, download Canvas attachments. The agent picks up the chromeflow skill automatically.",
+          "url": "https://chromeflow.run/use-cases"
+        }
+      ]
+    }
+    </script>
+
+    <!-- Structured data: ItemList (helps Google understand the site's primary pages for sitelinks) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      "name": "Chromeflow primary pages",
+      "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "Use cases", "url": "https://chromeflow.run/use-cases"},
+        {"@type": "ListItem", "position": 2, "name": "Compare to Playwright, Browser Use, Puppeteer", "url": "https://chromeflow.run/compare"},
+        {"@type": "ListItem", "position": 3, "name": "FAQ", "url": "https://chromeflow.run/faq"},
+        {"@type": "ListItem", "position": 4, "name": "GitHub repository", "url": "https://github.com/NeoDrew/chromeflow"},
+        {"@type": "ListItem", "position": 5, "name": "Chrome Web Store listing", "url": "https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime"}
+      ]
+    }
+    </script>
+
     <!-- Structured data: FAQPage (cited heavily by AI overviews) -->
     <script type="application/ld+json">
     {
