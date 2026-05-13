@@ -4,7 +4,25 @@
 
 <h1 align="center">Chromeflow</h1>
 
-When Claude needs you to set up Stripe, grab API keys, configure a third-party service, or do anything in a browser — Chromeflow takes over. It highlights what to click, fills in fields it knows, clicks buttons automatically, uploads files, and writes captured values straight to your `.env`.
+<p align="center"><strong>Let your AI coding agent (Claude Code or Codex CLI) drive your real Chrome — clicks, fills forms, grabs API keys, writes them to <code>.env</code>.</strong></p>
+
+<p align="center">
+  <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime"><img src="https://img.shields.io/chrome-web-store/v/lkdchdgkbkodliefobkkhiegjdiidime?label=Chrome%20Web%20Store&color=4285F4" alt="Chrome Web Store" /></a>
+  <a href="https://github.com/NeoDrew/chromeflow/releases"><img src="https://img.shields.io/github/v/release/NeoDrew/chromeflow?label=release&color=e85d2c" alt="Latest release" /></a>
+  <a href="https://github.com/NeoDrew/chromeflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/NeoDrew/chromeflow?color=d97706" alt="MIT License" /></a>
+  <a href="https://github.com/NeoDrew/chromeflow/stargazers"><img src="https://img.shields.io/github/stars/NeoDrew/chromeflow?style=social" alt="GitHub stars" /></a>
+  <a href="https://chromeflow.vercel.app"><img src="https://img.shields.io/badge/website-chromeflow.vercel.app-1c1a16" alt="Website" /></a>
+</p>
+
+<p align="center">
+  <a href="#setup">Install</a> · <a href="#what-claude-can-do">Tools</a> · <a href="https://chromeflow.vercel.app">Website</a> · <a href="https://github.com/NeoDrew/chromeflow/blob/main/SECURITY.md">Security</a>
+</p>
+
+---
+
+**The problem**: Playwright, Browser Use, and Puppeteer launch a fresh empty browser every time — no cookies, no sessions, no 2FA. Your AI agent gets stuck at the first login screen.
+
+**Chromeflow**: drives your **actual Chrome**, where you're already logged into Stripe, AWS, Supabase, Canvas, GitHub. The agent automates what it can (clicks, fills, uploads, captures keys) and pauses for anything that needs you (passwords, 2FA, payment). One MCP server, 26 browser tools, works with both Claude Code and Codex CLI.
 
 ## Why Chromeflow?
 

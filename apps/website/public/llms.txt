@@ -1,0 +1,29 @@
+# Chromeflow
+
+> Chromeflow connects your AI coding agent (Claude Code or OpenAI's Codex CLI) to your real Chrome browser. The agent clicks buttons, fills forms, uploads files, and captures API keys directly to your `.env` — using your existing Chrome session, your existing cookies, your existing logged-in state. Unlike Playwright or Browser Use (which launch fresh empty browsers), Chromeflow drives your actual Chrome where you're already signed into Stripe, GitHub, Canvas, AWS, and every other service you use.
+
+Chromeflow ships as two halves: a **Model Context Protocol (MCP) server** that exposes 26 browser tools to your coding agent, and a **Chrome extension** that receives those commands and acts on the active tab. Free, MIT-licensed, works with both Claude Code and Codex CLI.
+
+## Install
+
+- [Chrome extension on the Web Store](https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime): the extension that receives commands from the MCP server and drives Chrome
+- [GitHub repository (NeoDrew/chromeflow)](https://github.com/NeoDrew/chromeflow): full source, MIT license, plugin packaging for both hosts
+- [Setup instructions in the README](https://github.com/NeoDrew/chromeflow#setup): two-command install — `/plugin marketplace add NeoDrew/chromeflow` then `/plugin install chromeflow` in Claude Code, or `codex plugin marketplace add NeoDrew/chromeflow` in Codex CLI
+
+## Documentation
+
+- [Full README](https://github.com/NeoDrew/chromeflow/blob/main/README.md): why-when-how, full feature list, tool catalogue, multi-session support, development setup
+- [Agent usage skill (CLAUDE.md)](https://github.com/NeoDrew/chromeflow/blob/main/CLAUDE.md): the canonical guide for AI agents — covers every tool, every workflow pattern, every escape hatch. This is what agents load when they need to know how to drive Chromeflow.
+- [Tool catalogue (skill format)](https://github.com/NeoDrew/chromeflow/blob/main/packages/plugin/skills/chromeflow/SKILL.md): same content as CLAUDE.md, packaged as a Claude Code skill
+- [Codex variant of the skill](https://github.com/NeoDrew/chromeflow/blob/main/packages/plugin/skills-codex/chromeflow/SKILL.md): same patterns, Codex-flavored phrasing
+
+## Reference
+
+- [Comparison vs Playwright / Browser Use / Puppeteer](https://chromeflow.vercel.app/compare): why a real-Chrome approach matters
+- [FAQ](https://chromeflow.vercel.app/faq): common questions about installation, security, compatibility, and the privileged-context model
+- [Security policy](https://github.com/NeoDrew/chromeflow/blob/main/SECURITY.md): vulnerability reporting + past advisories (e.g. the inspect_request_headers cookie-redaction fix in v0.9.4)
+
+## Optional
+
+- [Latest releases](https://github.com/NeoDrew/chromeflow/releases): every version since 0.9.0 with release notes
+- [Full LLM-ingest file (llms-full.txt)](https://chromeflow.vercel.app/llms-full.txt): the README, the skill, and the tool catalogue concatenated into one file for full ingest

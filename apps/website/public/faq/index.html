@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Chromeflow FAQ — common questions about the real-Chrome AI agent tool</title>
+<meta name="description" content="Answers to the most common questions about Chromeflow: what it is, how it differs from Playwright / Browser Use, security and privacy, install steps for Claude Code and Codex CLI, supported sites and editors." />
+<meta name="keywords" content="chromeflow FAQ, MCP browser tool, Claude Code Chrome extension, Codex CLI plugin, AI agent browser questions" />
+<meta name="theme-color" content="#e85d2c" />
+<link rel="canonical" href="https://chromeflow.vercel.app/faq" />
+<link rel="icon" type="image/x-icon" href="/chromeflow.ico" />
+<link rel="apple-touch-icon" href="/chromeflow.png" />
+
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Chromeflow" />
+<meta property="og:title" content="Chromeflow FAQ — common questions answered" />
+<meta property="og:description" content="What Chromeflow is, how it differs from Playwright / Browser Use / Puppeteer, install steps for Claude Code and Codex CLI, security and privacy answers." />
+<meta property="og:url" content="https://chromeflow.vercel.app/faq" />
+<meta property="og:image" content="https://chromeflow.vercel.app/og-image.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Chromeflow FAQ" />
+<meta name="twitter:description" content="Common questions about Chromeflow answered — install, security, comparisons, tool catalogue." />
+<meta name="twitter:image" content="https://chromeflow.vercel.app/og-image.png" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {"@type":"Question","name":"What is Chromeflow?","acceptedAnswer":{"@type":"Answer","text":"Chromeflow is a Model Context Protocol (MCP) server and Chrome extension that lets an AI coding agent — either Claude Code or OpenAI's Codex CLI — drive your real Chrome browser. The agent clicks buttons, fills forms, uploads files, and captures API keys directly to your .env file. Unlike Playwright or Browser Use, which launch a fresh empty browser, Chromeflow runs in your existing Chrome where you're already signed in everywhere."}},
+    {"@type":"Question","name":"How is Chromeflow different from Playwright or Browser Use?","acceptedAnswer":{"@type":"Answer","text":"Playwright and Browser Use spawn a clean browser process with empty cookie jars, no extensions, no saved sessions. Every run, your agent has to log in from scratch and can't handle 2FA. Chromeflow runs inside your real Chrome — you're already logged into Stripe, GitHub, AWS, Canvas, and every other service. The agent uses your sessions; 2FA stays in your hands."}},
+    {"@type":"Question","name":"Does Chromeflow work with both Claude Code and Codex CLI?","acceptedAnswer":{"@type":"Answer","text":"Yes. Same MCP server, same Chrome extension. Install with /plugin marketplace add NeoDrew/chromeflow in Claude Code, or codex plugin marketplace add NeoDrew/chromeflow followed by /plugins in Codex CLI. The popup shows a host badge (Claude octo or Codex logo) on each session card so you can run both agents in parallel windows."}},
+    {"@type":"Question","name":"What does Chromeflow cost?","acceptedAnswer":{"@type":"Answer","text":"Free. MIT-licensed. The Chrome extension is on the Chrome Web Store at no charge, the MCP server is bundled into the open-source plugin, and the source is on GitHub at github.com/NeoDrew/chromeflow."}},
+    {"@type":"Question","name":"How does Chromeflow bypass page Content-Security-Policy when fetching authenticated URLs?","acceptedAnswer":{"@type":"Answer","text":"Chromeflow ships three privileged-context tools — fetch_url, download_file, and read_attachment — that run inside the extension's background service worker. The service worker has full host_permissions, uses Chrome's cookie jar automatically, and is not subject to the page's connect-src CSP. That's how Chromeflow can grab Canvas attachments, Stripe document downloads, or other authenticated assets that an execute_script fetch can't reach."}},
+    {"@type":"Question","name":"Can Chromeflow handle 2FA and password-protected logins?","acceptedAnswer":{"@type":"Answer","text":"You handle 2FA and passwords. Chromeflow pauses on sensitive input and uses highlight_region to show you what to enter. The agent fills everything else — names, descriptions, prices, URLs, webhook endpoints, billing periods, currencies. This human-in-the-loop split is the core design principle: agents automate the boring parts, you handle the parts that need real authentication."}},
+    {"@type":"Question","name":"Is my data used to train AI models?","acceptedAnswer":{"@type":"Answer","text":"No data flows from your browser to Chromeflow's authors. The Chrome extension talks only to a local WebSocket on 127.0.0.1 (port range 7878-7888) that the MCP server on your machine listens on. Your agent — Claude Code or Codex — handles its own LLM API calls per its own policies. Chromeflow itself collects nothing."}},
+    {"@type":"Question","name":"Can Chromeflow run multiple AI agents in parallel?","acceptedAnswer":{"@type":"Answer","text":"Yes — up to 11 sessions, one per port in the 7878-7888 range. Run Claude Code in one terminal and Codex in another, assign each to its own Chrome window from the extension popup, and they automate side-by-side without colliding. The popup shows a host badge on each row so you can tell which agent is driving which window at a glance."}},
+    {"@type":"Question","name":"What does Chromeflow do well, and what doesn't it do?","acceptedAnswer":{"@type":"Answer","text":"Does well: filling forms (including React-controlled, contenteditable, CodeMirror, Monaco), clicking buttons with verifiable post-click conditions, capturing API keys to .env, downloading authenticated files, parsing docx attachments in-extension, navigating multi-step OAuth flows, dismissing cookie banners. Doesn't do: anything that genuinely requires the human (passwords, 2FA codes, payment details, legal consent). Also: PDF text extraction is deferred to a future release — for now, use download_file then your local pdftotext."}},
+    {"@type":"Question","name":"Which browsers and operating systems does Chromeflow support?","acceptedAnswer":{"@type":"Answer","text":"Google Chrome and Chromium-based browsers (Edge, Brave, Arc) on macOS, Linux, and Windows. The MCP server needs Node.js 22 or newer. The Chrome extension is published on the Chrome Web Store and uses Manifest V3."}},
+    {"@type":"Question","name":"How do I report a security vulnerability?","acceptedAnswer":{"@type":"Answer","text":"Email security reports to AndrewMaxwellRobertson@gmail.com with the subject 'chromeflow security'. The full SECURITY.md is in the GitHub repository. The most recent disclosed advisory was the inspect_request_headers cookie-redaction fix in v0.9.4 — that tool now redacts session-bearing cookies by default."}},
+    {"@type":"Question","name":"Where can I see the full list of tools Chromeflow exposes?","acceptedAnswer":{"@type":"Answer","text":"The full tool catalogue lives in CLAUDE.md in the GitHub repository — 26 tools as of v0.9.4. Categories: navigation (open_page, switch_to_tab, list_tabs, list_frames), reading (get_page_text, find_text, get_console_logs), interaction (click_element, fill_input, fill_form, type_text, scroll_to_element), waiting (wait_for, wait_for_click), privileged network (fetch_url, download_file, read_attachment), highlight + handoff (highlight_region, clear_overlays), and utility (execute_script, take_screenshot, capture_terminal, write_to_env, set_file_input, inspect_request_headers, get_form_fields)."}},
+    {"@type":"Question","name":"How do I uninstall Chromeflow?","acceptedAnswer":{"@type":"Answer","text":"In Claude Code: /plugin uninstall chromeflow. In Codex CLI: open the /plugins picker, find chromeflow, choose Uninstall. To fully remove: also remove the Chrome extension from chrome://extensions. The MCP server stops automatically when the agent exits — there are no leftover background processes after 0.9.2 (which added stdin-close and PPID-change watchdogs)."}},
+    {"@type":"Question","name":"Can I contribute or submit fixes?","acceptedAnswer":{"@type":"Answer","text":"Yes — the repo is at github.com/NeoDrew/chromeflow and PRs are welcome. The codebase is a Turborepo-style monorepo with packages/mcp-server (TypeScript), packages/extension (TypeScript + Manifest V3), packages/plugin (the host packaging), and apps/website. Run npm install at the root, then packages/plugin/scripts/build-server.sh to bundle the MCP server. The Chrome extension is built with node packages/extension/build.mjs."}}
+  ]
+}
+</script>
+
+<style>
+  :root {
+    --bg: #f9f8f4;
+    --surface: #ffffff;
+    --text: #1c1a16;
+    --muted: #78706a;
+    --amber: #d97706;
+    --orange: #e85d2c;
+    --border: rgba(28,26,22,0.09);
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    line-height: 1.6;
+  }
+  header { padding: 32px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  header .wrap { max-width: 820px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  header img { width: 56px; height: 56px; border-radius: 12px; }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: -0.01em; }
+  header a { color: var(--orange); text-decoration: none; }
+  header .nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  main { max-width: 820px; margin: 0 auto; padding: 48px 24px 96px; }
+  main > h2 { font-size: 36px; letter-spacing: -0.02em; margin: 0 0 8px; }
+  main > p.lead { font-size: 18px; color: var(--muted); margin: 0 0 40px; }
+  section.qa {
+    margin: 28px 0;
+    padding: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: var(--shadow);
+  }
+  section.qa h3 {
+    margin: 0 0 12px;
+    font-size: 20px;
+    letter-spacing: -0.01em;
+  }
+  section.qa p { margin: 0; color: #2a2620; }
+  section.qa code {
+    background: rgba(232,93,44,0.08);
+    color: #c14a1f;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.92em;
+  }
+  footer {
+    max-width: 820px;
+    margin: 0 auto;
+    padding: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 14px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  footer a { color: var(--orange); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/"><img src="/chromeflow.png" alt="Chromeflow" /></a>
+    <h1><a href="/">Chromeflow</a></h1>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/compare">Compare</a>
+      <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<h2>Frequently asked questions</h2>
+<p class="lead">Answers to the questions people ask before installing Chromeflow. If yours isn't here, open an issue at <a href="https://github.com/NeoDrew/chromeflow/issues">github.com/NeoDrew/chromeflow</a>.</p>
+
+<section class="qa">
+<h3>What is Chromeflow?</h3>
+<p>Chromeflow is a Model Context Protocol (MCP) server and Chrome extension that lets an AI coding agent — either Claude Code or OpenAI's Codex CLI — drive your real Chrome browser. The agent clicks buttons, fills forms, uploads files, and captures API keys directly to your <code>.env</code> file. Unlike Playwright or Browser Use, which launch a fresh empty browser, Chromeflow runs in your existing Chrome where you're already signed in everywhere.</p>
+</section>
+
+<section class="qa">
+<h3>How is Chromeflow different from Playwright or Browser Use?</h3>
+<p>Playwright and Browser Use spawn a clean browser process with empty cookie jars, no extensions, no saved sessions. Every run, your agent has to log in from scratch and can't handle 2FA. Chromeflow runs inside your real Chrome — you're already logged into Stripe, GitHub, AWS, Canvas, and every other service. The agent uses your sessions; 2FA stays in your hands.</p>
+</section>
+
+<section class="qa">
+<h3>Does Chromeflow work with both Claude Code and Codex CLI?</h3>
+<p>Yes. Same MCP server, same Chrome extension. Install with <code>/plugin marketplace add NeoDrew/chromeflow</code> in Claude Code, or <code>codex plugin marketplace add NeoDrew/chromeflow</code> followed by <code>/plugins</code> in Codex CLI. The popup shows a host badge on each session card so you can run both agents in parallel windows.</p>
+</section>
+
+<section class="qa">
+<h3>What does Chromeflow cost?</h3>
+<p>Free. MIT-licensed. The Chrome extension is on the Chrome Web Store at no charge, the MCP server is bundled into the open-source plugin, and the source is on GitHub at <a href="https://github.com/NeoDrew/chromeflow">github.com/NeoDrew/chromeflow</a>.</p>
+</section>
+
+<section class="qa">
+<h3>How does Chromeflow bypass page Content-Security-Policy when fetching authenticated URLs?</h3>
+<p>Chromeflow ships three privileged-context tools — <code>fetch_url</code>, <code>download_file</code>, and <code>read_attachment</code> — that run inside the extension's background service worker. The service worker has full <code>host_permissions</code>, uses Chrome's cookie jar automatically, and is not subject to the page's <code>connect-src</code> CSP. That's how Chromeflow can grab Canvas attachments, Stripe document downloads, or other authenticated assets that an <code>execute_script</code> fetch can't reach.</p>
+</section>
+
+<section class="qa">
+<h3>Can Chromeflow handle 2FA and password-protected logins?</h3>
+<p>You handle 2FA and passwords. Chromeflow pauses on sensitive input and uses <code>highlight_region</code> to show you what to enter. The agent fills everything else — names, descriptions, prices, URLs, webhook endpoints, billing periods, currencies. This human-in-the-loop split is the core design principle: agents automate the boring parts, you handle the parts that need real authentication.</p>
+</section>
+
+<section class="qa">
+<h3>Is my data used to train AI models?</h3>
+<p>No data flows from your browser to Chromeflow's authors. The Chrome extension talks only to a local WebSocket on <code>127.0.0.1</code> (port range 7878–7888) that the MCP server on your machine listens on. Your agent — Claude Code or Codex — handles its own LLM API calls per its own policies. Chromeflow itself collects nothing.</p>
+</section>
+
+<section class="qa">
+<h3>Can Chromeflow run multiple AI agents in parallel?</h3>
+<p>Yes — up to 11 sessions, one per port in the 7878–7888 range. Run Claude Code in one terminal and Codex in another, assign each to its own Chrome window from the extension popup, and they automate side-by-side without colliding. The popup shows a host badge on each row so you can tell which agent is driving which window at a glance.</p>
+</section>
+
+<section class="qa">
+<h3>What does Chromeflow do well, and what doesn't it do?</h3>
+<p>Does well: filling forms (including React-controlled, contenteditable, CodeMirror, Monaco), clicking buttons with verifiable post-click conditions, capturing API keys to <code>.env</code>, downloading authenticated files, parsing docx attachments in-extension, navigating multi-step OAuth flows, dismissing cookie banners. Doesn't do: anything that genuinely requires the human (passwords, 2FA codes, payment details, legal consent). Also: PDF text extraction is deferred to a future release — for now, use <code>download_file</code> then your local <code>pdftotext</code>.</p>
+</section>
+
+<section class="qa">
+<h3>Which browsers and operating systems does Chromeflow support?</h3>
+<p>Google Chrome and Chromium-based browsers (Edge, Brave, Arc) on macOS, Linux, and Windows. The MCP server needs Node.js 22 or newer. The Chrome extension is published on the Chrome Web Store and uses Manifest V3.</p>
+</section>
+
+<section class="qa">
+<h3>How do I report a security vulnerability?</h3>
+<p>Email security reports to <code>AndrewMaxwellRobertson@gmail.com</code> with the subject "chromeflow security". The full <a href="https://github.com/NeoDrew/chromeflow/blob/main/SECURITY.md">SECURITY.md</a> is in the GitHub repository. The most recent disclosed advisory was the <code>inspect_request_headers</code> cookie-redaction fix in v0.9.4 — that tool now redacts session-bearing cookies by default.</p>
+</section>
+
+<section class="qa">
+<h3>Where can I see the full list of tools Chromeflow exposes?</h3>
+<p>The full tool catalogue lives in <a href="https://github.com/NeoDrew/chromeflow/blob/main/CLAUDE.md">CLAUDE.md</a> in the GitHub repository — 26 tools as of v0.9.4. Categories: navigation (<code>open_page</code>, <code>switch_to_tab</code>, <code>list_tabs</code>, <code>list_frames</code>), reading (<code>get_page_text</code>, <code>find_text</code>, <code>get_console_logs</code>), interaction (<code>click_element</code>, <code>fill_input</code>, <code>fill_form</code>, <code>type_text</code>, <code>scroll_to_element</code>), waiting (<code>wait_for</code>, <code>wait_for_click</code>), privileged network (<code>fetch_url</code>, <code>download_file</code>, <code>read_attachment</code>), highlight and handoff (<code>highlight_region</code>, <code>clear_overlays</code>), and utility (<code>execute_script</code>, <code>take_screenshot</code>, <code>capture_terminal</code>, <code>write_to_env</code>, <code>set_file_input</code>, <code>inspect_request_headers</code>, <code>get_form_fields</code>).</p>
+</section>
+
+<section class="qa">
+<h3>How do I uninstall Chromeflow?</h3>
+<p>In Claude Code: <code>/plugin uninstall chromeflow</code>. In Codex CLI: open the <code>/plugins</code> picker, find chromeflow, choose Uninstall. To fully remove: also remove the Chrome extension from <code>chrome://extensions</code>. The MCP server stops automatically when the agent exits — there are no leftover background processes after 0.9.2 (which added stdin-close and PPID-change watchdogs).</p>
+</section>
+
+<section class="qa">
+<h3>Can I contribute or submit fixes?</h3>
+<p>Yes — the repo is at <a href="https://github.com/NeoDrew/chromeflow">github.com/NeoDrew/chromeflow</a> and PRs are welcome. Codebase: <code>packages/mcp-server</code> (TypeScript), <code>packages/extension</code> (TypeScript + Manifest V3), <code>packages/plugin</code> (host packaging), <code>apps/website</code>. Run <code>npm install</code> at the root, then <code>packages/plugin/scripts/build-server.sh</code> to bundle the MCP server. Build the extension with <code>node packages/extension/build.mjs</code>.</p>
+</section>
+
+</main>
+
+<footer>
+  <div>© 2026 Andrew Robertson · MIT licensed</div>
+  <div>
+    <a href="/">Home</a> · <a href="/compare">Compare</a> · <a href="https://github.com/NeoDrew/chromeflow">GitHub</a> · <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime">Chrome Web Store</a>
+  </div>
+</footer>
+
+</body>
+</html>

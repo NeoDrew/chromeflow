@@ -2,10 +2,124 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <title>Chromeflow — guided browser actions for Claude Code and Codex CLI</title>
+    <meta name="description" content="Let your AI coding agent drive your real Chrome — clicks, fills forms, grabs API keys, writes them to .env. One MCP server, 26 browser tools, works with Claude Code and Codex CLI. Real session, real cookies, no fresh browser sandbox." />
+    <meta name="keywords" content="chromeflow, MCP, Model Context Protocol, Claude Code, Codex CLI, browser automation, Chrome extension, AI agent, Playwright alternative, Browser Use alternative, Puppeteer alternative, agent tooling, web automation, Stripe automation, Canvas automation, real Chrome session" />
+    <meta name="author" content="NeoDrew" />
+    <meta name="theme-color" content="#e85d2c" />
+    <link rel="canonical" href="https://chromeflow.vercel.app/" />
+
     <link rel="icon" type="image/x-icon" href="/chromeflow.ico" />
     <link rel="apple-touch-icon" href="/chromeflow.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>ChromeFlow</title>
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Chromeflow" />
+    <meta property="og:title" content="Chromeflow — guided browser actions for Claude Code and Codex CLI" />
+    <meta property="og:description" content="Let your AI coding agent drive your real Chrome — clicks, fills forms, grabs API keys, writes them to .env. Real session, real cookies, no fresh browser sandbox." />
+    <meta property="og:url" content="https://chromeflow.vercel.app/" />
+    <meta property="og:image" content="https://chromeflow.vercel.app/og-image.png" />
+    <meta property="og:image:width" content="1400" />
+    <meta property="og:image:height" content="560" />
+    <meta property="og:image:alt" content="Chromeflow — coding agents drive your real Chrome" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Chromeflow — guided browser actions for Claude Code and Codex CLI" />
+    <meta name="twitter:description" content="Let your AI coding agent drive your real Chrome — clicks, fills forms, grabs API keys, writes them to .env." />
+    <meta name="twitter:image" content="https://chromeflow.vercel.app/og-image.png" />
+
+    <!-- Structured data: SoftwareApplication -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Chromeflow",
+      "applicationCategory": "DeveloperApplication",
+      "applicationSubCategory": "Browser Automation",
+      "operatingSystem": "Google Chrome (macOS, Linux, Windows)",
+      "description": "Let your AI coding agent (Claude Code or Codex CLI) drive your real Chrome — clicks, fills forms, grabs API keys, writes them to .env. One MCP server, 26 browser tools, real session.",
+      "url": "https://chromeflow.vercel.app/",
+      "downloadUrl": "https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime",
+      "codeRepository": "https://github.com/NeoDrew/chromeflow",
+      "license": "https://opensource.org/licenses/MIT",
+      "programmingLanguage": ["TypeScript", "JavaScript"],
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "author": {
+        "@type": "Person",
+        "name": "Andrew Robertson",
+        "url": "https://github.com/NeoDrew"
+      },
+      "softwareVersion": "0.9.4",
+      "keywords": "MCP, Claude Code, Codex CLI, browser automation, Chrome extension, AI agent, Playwright alternative",
+      "featureList": [
+        "Drives your real Chrome browser with sessions intact",
+        "26 browser tools accessible via MCP",
+        "Works with both Claude Code and Codex CLI",
+        "Captures API keys and writes to .env automatically",
+        "Privileged fetch bypasses page CSP",
+        "Reads docx attachments in-extension (no local CLI)",
+        "Handles React-controlled inputs, CodeMirror, Monaco, contenteditable",
+        "Multi-session: up to 11 agent sessions in parallel"
+      ]
+    }
+    </script>
+
+    <!-- Structured data: FAQPage (cited heavily by AI overviews) -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "What is Chromeflow?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Chromeflow is a Model Context Protocol (MCP) server plus Chrome extension that lets an AI coding agent — Claude Code or OpenAI's Codex CLI — drive your real Chrome browser. The agent clicks buttons, fills forms, uploads files, and captures API keys directly to your .env file."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How is Chromeflow different from Playwright or Browser Use?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Playwright and Browser Use launch a fresh, empty browser instance with no cookies, no sessions, and no extensions. Chromeflow runs in your existing Chrome where you're already logged into Stripe, GitHub, AWS, Canvas, and every other service. There's no separate auth step and 2FA is handled by you, not by an automation script."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Chromeflow work with both Claude Code and Codex CLI?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Chromeflow ships as a plugin for both. In Claude Code: /plugin marketplace add NeoDrew/chromeflow then /plugin install chromeflow. In Codex CLI: codex plugin marketplace add NeoDrew/chromeflow then /plugins to install. The same Chrome extension serves both — the popup shows which agent is driving which tab."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How does Chromeflow bypass page Content-Security-Policy?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Chromeflow provides fetch_url and read_attachment tools that run in the extension's privileged background context. The extension has full host_permissions, so fetches use your Chrome cookies and are not subject to the page's connect-src CSP. This is how Chromeflow can grab authenticated Canvas attachments or Stripe documents that page-context fetch can't reach."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Is Chromeflow free and open source?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes — Chromeflow is MIT-licensed and free. The Chrome extension is on the Chrome Web Store, the MCP server is bundled into the plugin, and the source code is at github.com/NeoDrew/chromeflow."
+          }
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
     <div id="root"></div>
