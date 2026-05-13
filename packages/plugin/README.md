@@ -1,6 +1,6 @@
 # chromeflow (Claude Code plugin)
 
-The Claude Code plugin for [Chromeflow](https://chromeflow.vercel.app) — let Claude drive your real browser.
+The Claude Code plugin for [Chromeflow](https://chromeflow.run) — let Claude drive your real browser.
 
 ## What it bundles
 
