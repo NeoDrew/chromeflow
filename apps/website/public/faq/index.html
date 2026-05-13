@@ -28,6 +28,7 @@
   "@type": "FAQPage",
   "mainEntity": [
     {"@type":"Question","name":"What is Chromeflow?","acceptedAnswer":{"@type":"Answer","text":"Chromeflow is a Model Context Protocol (MCP) server and Chrome extension that lets an AI coding agent — either Claude Code or OpenAI's Codex CLI — drive your real Chrome browser. The agent clicks buttons, fills forms, uploads files, and captures API keys directly to your .env file. Unlike Playwright or Browser Use, which launch a fresh empty browser, Chromeflow runs in your existing Chrome where you're already signed in everywhere."}},
+    {"@type":"Question","name":"Is Chromeflow reliable? Has it been tested in real workflows?","acceptedAnswer":{"@type":"Answer","text":"Yes. Chromeflow was shaped by 400+ hours of real agentic browser work before its public v0.9 release. The skill content and error-handling recipes in every tool came from patching rough edges as they surfaced — Canvas attachment downloads, Stripe product setups, eBay listings, DataAnnotation forms, Notion edits, OAuth handoffs, multi-tab transitions, React Select widgets, shadow-DOM click-through, and more. The tool is battle-tested in a way most agent-browser libraries aren't."}},
     {"@type":"Question","name":"How is Chromeflow different from Playwright or Browser Use?","acceptedAnswer":{"@type":"Answer","text":"Playwright and Browser Use spawn a clean browser process with empty cookie jars, no extensions, no saved sessions. Every run, your agent has to log in from scratch and can't handle 2FA. Chromeflow runs inside your real Chrome — you're already logged into Stripe, GitHub, AWS, Canvas, and every other service. The agent uses your sessions; 2FA stays in your hands."}},
     {"@type":"Question","name":"Does Chromeflow work with both Claude Code and Codex CLI?","acceptedAnswer":{"@type":"Answer","text":"Yes. Same MCP server, same Chrome extension. Install with /plugin marketplace add NeoDrew/chromeflow in Claude Code, or codex plugin marketplace add NeoDrew/chromeflow followed by /plugins in Codex CLI. The popup shows a host badge (Claude octo or Codex logo) on each session card so you can run both agents in parallel windows."}},
     {"@type":"Question","name":"What does Chromeflow cost?","acceptedAnswer":{"@type":"Answer","text":"Free. MIT-licensed. The Chrome extension is on the Chrome Web Store at no charge, the MCP server is bundled into the open-source plugin, and the source is on GitHub at github.com/NeoDrew/chromeflow."}},
@@ -131,6 +132,11 @@
 <section class="qa">
 <h3>What is Chromeflow?</h3>
 <p>Chromeflow is a Model Context Protocol (MCP) server and Chrome extension that lets an AI coding agent — either Claude Code or OpenAI's Codex CLI — drive your real Chrome browser. The agent clicks buttons, fills forms, uploads files, and captures API keys directly to your <code>.env</code> file. Unlike Playwright or Browser Use, which launch a fresh empty browser, Chromeflow runs in your existing Chrome where you're already signed in everywhere.</p>
+</section>
+
+<section class="qa">
+<h3>Is Chromeflow reliable? Has it been tested in real workflows?</h3>
+<p>Yes. Chromeflow was shaped by <strong>400+ hours of real agentic browser work</strong> before its public v0.9 release. The skill content in CLAUDE.md and the error-handling recipes in every tool came from patching rough edges as they surfaced in real workflows — Canvas attachment downloads, Stripe product setups, eBay listings, DataAnnotation forms, Notion edits, OAuth handoffs, multi-tab transitions, React Select widgets, shadow-DOM click-through, dozens more. The tool is battle-tested in a way most agent-browser libraries aren't — there's a real story behind every <code>until_*</code> clause, every CSP-bypass tool, and every cookie-redaction default.</p>
 </section>
 
 <section class="qa">
