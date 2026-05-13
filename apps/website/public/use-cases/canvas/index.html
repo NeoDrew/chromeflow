@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Download Canvas attachments with AI agents — Chromeflow walkthrough</title>
+<meta name="description" content="How to download authenticated Canvas LMS attachments (lecture slides, assignment PDFs, .docx documents) using Claude Code or Codex CLI via Chromeflow's privileged-context tools. Bypass page CSP, use existing student SSO session, parse .docx in-extension." />
+<meta name="keywords" content="Canvas LMS AI agent, download Canvas attachments AI, Canvas Claude Code, Canvas Codex CLI, Canvas docx parser, fetch authenticated Canvas files, Canvas API agent, Chromeflow Canvas walkthrough" />
+<meta name="theme-color" content="#e85d2c" />
+<link rel="canonical" href="https://chromeflow.run/use-cases/canvas" />
+<link rel="icon" type="image/x-icon" href="/chromeflow.ico" />
+<link rel="apple-touch-icon" href="/chromeflow.png" />
+
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Chromeflow" />
+<meta property="og:title" content="Download Canvas LMS attachments with AI agents via Chromeflow" />
+<meta property="og:description" content="Authenticated downloads from Canvas — bypass page CSP, use your student SSO session, parse .docx in-extension. End-to-end walkthrough." />
+<meta property="og:url" content="https://chromeflow.run/use-cases/canvas" />
+<meta property="og:image" content="https://chromeflow.run/og-image.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Canvas attachments with AI agents" />
+<meta name="twitter:description" content="Privileged-context fetch + in-extension docx parser — no separate CLI, no re-auth." />
+<meta name="twitter:image" content="https://chromeflow.run/og-image.png" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Download authenticated Canvas LMS attachments with Claude Code or Codex CLI via Chromeflow",
+  "description": "How an AI coding agent uses Chromeflow's privileged-context tools (fetch_url, download_file, read_attachment) to grab Canvas attachments using your existing student SSO session, bypassing page CSP and parsing .docx files in-extension.",
+  "url": "https://chromeflow.run/use-cases/canvas",
+  "image": "https://chromeflow.run/og-image.png",
+  "totalTime": "PT2M",
+  "datePublished": "2026-05-13",
+  "tool": [
+    {"@type": "HowToTool", "name": "Chromeflow plugin for Claude Code or Codex CLI"},
+    {"@type": "HowToTool", "name": "An active Canvas LMS account (any institution)"},
+    {"@type": "HowToTool", "name": "Chrome browser logged into your institution's SSO"}
+  ],
+  "step": [
+    {"@type": "HowToStep", "name": "Navigate to the Canvas page", "text": "open_page on the assignment or module that has the attachment. Your existing SSO session is inherited automatically."},
+    {"@type": "HowToStep", "name": "Find the file link", "text": "find_text(\"Lecture 5 slides\") or get_page_text to enumerate attachments. The response includes the download URL."},
+    {"@type": "HowToStep", "name": "Read text content directly", "text": "read_attachment(url) for in-extension extraction — handles .docx, .txt, .md, .csv, .json, .xml, .html with no separate CLI."},
+    {"@type": "HowToStep", "name": "Or download the raw bytes", "text": "download_file(url, \"slides.pdf\") for non-text formats — returns the absolute path where Chrome saved the file."},
+    {"@type": "HowToStep", "name": "Pass to the agent's reasoning", "text": "The text from read_attachment goes straight into the agent's context — no manual copy-paste, no upload step."}
+  ]
+}
+</script>
+
+<style>
+  :root {
+    --bg: #f9f8f4; --surface: #ffffff; --text: #1c1a16; --muted: #78706a;
+    --orange: #e85d2c; --green: #16a05a;
+    --border: rgba(28,26,22,0.09); --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; line-height: 1.6; }
+  header { padding: 32px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  header .wrap { max-width: 960px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  header img { width: 56px; height: 56px; border-radius: 12px; }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: -0.01em; }
+  header a { color: var(--orange); text-decoration: none; }
+  header .nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  main { max-width: 880px; margin: 0 auto; padding: 48px 24px 96px; }
+  main > h2 { font-size: 36px; letter-spacing: -0.02em; margin: 0 0 8px; line-height: 1.2; }
+  main > p.lead { font-size: 17px; color: var(--muted); margin: 0 0 28px; max-width: 720px; }
+  .breadcrumb { font-size: 14px; color: var(--muted); margin: 0 0 20px; }
+  .breadcrumb a { color: var(--orange); text-decoration: none; }
+  .quick-take { margin: 0 0 36px; padding: 18px 22px; background: rgba(232,93,44,0.06); border: 1px solid rgba(232,93,44,0.2); border-left: 4px solid var(--orange); border-radius: 12px; }
+  h3 { margin: 36px 0 12px; font-size: 22px; letter-spacing: -0.01em; }
+  p, ul, ol { color: #2a2620; }
+  code { background: rgba(232,93,44,0.08); color: #c14a1f; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  pre { background: #1c1a16; color: #f1ebe2; padding: 16px 20px; border-radius: 10px; overflow-x: auto; font-size: 13.5px; line-height: 1.55; box-shadow: var(--shadow); }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  .step { margin: 20px 0 16px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  .step h4 { margin: 0 0 6px; font-size: 16px; color: #c14a1f; }
+  .step p { margin: 0; font-size: 14.5px; }
+  .related { margin-top: 48px; padding: 20px 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .related h4 { margin: 0 0 12px; font-size: 16px; }
+  .related ul { margin: 0; padding-left: 20px; }
+  .related a { color: var(--orange); text-decoration: none; }
+  footer { max-width: 960px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer a { color: var(--orange); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/"><img src="/chromeflow.png" alt="Chromeflow" /></a>
+    <h1><a href="/">Chromeflow</a></h1>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">Compare</a>
+      <a href="/use-cases">Use cases</a>
+      <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<p class="breadcrumb"><a href="/">Home</a> · <a href="/use-cases">Use cases</a> · Canvas attachments</p>
+
+<h2>Download authenticated Canvas attachments with AI agents</h2>
+<p class="lead">Canvas LMS hides everything behind your institution's SSO. The agent uses your existing browser session to fetch lecture slides, parse <code>.docx</code> assignments, and pull PDFs — without re-engineering the auth.</p>
+
+<div class="quick-take">
+  <strong>Why this is genuinely hard:</strong> Canvas attachment URLs are session-bound (they include a signed token bound to your SSO cookie). Even if you copy the URL, opening it in another browser fails. <code>fetch()</code> from the page console hits Canvas's strict <code>connect-src</code> CSP. The standard Playwright/Browser Use trick of "log in then download" requires you to bake your SSO password somewhere — which most universities forbid. Chromeflow's privileged-context tools run in the extension's background service worker, inherit your real Chrome cookies, and bypass page CSP. One tool call.
+</div>
+
+<h3>The three privileged-context tools</h3>
+<ul>
+  <li><strong><code>fetch_url(url)</code></strong> — generic HTTP, returns the response body. Use for JSON APIs and arbitrary endpoints.</li>
+  <li><strong><code>download_file(url, filename?)</code></strong> — Chrome's authenticated download flow. Returns the absolute path on disk. Use when another tool needs the bytes (e.g. local <code>pdftotext</code>).</li>
+  <li><strong><code>read_attachment(url, format?)</code></strong> — privileged fetch + format-aware text extraction in one call. Handles <code>.docx</code> (via in-extension ZIP parsing — no <code>libreoffice</code> needed), <code>.txt</code>, <code>.md</code>, <code>.csv</code>, <code>.json</code>, <code>.xml</code>, <code>.html</code>. The fastest path to text content.</li>
+</ul>
+
+<h3>Walkthrough: read a Canvas lecture's .docx slides</h3>
+
+<div class="step">
+  <h4>1. Navigate to the Canvas page</h4>
+  <pre><code>open_page("https://canvas.manchester.ac.uk/courses/12345/modules")</code></pre>
+  <p>You're already signed in via your institution's SSO. Chromeflow uses that session.</p>
+</div>
+
+<div class="step">
+  <h4>2. Find the attachment</h4>
+  <pre><code>const found = find_text("Lecture 5", scope_selector=".context_module")
+// found returns the matching link element, its href, and the click coords</code></pre>
+</div>
+
+<div class="step">
+  <h4>3. Read the file content directly</h4>
+  <pre><code>read_attachment("https://canvas.manchester.ac.uk/files/8675309/download?download_frd=1", "docx")
+// Returns: the extracted text of the .docx, ready to pass to the agent.
+// No download to disk, no separate CLI, no libreoffice.</code></pre>
+  <p>Behind the scenes: the extension fetches the URL with your Chrome cookies (privileged context bypasses CSP), recognizes the docx MIME type, runs the in-extension ZIP parser using <code>DecompressionStream("deflate-raw")</code>, extracts <code>word/document.xml</code>, strips the XML tags, and returns clean text.</p>
+</div>
+
+<div class="step">
+  <h4>4. Or grab the raw PDF</h4>
+  <pre><code>const path = download_file(
+  "https://canvas.manchester.ac.uk/files/8675310/download?download_frd=1",
+  "lecture5-slides.pdf"
+)
+// Returns: "/Users/you/Downloads/lecture5-slides.pdf"
+// Now any local tool (pdftotext, Preview, your code) can read it.</code></pre>
+  <p>PDF native parsing is on the roadmap. For now, <code>download_file</code> + <code>pdftotext</code> is the path.</p>
+</div>
+
+<h3>Use cases this unlocks</h3>
+<ul>
+  <li><strong>"Summarize this week's lectures"</strong> — agent enumerates module attachments, reads each one with <code>read_attachment</code>, produces a study guide.</li>
+  <li><strong>"Pull all my assignment PDFs and tell me what's due"</strong> — agent walks the assignments page, downloads each PDF with <code>download_file</code>, reads dates via local <code>pdftotext</code>.</li>
+  <li><strong>"What does the rubric for Assignment 3 say about the API design section?"</strong> — agent finds the rubric, <code>read_attachment</code>, answers from the actual text rather than guessing.</li>
+  <li><strong>"Did the lecturer post anything new since Friday?"</strong> — agent diffs the modules page using <code>get_page_text</code>, surfaces new items.</li>
+</ul>
+
+<h3>Why not just use the Canvas API?</h3>
+<p>The Canvas REST API exists but requires an API token (institution may or may not let you generate one), the token is bearer-only (no SSO inheritance), and many features (group assignments, locked files, certain LTI integrations) are still cookie-bound. Chromeflow's privileged-context fetch sidesteps all of this — if it's reachable from your browser, the agent can fetch it.</p>
+
+<h3>Privacy note</h3>
+<p>All of this runs locally. The agent talks to a WebSocket on <code>127.0.0.1</code>. The extension talks to Chrome. <strong>Nothing about your Canvas data leaves your machine</strong> except via the agent's own LLM API calls per its own policy (Claude/OpenAI/etc.). Chromeflow itself collects no telemetry.</p>
+
+<div class="related">
+  <h4>Related use cases</h4>
+  <ul>
+    <li><a href="/use-cases/api-keys">Capture API keys to .env</a> — same privileged-fetch pattern applied to SaaS dashboards</li>
+    <li><a href="/use-cases/oauth">OAuth OAuth login flows</a> — when you need to authorize a tool against your account</li>
+    <li><a href="/use-cases/stripe">Set up Stripe</a> — same auth-inheritance pattern, different domain</li>
+    <li><a href="/compare/browser-use">Why Browser Use's vision-only model fails at Canvas-style dynamic UIs</a></li>
+  </ul>
+</div>
+
+<p style="margin-top: 40px;"><a href="/use-cases" style="color: var(--orange); text-decoration: none; font-weight: 600;">← Back to all use cases</a></p>
+
+</main>
+
+<footer>
+  <div>© 2026 Andrew Robertson · MIT licensed</div>
+  <div>
+    <a href="/">Home</a> · <a href="/faq">FAQ</a> · <a href="/compare">Compare</a> · <a href="/use-cases">Use cases</a> · <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>
