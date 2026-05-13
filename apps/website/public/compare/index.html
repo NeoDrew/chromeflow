@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Chromeflow vs Playwright vs Browser Use vs Puppeteer — which AI browser tool fits your agent?</title>
+<meta name="description" content="Side-by-side comparison of Chromeflow, Playwright, Browser Use, and Puppeteer for AI agent browser automation. Real Chrome session vs fresh sandbox, 2FA handling, page understanding (DOM vs vision), integration with Claude Code and Codex CLI, credential capture, and CSP handling." />
+<meta name="keywords" content="chromeflow vs playwright, browser use comparison, puppeteer alternative, AI browser automation, Claude Code browser tool, Codex CLI Chrome plugin, real Chrome agent" />
+<meta name="theme-color" content="#e85d2c" />
+<link rel="canonical" href="https://chromeflow.vercel.app/compare" />
+<link rel="icon" type="image/x-icon" href="/chromeflow.ico" />
+<link rel="apple-touch-icon" href="/chromeflow.png" />
+
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Chromeflow" />
+<meta property="og:title" content="Chromeflow vs Playwright vs Browser Use vs Puppeteer" />
+<meta property="og:description" content="Side-by-side comparison of AI browser automation tools. Why a real-Chrome approach beats fresh-sandbox tooling for agentic workflows." />
+<meta property="og:url" content="https://chromeflow.vercel.app/compare" />
+<meta property="og:image" content="https://chromeflow.vercel.app/og-image.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Chromeflow vs Playwright vs Browser Use vs Puppeteer" />
+<meta name="twitter:description" content="The AI browser tool comparison most engineers wish they'd seen before they tried to fight Playwright at 2FA." />
+<meta name="twitter:image" content="https://chromeflow.vercel.app/og-image.png" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Chromeflow vs Playwright vs Browser Use vs Puppeteer",
+  "description": "Side-by-side comparison of AI browser automation tools for agentic workflows. Real Chrome session vs fresh sandbox, 2FA, integration with Claude Code and Codex CLI, credential capture, and CSP handling.",
+  "url": "https://chromeflow.vercel.app/compare",
+  "datePublished": "2026-05-13",
+  "author": {"@type": "Person", "name": "Andrew Robertson", "url": "https://github.com/NeoDrew"},
+  "publisher": {"@type": "Organization", "name": "Chromeflow", "url": "https://chromeflow.vercel.app"},
+  "image": "https://chromeflow.vercel.app/og-image.png",
+  "about": [
+    {"@type": "SoftwareApplication", "name": "Chromeflow", "applicationCategory": "DeveloperApplication"},
+    {"@type": "SoftwareApplication", "name": "Playwright", "applicationCategory": "DeveloperApplication"},
+    {"@type": "SoftwareApplication", "name": "Browser Use", "applicationCategory": "DeveloperApplication"},
+    {"@type": "SoftwareApplication", "name": "Puppeteer", "applicationCategory": "DeveloperApplication"}
+  ]
+}
+</script>
+
+<style>
+  :root {
+    --bg: #f9f8f4;
+    --surface: #ffffff;
+    --text: #1c1a16;
+    --muted: #78706a;
+    --amber: #d97706;
+    --orange: #e85d2c;
+    --green: #16a05a;
+    --red: #c94020;
+    --border: rgba(28,26,22,0.09);
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+    line-height: 1.6;
+  }
+  header { padding: 32px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  header .wrap { max-width: 960px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  header img { width: 56px; height: 56px; border-radius: 12px; }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: -0.01em; }
+  header a { color: var(--orange); text-decoration: none; }
+  header .nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 24px 96px; }
+  main > h2 { font-size: 38px; letter-spacing: -0.02em; margin: 0 0 8px; line-height: 1.15; }
+  main > p.lead { font-size: 18px; color: var(--muted); margin: 0 0 32px; max-width: 720px; }
+  .quick-take {
+    margin: 0 0 40px;
+    padding: 20px 24px;
+    background: rgba(232,93,44,0.06);
+    border: 1px solid rgba(232,93,44,0.2);
+    border-left: 4px solid var(--orange);
+    border-radius: 12px;
+  }
+  .quick-take strong { color: #c14a1f; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+    margin: 24px 0 40px;
+  }
+  th, td {
+    padding: 14px 16px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 14px;
+    vertical-align: top;
+  }
+  th { background: rgba(28,26,22,0.03); font-weight: 600; }
+  th:first-child { width: 28%; }
+  tr:last-child td { border-bottom: 0; }
+  .yes { color: var(--green); font-weight: 600; }
+  .no { color: var(--red); font-weight: 600; }
+  .partial { color: var(--amber); font-weight: 600; }
+  h3 { margin: 36px 0 12px; font-size: 22px; letter-spacing: -0.01em; }
+  h3.tool { color: #c14a1f; }
+  p, ul { color: #2a2620; }
+  code {
+    background: rgba(232,93,44,0.08);
+    color: #c14a1f;
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 0.92em;
+  }
+  footer {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--muted);
+    font-size: 14px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  footer a { color: var(--orange); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/"><img src="/chromeflow.png" alt="Chromeflow" /></a>
+    <h1><a href="/">Chromeflow</a></h1>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/faq">FAQ</a>
+      <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<h2>Chromeflow vs Playwright vs Browser Use vs Puppeteer</h2>
+<p class="lead">Four tools agents reach for when they need to drive a browser. Three of them fight you at the first 2FA prompt. Here's the honest side-by-side.</p>
+
+<div class="quick-take">
+  <strong>TL;DR:</strong> If your agent's job ends at "navigate a static public site and click some buttons", Playwright and Puppeteer are mature and bullet-proof. The moment the job involves an authenticated dashboard, a 2FA prompt, or an API key buried behind a login — <strong>only Chromeflow runs in the browser that's already logged in</strong>. The other three launch fresh empty Chrome instances and lose every session you've spent the last year setting up.
+</div>
+
+<h3>Capability matrix</h3>
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>Chromeflow</th>
+  <th>Playwright</th>
+  <th>Browser Use</th>
+  <th>Puppeteer</th>
+</tr>
+</thead>
+<tbody>
+<tr><th>Runs in your real Chrome with sessions intact</th><td class="yes">Yes</td><td class="no">No — fresh profile</td><td class="no">No — fresh profile</td><td class="no">No — fresh profile</td></tr>
+<tr><th>Handles 2FA / passwords without re-engineering</th><td class="yes">Yes — pauses for you</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+<tr><th>How it reads the page</th><td>DOM queries (cheap, deterministic)</td><td>DOM queries</td><td class="partial">Screenshots + vision model (slow, expensive)</td><td>DOM queries</td></tr>
+<tr><th>Integration with AI coding agents</th><td class="yes">MCP plugin for Claude Code & Codex CLI</td><td class="partial">Library — agent wires it manually</td><td class="yes">Standalone agent (own LLM client)</td><td class="partial">Library — agent wires it manually</td></tr>
+<tr><th>Captures credentials → <code>.env</code></th><td class="yes">Yes (<code>write_to_env</code>)</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+<tr><th>Privileged fetch (bypasses page CSP)</th><td class="yes">Yes (<code>fetch_url</code>, <code>download_file</code>, <code>read_attachment</code>)</td><td class="partial">Via CDP, but no built-in tool</td><td class="no">No</td><td class="partial">Via CDP, but no built-in tool</td></tr>
+<tr><th>Authenticated file downloads</th><td class="yes">One call (<code>download_file</code>)</td><td class="partial">Possible but DIY</td><td class="no">No</td><td class="partial">Possible but DIY</td></tr>
+<tr><th>Parses <code>.docx</code> attachments in-browser</th><td class="yes">Yes (<code>read_attachment</code>)</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+<tr><th>Human-in-the-loop visual handoff</th><td class="yes">Yes (highlights + callouts)</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+<tr><th>Multi-agent parallelism in one Chrome</th><td class="yes">Up to 11 sessions</td><td class="partial">DIY (multiple processes)</td><td class="no">No</td><td class="partial">DIY (multiple processes)</td></tr>
+<tr><th>Cost</th><td class="yes">Free, MIT</td><td class="yes">Free, Apache 2</td><td class="yes">Free, MIT</td><td class="yes">Free, Apache 2</td></tr>
+<tr><th>Mature outside agent use</th><td class="no">No — agent-first</td><td class="yes">Yes — broad testing market</td><td class="no">No — agent-only</td><td class="yes">Yes — broad scripting use</td></tr>
+</tbody>
+</table>
+
+<h3 class="tool">Chromeflow</h3>
+<p>Chromeflow is a Chrome extension plus MCP server. It plugs into Claude Code or OpenAI's Codex CLI as a one-command install. The agent gets 26 browser tools — <code>open_page</code>, <code>fill_form</code>, <code>click_element</code>, <code>fetch_url</code>, <code>download_file</code>, <code>read_attachment</code>, and the rest — and drives <em>your</em> Chrome window, the one that's already signed into Stripe, GitHub, Canvas, AWS, and everything else you use daily. You stay in the loop for passwords, 2FA, and payment details; the agent handles the rest.</p>
+<p><strong>Best for:</strong> AI-agent workflows that need to touch authenticated sites — setting up SaaS dashboards, capturing API keys, configuring webhooks, navigating multi-step billing flows, downloading attachments from Canvas or Stripe. Anything Playwright fails at because the agent gets to a login screen and there's no way past it.</p>
+
+<h3 class="tool">Playwright</h3>
+<p>Microsoft's flagship browser-automation library. Mature, well-documented, used in production CI across thousands of repos. Spawns its own browser instance from a clean profile. Excellent for testing public-facing flows where you control the credentials and can encode a login at the start of each run. It is <em>not</em> designed to use a human's existing browser session — there's a <code>--use-existing-browser</code> hack that's awkward at best.</p>
+<p><strong>Best for:</strong> CI test suites, web scrapers that don't need auth, automation runs where you script the login yourself with credentials in env vars.</p>
+
+<h3 class="tool">Browser Use</h3>
+<p>An agentic browser tool with its own built-in LLM client. Sends screenshots to a vision model on every step and reasons about pixels rather than the DOM. Powerful for sites where the DOM is junk (heavy obfuscation, anti-bot rendering) but token-expensive and slow — every action involves a screenshot + vision-model round trip. Like Playwright, it launches its own browser instance and doesn't see your existing sessions.</p>
+<p><strong>Best for:</strong> Scraping or interacting with sites where the DOM is intentionally obfuscated and screenshots are the only reliable signal. Demos where the model-of-the-week is the point.</p>
+
+<h3 class="tool">Puppeteer</h3>
+<p>The original Chrome DevTools Protocol library. Lighter than Playwright, single-browser-family (Chromium), excellent docs, very stable. Same trade-off as Playwright for AI-agent use: spawns a fresh browser, no session sharing, no 2FA handling, no agent integration. Most agents that use Puppeteer wrap it in a custom MCP server or tool layer to bridge those gaps.</p>
+<p><strong>Best for:</strong> Server-side scripts, headless screenshot generation, PDF rendering, scraping public content at scale.</p>
+
+<h3>When does the "real Chrome" approach matter?</h3>
+<p>The honest answer: <strong>when the agent's task lives behind a login.</strong> Most consequential AI-agent workflows do. Setting up a Stripe product needs a logged-in dashboard. Grabbing API keys from Supabase needs an authenticated session. Downloading a Canvas attachment for an assignment needs your university login. None of these are reachable from a fresh-profile browser without first solving the login + 2FA puzzle every single time the agent runs.</p>
+<p>Chromeflow exists because that puzzle was wasting hours per week. Playwright/Browser Use/Puppeteer remain excellent for tasks that genuinely don't need a session — public-data scraping, CI testing, headless rendering. Pick the tool that matches the job. For agentic workflows in an authenticated world, the answer is increasingly Chromeflow.</p>
+
+<h3>Performance and cost notes</h3>
+<ul>
+<li><strong>Token cost:</strong> Chromeflow's DOM-query model returns 200–600 chars per tool call. Browser Use's screenshot-and-vision model returns tens of thousands of tokens per step. Across a 50-step workflow that's a 50–100× cost difference.</li>
+<li><strong>Latency:</strong> Chromeflow's per-action latency is dominated by Chrome's own rendering speed (typically &lt;200ms). Browser Use adds a vision-model round-trip per step (1–3s typical).</li>
+<li><strong>Reliability:</strong> DOM queries are deterministic and reproducible; screenshot-and-vision is probabilistic and degrades when the model misreads the image. Chromeflow's <code>until_*</code> clauses on <code>click_element</code> give every action a verifiable post-condition.</li>
+</ul>
+
+<h3>What if I need both?</h3>
+<p>Chromeflow and Playwright are not mutually exclusive. A common pattern: use Chromeflow for the interactive, session-dependent parts of a workflow (capturing API keys, configuring SaaS dashboards), and use Playwright in CI for headless verification once the credentials are captured. They serve different parts of the agent-development lifecycle.</p>
+
+<p style="margin-top: 40px;"><a href="/" style="color: var(--orange); text-decoration: none; font-weight: 600;">← Back to Chromeflow homepage</a></p>
+
+</main>
+
+<footer>
+  <div>© 2026 Andrew Robertson · MIT licensed</div>
+  <div>
+    <a href="/">Home</a> · <a href="/faq">FAQ</a> · <a href="https://github.com/NeoDrew/chromeflow">GitHub</a> · <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime">Chrome Web Store</a>
+    </div>
+</footer>
+
+</body>
+</html>
