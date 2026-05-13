@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { appendFileSync, readFileSync, writeFileSync } from "fs";
-import { resolve, relative, isAbsolute } from "path";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { resolve, relative, isAbsolute, dirname } from "path";
 import type { WsBridge } from "../ws-bridge.js";
 
 export function registerCaptureTools(server: McpServer, bridge: WsBridge) {
@@ -35,13 +35,29 @@ Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirr
         // treats empty string as falsy (no iframe), same as undefined.
         const response = await bridge.request({ type: "react_set_input", selector, value, frame: frame ?? "" });
         const r = response as { success?: boolean; message?: string };
-        return { content: [{ type: "text", text: r.message ?? (r.success ? `Set "${selector}"` : `Failed to set "${selector}"`) }] };
+        if (!r.success) {
+          const workaround =
+            `\n\nWorkaround when selector-mode keeps failing:\n` +
+            `  1. click_element("<visible label or selector text>") to focus the input.\n` +
+            `  2. type_text("${value.slice(0, 40)}") via trusted keyboard events.\n` +
+            `Or for React/CodeMirror/contenteditable that ignores synthetic events, drop into execute_script with the React-aware native value-setter (see CLAUDE.md → React Select recipes).`;
+          return { content: [{ type: "text", text: `Failed to set "${selector}": ${r.message ?? "unknown"}${workaround}` }] };
+        }
+        return { content: [{ type: "text", text: r.message ?? `Set "${selector}"` }] };
       }
-      const response = await bridge.request({ type: "fill_input", textHint, value, nth, exact });
+      const response = await bridge.request({ type: "fill_input", textHint: textHint!, value, nth, exact });
       if (response.type !== "fill_response") throw new Error("Unexpected response");
       const r = response as { success: boolean; message: string };
+      if (!r.success) {
+        const workaround =
+          `\n\nWorkaround when textHint-mode keeps failing:\n` +
+          `  1. find_input("${textHint}") to confirm the field exists and see its exact label.\n` +
+          `  2. click_element("${textHint}") to focus it, then type_text("${value.slice(0, 40)}").\n` +
+          `Or pass selector="<css>" instead of textHint to bypass fuzzy matching entirely.`;
+        return { content: [{ type: "text", text: `Could not fill "${textHint}": ${r.message}${workaround}` }] };
+      }
       return {
-        content: [{ type: "text", text: r.success ? `Filled "${textHint}": ${r.message}` : `Could not fill "${textHint}": ${r.message}` }],
+        content: [{ type: "text", text: `Filled "${textHint}": ${r.message}` }],
       };
     }
   );
@@ -274,19 +290,32 @@ Set binary=true for non-text responses (PDFs, images, zips) — the body is retu
         .int()
         .min(1)
         .optional()
-        .describe("Truncate body at this many bytes (default 2000000 ≈ 2MB). The response reports truncated:true and total_bytes for paginating."),
+        .describe("Truncate body at this many bytes (default 100000 ≈ 25K tokens, the MCP transport ceiling). Bumped down from 2MB in 0.9.4 because larger responses overflow the agent's context. For larger payloads, set `to_file` to write to disk instead."),
+      to_file: z
+        .string()
+        .optional()
+        .describe("Absolute path on disk under the agent's working directory. When set, the FULL response body is written to this path (no max_bytes truncation) and the response carries only {path, size, content_type, status, headers}. Parent directories are created if missing. Use this for anything you'd otherwise have to paginate through max_bytes."),
     },
-    async ({ url, method, headers, body, binary, timeout_ms, max_bytes }) => {
+    async ({ url, method, headers, body, binary, timeout_ms, max_bytes, to_file }) => {
+      // When to_file is set, request the full body — no truncation. The body
+      // is written to disk on this side; the MCP response carries only metadata.
+      // binary=true on the WS request ensures we get raw bytes (base64) so
+      // non-text responses (PDF, zip, image) round-trip correctly.
+      const effectiveMaxBytes = to_file ? Number.MAX_SAFE_INTEGER : (max_bytes ?? 100_000);
+      const effectiveBinary = to_file ? true : binary;
+      // Bump WS timeout for to_file path — large downloads may exceed 30s.
+      const wsTimeout = to_file ? Math.max(120_000, (timeout_ms ?? 30_000) + 30_000) : Math.max(30_000, (timeout_ms ?? 30_000) + 5_000);
+
       const response = await bridge.request({
         type: "fetch_url",
         url,
         method,
         headers,
         body,
-        binary,
+        binary: effectiveBinary,
         timeout_ms,
-        max_bytes,
-      });
+        max_bytes: effectiveMaxBytes,
+      }, wsTimeout);
       if (response.type !== "fetch_url_response") throw new Error(`Unexpected response: ${response.type}`);
       const r = response as {
         status: number;
@@ -298,7 +327,32 @@ Set binary=true for non-text responses (PDFs, images, zips) — the body is retu
         truncated: boolean;
         total_bytes: number;
       };
-      const header = `HTTP ${r.status} ${r.status_text} — ${r.content_type || "no content-type"} — ${r.total_bytes} bytes${r.truncated ? ` (truncated to ${max_bytes ?? 2_000_000})` : ""}`;
+
+      // to_file path: write bytes to disk, return metadata only.
+      if (to_file) {
+        const cwd = process.cwd();
+        const resolved = isAbsolute(to_file) ? to_file : resolve(cwd, to_file);
+        const rel = relative(cwd, resolved);
+        if (rel.startsWith("..") || isAbsolute(rel)) {
+          throw new Error(
+            `Refusing to write fetch_url body outside the project directory. Target "${resolved}" is not under "${cwd}".`
+          );
+        }
+        mkdirSync(dirname(resolved), { recursive: true });
+        const buf = r.body_base64
+          ? Buffer.from(r.body_base64, "base64")
+          : Buffer.from(r.body_text ?? "", "utf-8");
+        writeFileSync(resolved, buf);
+        const hdrLines = Object.keys(r.headers).sort().map((k) => `  ${k}: ${r.headers[k]}`).join("\n");
+        return {
+          content: [{
+            type: "text",
+            text: `HTTP ${r.status} ${r.status_text} — ${r.content_type || "no content-type"} — ${r.total_bytes} bytes\nWritten to: ${resolved}\nSize on disk: ${buf.byteLength}\n\nHeaders:\n${hdrLines}`,
+          }],
+        };
+      }
+
+      const header = `HTTP ${r.status} ${r.status_text} — ${r.content_type || "no content-type"} — ${r.total_bytes} bytes${r.truncated ? ` (truncated to ${max_bytes ?? 100_000}; set to_file=<path> to capture the full ${r.total_bytes} bytes)` : ""}`;
       const bodyPart = r.body_base64
         ? `\n\n[base64, ${r.body_base64.length} chars]\n${r.body_base64}`
         : r.body_text !== undefined

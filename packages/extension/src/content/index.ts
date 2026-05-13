@@ -98,11 +98,13 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
       if (pendingPreClick) {
         // User already clicked while the highlight was showing — fire immediately.
+        const captured = pendingPreClick;
         pendingPreClick = false;
         chrome.runtime.sendMessage({
           source: "chromeflow-content",
           type: "click_detected",
           requestId: msg.requestId as string,
+          target: captured,
         });
       } else {
         startClickWatch(msg.requestId as string);
@@ -343,14 +345,14 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "get_form_fields": {
-      const { fields, hiddenFieldCount } = enumerateFormFields(document);
+      const { fields, hiddenFieldCount, captcha, oauthIndicators } = enumerateFormFields(document);
 
       let warning = "";
       if (hiddenFieldCount > 0) {
         warning = `\n\n⚠ ${hiddenFieldCount} hidden field(s) not shown above — they may appear after you interact with radio buttons, checkboxes, or toggles. Call get_form_fields() again after any such interaction to get an updated inventory.`;
       }
 
-      return { type: "form_fields_response", requestId: msg.requestId, fields, warning };
+      return { type: "form_fields_response", requestId: msg.requestId, fields, warning, captcha, oauthIndicators };
     }
 
     case "find_text": {
@@ -640,7 +642,10 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "list_frames": {
-      const iframes = Array.from(document.querySelectorAll<HTMLIFrameElement | HTMLFrameElement>("iframe, frame"));
+      // Pierce shadow DOMs (open + closed) so iframes nested inside web
+      // components (e.g. Reddit's chat composer inside a shadow-hosted host)
+      // are discoverable. The previous behavior queried only the light DOM.
+      const iframes = queryAllDeep<HTMLIFrameElement | HTMLFrameElement>(document, "iframe, frame");
       const frames = iframes.map((el, index) => {
         const src = el.getAttribute("src") ?? "";
         let origin = "";
@@ -702,8 +707,59 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 // Arms a click listener as soon as a highlight is shown, so that if the user
 // clicks before wait_for_click is called, the click is not missed.
 
-let pendingPreClick = false;
+type CapturedClickTarget = {
+  selector: string;
+  text: string;
+  tag: string;
+  x: number;
+  y: number;
+};
+
+let pendingPreClick: CapturedClickTarget | false = false;
 let preClickCleanup: (() => void) | null = null;
+
+/**
+ * Build a best-effort CSS selector for an element. Walks up to 5 ancestors,
+ * preferring id > class chain > tag:nth-of-type at each level. Cheap and
+ * generally unique enough for one-shot lookups; not guaranteed unique across
+ * the whole document.
+ */
+function cssPath(el: Element): string {
+  const parts: string[] = [];
+  let cur: Element | null = el;
+  for (let d = 0; d < 5 && cur; d++) {
+    if (cur.id) {
+      parts.unshift(`#${CSS.escape(cur.id)}`);
+      break;
+    }
+    const tag = cur.tagName.toLowerCase();
+    const parent = cur.parentElement;
+    if (!parent) {
+      parts.unshift(tag);
+      break;
+    }
+    const sameTag = Array.from(parent.children).filter((c) => c.tagName === cur!.tagName);
+    if (sameTag.length === 1) {
+      parts.unshift(tag);
+    } else {
+      const idx = sameTag.indexOf(cur) + 1;
+      parts.unshift(`${tag}:nth-of-type(${idx})`);
+    }
+    cur = parent;
+  }
+  return parts.join(" > ");
+}
+
+function captureClickTarget(target: EventTarget | null, x: number, y: number): CapturedClickTarget | null {
+  if (!(target instanceof Element)) return null;
+  return {
+    selector: cssPath(target).slice(0, 200),
+    text: (target.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 60),
+    tag: target.tagName.toLowerCase(),
+    x: Math.round(x),
+    y: Math.round(y),
+  };
+}
 
 /**
  * Walks `orig` and `clone` in tandem (they share structure). For any empty
@@ -743,13 +799,15 @@ function armClickBuffer() {
 
   const onPointerDown = (e: PointerEvent) => {
     const { clientX, clientY } = e;
-    pendingPreClick = true;
+    // Capture the underlying element BEFORE clearAllOverlays — the overlay is
+    // the topmost element at this point, so we want the real click target.
+    const underlying = document.elementFromPoint(clientX, clientY);
+    pendingPreClick = captureClickTarget(underlying ?? e.target, clientX, clientY) ?? false;
     clearAllOverlays(); // remove the highlight as soon as the user clicks
     // Forward focus to the underlying element (the overlay intercepted the click,
     // so the input was never focused — fix that before fill_input is called).
     requestAnimationFrame(() => {
-      const el = document.elementFromPoint(clientX, clientY);
-      if (el instanceof HTMLElement) el.focus();
+      if (underlying instanceof HTMLElement) underlying.focus();
     });
     cleanup();
   };
@@ -768,34 +826,39 @@ function armClickBuffer() {
 function startClickWatch(requestId: string) {
   let done = false;
 
-  const notify = (clientX?: number, clientY?: number) => {
+  const notify = (clientX?: number, clientY?: number, target?: EventTarget | null) => {
     if (done) return;
     done = true;
     cleanup();
     clearAllOverlays(); // remove the highlight as soon as the user clicks
-    // Forward focus to the underlying element so fill_input's activeElement
-    // fallback can find it.
+    // Capture target before focus-forwarding so the captured selector / text
+    // reflects what the user actually clicked, even if focus snaps elsewhere.
+    let captured: CapturedClickTarget | null = null;
     if (clientX !== undefined && clientY !== undefined) {
+      const underlying = document.elementFromPoint(clientX, clientY);
+      captured = captureClickTarget(underlying ?? target ?? null, clientX, clientY);
       requestAnimationFrame(() => {
-        const el = document.elementFromPoint(clientX, clientY);
-        if (el instanceof HTMLElement) el.focus();
+        if (underlying instanceof HTMLElement) underlying.focus();
       });
+    } else if (target) {
+      captured = captureClickTarget(target, 0, 0);
     }
     chrome.runtime.sendMessage({
       source: "chromeflow-content",
       type: "click_detected",
       requestId,
+      target: captured,
     });
   };
 
   // Accept any click on the page — the user is following the visual guide and
   // knows what to click. Filtering by position caused false negatives when
   // highlight coordinates were slightly off.
-  const onPointerDown = (e: PointerEvent) => notify(e.clientX, e.clientY);
+  const onPointerDown = (e: PointerEvent) => notify(e.clientX, e.clientY, e.target);
 
   // Also advance when the user presses Enter/Tab (completing a form field)
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" || e.key === "Tab") notify();
+    if (e.key === "Enter" || e.key === "Tab") notify(undefined, undefined, e.target);
   };
 
   const cleanup = () => {
