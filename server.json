@@ -1,0 +1,34 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "name": "io.github.NeoDrew/chromeflow",
+  "description": "Chrome extension + MCP server. Lets coding agents (Claude Code, Codex CLI) drive your real Chrome — sessions intact, cookies preserved, 2FA stays with the user. 26 browser tools including privileged fetch that bypasses page CSP, authenticated downloads, in-extension docx parsing, multi-session support. Battle-tested by 400+ hours of real agentic browser work before public release.",
+  "version": "0.9.4",
+  "repository": {
+    "url": "https://github.com/NeoDrew/chromeflow",
+    "source": "github"
+  },
+  "websiteUrl": "https://chromeflow.vercel.app",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "chromeflow",
+      "version": "0.9.4",
+      "transport": {
+        "type": "stdio"
+      },
+      "runtimeHint": "npx",
+      "runtimeArguments": [
+        {
+          "type": "positional",
+          "value": "-y",
+          "valueHint": "yes"
+        },
+        {
+          "type": "positional",
+          "value": "chromeflow",
+          "valueHint": "package"
+        }
+      ]
+    }
+  ]
+}
