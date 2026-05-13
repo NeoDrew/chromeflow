@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Capture API keys to .env automatically — Chromeflow walkthrough</title>
+<meta name="description" content="The universal pattern: AI coding agent reveals an API key in a SaaS dashboard (Stripe, Supabase, OpenAI, Anthropic, AWS, SendGrid, Twilio, etc.), captures the value before it auto-hides, and writes it directly to your project's .env. Real tool-call examples." />
+<meta name="keywords" content="capture API keys .env, AI agent API key automation, Claude Code .env, Codex CLI .env, automate Supabase API key, automate OpenAI API key, automate AWS API key, Chromeflow write_to_env walkthrough" />
+<meta name="theme-color" content="#e85d2c" />
+<link rel="canonical" href="https://chromeflow.run/use-cases/api-keys" />
+<link rel="icon" type="image/x-icon" href="/chromeflow.ico" />
+<link rel="apple-touch-icon" href="/chromeflow.png" />
+
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Chromeflow" />
+<meta property="og:title" content="Capture API keys to .env with AI agents via Chromeflow" />
+<meta property="og:description" content="The universal pattern: agent reveals the key, captures the value before it auto-hides, writes to .env. Works for Stripe, Supabase, OpenAI, AWS, SendGrid, Twilio." />
+<meta property="og:url" content="https://chromeflow.run/use-cases/api-keys" />
+<meta property="og:image" content="https://chromeflow.run/og-image.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Capture API keys to .env with AI agents" />
+<meta name="twitter:description" content="The agent does the reveal-and-copy dance. Key lands in .env. Works for every SaaS dashboard." />
+<meta name="twitter:image" content="https://chromeflow.run/og-image.png" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Capture API keys from any SaaS dashboard to .env via Chromeflow",
+  "description": "How an AI coding agent (Claude Code or Codex CLI) reveals an API key in a SaaS dashboard, captures the value before the reveal auto-hides, and writes the key directly to your project's .env file using Chromeflow's write_to_env tool.",
+  "url": "https://chromeflow.run/use-cases/api-keys",
+  "image": "https://chromeflow.run/og-image.png",
+  "totalTime": "PT1M",
+  "datePublished": "2026-05-13",
+  "tool": [
+    {"@type": "HowToTool", "name": "Chromeflow plugin for Claude Code or Codex CLI"},
+    {"@type": "HowToTool", "name": "A SaaS account with an API key to reveal"},
+    {"@type": "HowToTool", "name": "Chrome browser signed into that account"}
+  ],
+  "step": [
+    {"@type": "HowToStep", "name": "Navigate to the API-keys page", "text": "open_page on the dashboard URL. Uses your existing session, no re-login."},
+    {"@type": "HowToStep", "name": "Reveal the key", "text": "click_element on the \"Reveal\" or \"Show\" button. Pass until_text_contains with the expected key prefix (sk_, ya29., AKIA, etc.) to verify the reveal happened."},
+    {"@type": "HowToStep", "name": "Capture the revealed value", "text": "find_text(prefix) — returns the matched string from the DOM. The reveal often auto-hides after a few seconds, so this needs to happen fast."},
+    {"@type": "HowToStep", "name": "Write to .env", "text": "write_to_env(ENV_KEY_NAME, value, absolutePathToEnvFile). The tool handles file locking, appending vs updating existing keys, and double-quoting values with spaces."},
+    {"@type": "HowToStep", "name": "Confirm and clean up", "text": "Agent reads back the .env line to confirm. clear_overlays removes any highlights. The whole flow takes ~1 minute."}
+  ]
+}
+</script>
+
+<style>
+  :root {
+    --bg: #f9f8f4; --surface: #ffffff; --text: #1c1a16; --muted: #78706a;
+    --orange: #e85d2c; --green: #16a05a;
+    --border: rgba(28,26,22,0.09); --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; line-height: 1.6; }
+  header { padding: 32px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  header .wrap { max-width: 960px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  header img { width: 56px; height: 56px; border-radius: 12px; }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: -0.01em; }
+  header a { color: var(--orange); text-decoration: none; }
+  header .nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  main { max-width: 880px; margin: 0 auto; padding: 48px 24px 96px; }
+  main > h2 { font-size: 36px; letter-spacing: -0.02em; margin: 0 0 8px; line-height: 1.2; }
+  main > p.lead { font-size: 17px; color: var(--muted); margin: 0 0 28px; max-width: 720px; }
+  .breadcrumb { font-size: 14px; color: var(--muted); margin: 0 0 20px; }
+  .breadcrumb a { color: var(--orange); text-decoration: none; }
+  .quick-take { margin: 0 0 36px; padding: 18px 22px; background: rgba(232,93,44,0.06); border: 1px solid rgba(232,93,44,0.2); border-left: 4px solid var(--orange); border-radius: 12px; }
+  h3 { margin: 36px 0 12px; font-size: 22px; letter-spacing: -0.01em; }
+  p, ul, ol { color: #2a2620; }
+  code { background: rgba(232,93,44,0.08); color: #c14a1f; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  pre { background: #1c1a16; color: #f1ebe2; padding: 16px 20px; border-radius: 10px; overflow-x: auto; font-size: 13.5px; line-height: 1.55; box-shadow: var(--shadow); }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  .step { margin: 20px 0 16px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  .step h4 { margin: 0 0 6px; font-size: 16px; color: #c14a1f; }
+  .step p { margin: 0; font-size: 14.5px; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); margin: 24px 0 32px; }
+  th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; }
+  th { background: rgba(28,26,22,0.03); font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+  .related { margin-top: 48px; padding: 20px 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .related h4 { margin: 0 0 12px; font-size: 16px; }
+  .related ul { margin: 0; padding-left: 20px; }
+  .related a { color: var(--orange); text-decoration: none; }
+  footer { max-width: 960px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer a { color: var(--orange); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/"><img src="/chromeflow.png" alt="Chromeflow" /></a>
+    <h1><a href="/">Chromeflow</a></h1>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">Compare</a>
+      <a href="/use-cases">Use cases</a>
+      <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<p class="breadcrumb"><a href="/">Home</a> · <a href="/use-cases">Use cases</a> · Capture API keys</p>
+
+<h2>Capture any API key directly to <code>.env</code></h2>
+<p class="lead">The universal pattern. Stripe, Supabase, OpenAI, Anthropic, AWS, SendGrid, Twilio, Resend, Vercel — every SaaS dashboard hides keys behind a Reveal button, often only once, often auto-hiding after a few seconds. The agent reveals, captures, writes. Done.</p>
+
+<div class="quick-take">
+  <strong>Why a dedicated tool exists for this:</strong> Copying API keys from dashboards into <code>.env</code> by hand is the most-repeated tedious task in modern app development. Get a Stripe key, paste. Get a Supabase service-role key, paste. Get OpenAI, Anthropic, AWS, SendGrid, Twilio. Each one is 30 seconds of switching windows, revealing, copying, finding the right line in <code>.env</code>, pasting. Across a typical SaaS setup, you do this 5–15 times. <code>write_to_env</code> collapses it to a single tool call per key.
+</div>
+
+<h3>The four-tool dance</h3>
+
+<div class="step">
+  <h4>1. Open the keys page</h4>
+  <pre><code>open_page("https://dashboard.stripe.com/apikeys")
+// or supabase.com/dashboard/project/abc/settings/api
+// or platform.openai.com/api-keys
+// or console.anthropic.com/settings/keys
+// or aws/iam/users/security_credentials</code></pre>
+</div>
+
+<div class="step">
+  <h4>2. Reveal the key with verification</h4>
+  <pre><code>click_element("Reveal test key", until_text_contains="sk_test_")</code></pre>
+  <p>The <code>until_text_contains</code> clause verifies the reveal actually happened — if it silently failed, <code>click_element</code> returns <code>success=false</code> instead of moving on with stale state.</p>
+</div>
+
+<div class="step">
+  <h4>3. Capture the revealed value</h4>
+  <pre><code>const found = find_text("sk_test_", max=1)
+const key = found[0].matchedText
+// e.g. "sk_test_51AbCdEf...XyZ"</code></pre>
+  <p><code>find_text</code> returns the surrounding context and the exact matched text. Most dashboards auto-revert reveal after 30–60 seconds, so this needs to happen quickly — well within Chromeflow's per-call latency.</p>
+</div>
+
+<div class="step">
+  <h4>4. Write to <code>.env</code></h4>
+  <pre><code>write_to_env(
+  "STRIPE_SECRET_KEY",
+  key,
+  "/Users/you/myapp/.env"
+)</code></pre>
+  <p><code>write_to_env</code> handles: file lock, append-vs-replace (if <code>STRIPE_SECRET_KEY</code> already exists in <code>.env</code>, it's updated in place), quoting (double-quoted if the value contains a space), and a final read-back to confirm the line landed correctly.</p>
+</div>
+
+<h3>Works the same across every SaaS</h3>
+<p>The pattern is identical regardless of provider. Only the URL, reveal-button label, and key-prefix change. A representative sample:</p>
+
+<table>
+<thead>
+<tr><th>Service</th><th>Dashboard URL</th><th>Key prefix</th><th>Env var convention</th></tr>
+</thead>
+<tbody>
+<tr><td>Stripe</td><td>dashboard.stripe.com/apikeys</td><td><code>sk_test_</code> / <code>sk_live_</code></td><td><code>STRIPE_SECRET_KEY</code></td></tr>
+<tr><td>Supabase</td><td>supabase.com/dashboard/project/.../settings/api</td><td><code>eyJ</code> (JWT)</td><td><code>SUPABASE_SERVICE_ROLE_KEY</code></td></tr>
+<tr><td>OpenAI</td><td>platform.openai.com/api-keys</td><td><code>sk-</code></td><td><code>OPENAI_API_KEY</code></td></tr>
+<tr><td>Anthropic</td><td>console.anthropic.com/settings/keys</td><td><code>sk-ant-</code></td><td><code>ANTHROPIC_API_KEY</code></td></tr>
+<tr><td>AWS IAM</td><td>console.aws.amazon.com/iam</td><td><code>AKIA</code></td><td><code>AWS_ACCESS_KEY_ID</code></td></tr>
+<tr><td>SendGrid</td><td>app.sendgrid.com/settings/api_keys</td><td><code>SG.</code></td><td><code>SENDGRID_API_KEY</code></td></tr>
+<tr><td>Twilio</td><td>console.twilio.com/.../api-keys</td><td><code>SK</code></td><td><code>TWILIO_API_KEY</code></td></tr>
+<tr><td>Vercel</td><td>vercel.com/account/tokens</td><td>opaque hex</td><td><code>VERCEL_TOKEN</code></td></tr>
+<tr><td>Resend</td><td>resend.com/api-keys</td><td><code>re_</code></td><td><code>RESEND_API_KEY</code></td></tr>
+</tbody>
+</table>
+
+<h3>The "you" path vs the agent path</h3>
+<p><strong>You by hand:</strong> Switch to browser. Navigate to dashboard. Sign in if needed. Find API keys section. Click reveal. Click copy. Switch to terminal. Find the right project. Open <code>.env</code>. Find the right line or create a new one. Paste. Save. Switch back. Repeat for the next key. ~60–90 seconds per key, plus the context-switch tax.</p>
+<p><strong>Agent with Chromeflow:</strong> Single tool call sequence shown above. ~3 seconds of wall-clock. Your active engagement: zero (unless 2FA prompts, in which case ~10 seconds).</p>
+
+<h3>Security notes</h3>
+<ul>
+  <li><strong>The agent's LLM sees the key in its tool-call response.</strong> If you're using a remote LLM (Claude, GPT-4, etc.), the key passes through the API provider's logs per their policy. Worth considering for production keys; less of a concern for test/sandbox keys.</li>
+  <li><strong>Chromeflow itself collects nothing.</strong> The extension talks only to a local WebSocket on 127.0.0.1.</li>
+  <li><strong><code>.env</code> stays local.</strong> Make sure it's in <code>.gitignore</code> before committing.</li>
+  <li><strong>For production secrets, prefer a real secret manager</strong> (Vercel Env, Doppler, 1Password CLI, AWS Secrets Manager). Use <code>write_to_env</code> for development setup.</li>
+</ul>
+
+<div class="related">
+  <h4>Related use cases</h4>
+  <ul>
+    <li><a href="/use-cases/stripe">Stripe end-to-end setup</a> — the full workflow including this pattern</li>
+    <li><a href="/use-cases/oauth">OAuth OAuth login flows</a> — auth for CLIs that hand back tokens (not keys)</li>
+    <li><a href="/use-cases/canvas">Canvas attachment downloads</a> — same privileged-context pattern, different artifact</li>
+    <li><a href="/compare">Why Playwright/Puppeteer can't do this end-to-end</a></li>
+  </ul>
+</div>
+
+<p style="margin-top: 40px;"><a href="/use-cases" style="color: var(--orange); text-decoration: none; font-weight: 600;">← Back to all use cases</a></p>
+
+</main>
+
+<footer>
+  <div>© 2026 Andrew Robertson · MIT licensed</div>
+  <div>
+    <a href="/">Home</a> · <a href="/faq">FAQ</a> · <a href="/compare">Compare</a> · <a href="/use-cases">Use cases</a> · <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>

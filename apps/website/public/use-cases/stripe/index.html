@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Set up Stripe with Claude Code or Codex CLI — Chromeflow walkthrough</title>
+<meta name="description" content="Step-by-step: how an AI coding agent (Claude Code or Codex CLI) drives Stripe via Chromeflow to create a product, set pricing, configure a webhook, and capture the secret key directly to .env. Real tool calls, real handoff points." />
+<meta name="keywords" content="Stripe Claude Code setup, Stripe AI agent, set up Stripe with AI, automate Stripe with Codex, Stripe secret key .env, Stripe webhook agent, Chromeflow Stripe walkthrough" />
+<meta name="theme-color" content="#e85d2c" />
+<link rel="canonical" href="https://chromeflow.run/use-cases/stripe" />
+<link rel="icon" type="image/x-icon" href="/chromeflow.ico" />
+<link rel="apple-touch-icon" href="/chromeflow.png" />
+
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Chromeflow" />
+<meta property="og:title" content="Set up Stripe with Claude Code or Codex via Chromeflow" />
+<meta property="og:description" content="End-to-end agent walkthrough: create the product, set pricing, configure the webhook, capture the secret key into .env. Real tool calls, real human handoffs." />
+<meta property="og:url" content="https://chromeflow.run/use-cases/stripe" />
+<meta property="og:image" content="https://chromeflow.run/og-image.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Stripe setup with AI agents via Chromeflow" />
+<meta name="twitter:description" content="The agent does the dashboard, you do the 2FA. Secret key lands in .env." />
+<meta name="twitter:image" content="https://chromeflow.run/og-image.png" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Set up a Stripe product with Claude Code or Codex CLI via Chromeflow",
+  "description": "Drive Stripe's dashboard end-to-end with an AI coding agent: create a product, set pricing, configure a webhook, and capture the secret API key directly into your project's .env file.",
+  "url": "https://chromeflow.run/use-cases/stripe",
+  "image": "https://chromeflow.run/og-image.png",
+  "totalTime": "PT5M",
+  "datePublished": "2026-05-13",
+  "tool": [
+    {"@type": "HowToTool", "name": "Chromeflow plugin for Claude Code or Codex CLI"},
+    {"@type": "HowToTool", "name": "A Stripe account (free)"},
+    {"@type": "HowToTool", "name": "Chrome browser (with the chromeflow extension installed)"}
+  ],
+  "step": [
+    {"@type": "HowToStep", "name": "Tell the agent what you want", "text": "Prompt your agent: \"Set up a Stripe product called Pro at $29/month, point the webhook at https://myapp.com/api/stripe, and put the secret key in .env.\" The agent picks up the chromeflow skill."},
+    {"@type": "HowToStep", "name": "Agent opens Stripe", "text": "open_page(\"https://dashboard.stripe.com/products\") — uses your existing Stripe session, no re-login."},
+    {"@type": "HowToStep", "name": "Agent creates the product", "text": "click_element(\"Add product\"), then fill_form([{label: \"Name\", value: \"Pro\"}, {label: \"Price\", value: \"29\"}])."},
+    {"@type": "HowToStep", "name": "You confirm with one click", "text": "Stripe sometimes prompts for 2FA on critical changes — Chromeflow highlights the field and waits for you to type your code."},
+    {"@type": "HowToStep", "name": "Agent configures the webhook", "text": "Navigates to Developers → Webhooks, fills the endpoint URL, picks the event types."},
+    {"@type": "HowToStep", "name": "Agent captures the secret key", "text": "find_text(\"Reveal secret key\"), click_element on the result, read the revealed value, then write_to_env(\"STRIPE_SECRET_KEY\", value, \"./.env\")."},
+    {"@type": "HowToStep", "name": "Agent confirms", "text": "Reports back: secret key written to .env, webhook configured, product live. Total wall-clock time ~5 minutes; your active engagement ~30 seconds for the 2FA prompt."}
+  ]
+}
+</script>
+
+<style>
+  :root {
+    --bg: #f9f8f4; --surface: #ffffff; --text: #1c1a16; --muted: #78706a;
+    --orange: #e85d2c; --green: #16a05a;
+    --border: rgba(28,26,22,0.09); --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; line-height: 1.6; }
+  header { padding: 32px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  header .wrap { max-width: 960px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  header img { width: 56px; height: 56px; border-radius: 12px; }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: -0.01em; }
+  header a { color: var(--orange); text-decoration: none; }
+  header .nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  main { max-width: 880px; margin: 0 auto; padding: 48px 24px 96px; }
+  main > h2 { font-size: 36px; letter-spacing: -0.02em; margin: 0 0 8px; line-height: 1.2; }
+  main > p.lead { font-size: 17px; color: var(--muted); margin: 0 0 28px; max-width: 720px; }
+  .breadcrumb { font-size: 14px; color: var(--muted); margin: 0 0 20px; }
+  .breadcrumb a { color: var(--orange); text-decoration: none; }
+  .quick-take { margin: 0 0 36px; padding: 18px 22px; background: rgba(232,93,44,0.06); border: 1px solid rgba(232,93,44,0.2); border-left: 4px solid var(--orange); border-radius: 12px; }
+  h3 { margin: 36px 0 12px; font-size: 22px; letter-spacing: -0.01em; }
+  p, ul, ol { color: #2a2620; }
+  code { background: rgba(232,93,44,0.08); color: #c14a1f; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  pre { background: #1c1a16; color: #f1ebe2; padding: 16px 20px; border-radius: 10px; overflow-x: auto; font-size: 13.5px; line-height: 1.55; box-shadow: var(--shadow); }
+  pre code { background: transparent; color: inherit; padding: 0; }
+  .step { margin: 20px 0 16px; padding: 16px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; }
+  .step h4 { margin: 0 0 6px; font-size: 16px; color: #c14a1f; }
+  .step p { margin: 0; font-size: 14.5px; }
+  .handoff { background: rgba(217,119,6,0.08); border-color: rgba(217,119,6,0.3); }
+  .handoff h4 { color: #b45309; }
+  .related { margin-top: 48px; padding: 20px 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .related h4 { margin: 0 0 12px; font-size: 16px; }
+  .related ul { margin: 0; padding-left: 20px; }
+  .related a { color: var(--orange); text-decoration: none; }
+  footer { max-width: 960px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer a { color: var(--orange); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/"><img src="/chromeflow.png" alt="Chromeflow" /></a>
+    <h1><a href="/">Chromeflow</a></h1>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">Compare</a>
+      <a href="/use-cases">Use cases</a>
+      <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<p class="breadcrumb"><a href="/">Home</a> · <a href="/use-cases">Use cases</a> · Set up Stripe</p>
+
+<h2>Set up Stripe with Claude Code or Codex CLI</h2>
+<p class="lead">A real walkthrough: agent creates the product, sets the price, wires the webhook, captures the secret key into <code>.env</code>. You step in for the 2FA. Total wall-clock ~5 minutes.</p>
+
+<div class="quick-take">
+  <strong>Why this needs Chromeflow specifically:</strong> Stripe's dashboard is behind your authenticated session and routinely prompts for 2FA on changes. Playwright, Browser Use, and Puppeteer would all need to re-login from scratch every run and fail at the 2FA prompt. Chromeflow runs in your real Chrome where you're already signed in, so the agent's first tool call is the actual work.
+</div>
+
+<h3>The prompt</h3>
+<pre><code>Set up a Stripe product called "Pro Plan" at $29/month, point the
+webhook at https://myapp.com/api/stripe, capture event types
+checkout.session.completed and customer.subscription.updated, and
+put the secret key in .env</code></pre>
+
+<h3>What the agent does</h3>
+
+<div class="step">
+  <h4>1. Open the products page</h4>
+  <pre><code>open_page("https://dashboard.stripe.com/products")</code></pre>
+  <p>Uses your existing Stripe session. No login screen, no MFA prompt — you're already in.</p>
+</div>
+
+<div class="step">
+  <h4>2. Add the product</h4>
+  <pre><code>click_element("Add product", until_text_contains="Product details")
+fill_form([
+  {label: "Name", value: "Pro Plan"},
+  {label: "Description", value: "Monthly subscription tier"},
+  {label: "Amount", value: "29"}
+])</code></pre>
+  <p>The <code>until_*</code> clause makes <code>click_element</code> verify the click actually opened the product-details form before continuing — no silent failure.</p>
+</div>
+
+<div class="step handoff">
+  <h4>3. ⚠ Human handoff — 2FA</h4>
+  <p>Stripe occasionally challenges for 2FA on critical changes. The agent calls <code>highlight_region</code> on the 6-digit code input and <code>wait_for_click</code>. You type the code, click, and the workflow continues. <strong>The agent never sees your 2FA codes.</strong></p>
+</div>
+
+<div class="step">
+  <h4>4. Navigate to webhooks</h4>
+  <pre><code>open_page("https://dashboard.stripe.com/webhooks")
+click_element("Add endpoint")
+fill_form([
+  {label: "Endpoint URL", value: "https://myapp.com/api/stripe"},
+  {label: "Description", value: "Main webhook for SaaS app"}
+])
+click_element("Select events")
+click_element("checkout.session.completed")
+click_element("customer.subscription.updated")
+click_element("Add events")
+click_element("Add endpoint", until_text_contains="Signing secret")</code></pre>
+</div>
+
+<div class="step">
+  <h4>5. Capture the secret key</h4>
+  <pre><code>open_page("https://dashboard.stripe.com/apikeys")
+click_element("Reveal test key", until_text_contains="sk_test_")
+const result = find_text("sk_test_", max=1)
+write_to_env("STRIPE_SECRET_KEY", result.matchedText, "/Users/you/myapp/.env")</code></pre>
+  <p>The reveal is reverted automatically after a few seconds for security — Chromeflow grabs the value during the visible window. <code>write_to_env</code> handles the file lock + appends-or-updates safely.</p>
+</div>
+
+<div class="step">
+  <h4>6. Capture the webhook signing secret</h4>
+  <pre><code>open_page("https://dashboard.stripe.com/webhooks")
+click_element("...myapp.com/api/stripe")
+click_element("Click to reveal", until_text_contains="whsec_")
+const sig = find_text("whsec_", max=1)
+write_to_env("STRIPE_WEBHOOK_SECRET", sig.matchedText, "/Users/you/myapp/.env")</code></pre>
+</div>
+
+<h3>What you get</h3>
+<ul>
+  <li><strong><code>.env</code> updated:</strong> <code>STRIPE_SECRET_KEY=sk_test_...</code> and <code>STRIPE_WEBHOOK_SECRET=whsec_...</code> ready for your code to read.</li>
+  <li><strong>Product live in Stripe</strong> with the right name, price, and tax setting.</li>
+  <li><strong>Webhook endpoint registered</strong> pointing at your URL with the two event types subscribed.</li>
+  <li><strong>Your active engagement: ~30 seconds</strong> for the 2FA prompt. The rest happens while you're reading docs or writing code.</li>
+</ul>
+
+<h3>Why this is hard without Chromeflow</h3>
+<p>Playwright/Browser Use/Puppeteer would each launch a fresh Chrome with no Stripe cookie. The agent's first hurdle: a login page. Even if you script the email + password (and stick those in env vars somewhere), Stripe's 2FA challenge kills the flow. With Chromeflow, the session is already there — the only human interaction is the 2FA code, which is the part you should be doing anyway.</p>
+
+<div class="related">
+  <h4>Related use cases</h4>
+  <ul>
+    <li><a href="/use-cases/api-keys">Capture any API key to .env</a> — generalized version of step 5–6</li>
+    <li><a href="/use-cases/oauth">OAuth OAuth login flows</a> — for tools that auth via OAuth login (npm publish, various CLIs, etc.)</li>
+    <li><a href="/use-cases/canvas">Download authenticated Canvas attachments</a> — same privileged-fetch pattern, different domain</li>
+    <li><a href="/compare/playwright">Why Playwright fails at Stripe-dashboard automation</a></li>
+  </ul>
+</div>
+
+<p style="margin-top: 40px;"><a href="/use-cases" style="color: var(--orange); text-decoration: none; font-weight: 600;">← Back to all use cases</a></p>
+
+</main>
+
+<footer>
+  <div>© 2026 Andrew Robertson · MIT licensed</div>
+  <div>
+    <a href="/">Home</a> · <a href="/faq">FAQ</a> · <a href="/compare">Compare</a> · <a href="/use-cases">Use cases</a> · <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+  </div>
+</footer>
+
+</body>
+</html>
