@@ -494,6 +494,23 @@ function isMeaningful(el: Element): boolean {
 }
 
 function isClickable(el: Element): boolean {
+  // Walk ancestors to catch hidden-via-parent cases. Reddit's flair dropdown
+  // hosts <button>s inside a [hidden] panel — the button itself reports
+  // tag=BUTTON and not disabled, so without the ancestor check find_text
+  // would label it clickable. The walk stops at documentElement to avoid
+  // false positives on document.body itself.
+  for (let cur: Element | null = el; cur && cur !== el.ownerDocument.documentElement; cur = cur.parentElement) {
+    if (cur.hasAttribute("hidden")) return false;
+    if (cur.getAttribute("aria-hidden") === "true") return false;
+    const view = el.ownerDocument.defaultView;
+    if (view) {
+      try {
+        const cs = view.getComputedStyle(cur);
+        if (cs.display === "none") return false;
+        if (cs.visibility === "hidden") return false;
+      } catch { /* cross-window or detached — ignore */ }
+    }
+  }
   const tag = el.tagName;
   if (tag === "BUTTON") return !(el as HTMLButtonElement).disabled;
   if (tag === "A") return el.hasAttribute("href");

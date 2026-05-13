@@ -20,6 +20,19 @@ export interface EnumeratedField {
 export interface EnumerateResult {
   fields: EnumeratedField[];
   hiddenFieldCount: number;
+  captcha: CaptchaInfo | null;
+  oauthIndicators: string[];
+}
+
+/**
+ * Captcha presence on the page. Detection covers the three major vendors that
+ * cover ~95% of forms: Google reCAPTCHA, Cloudflare Turnstile, hCaptcha.
+ * sitekey is best-effort — useful when the agent needs to surface it to the
+ * user verbatim (e.g. for an off-page captcha-solving service).
+ */
+export interface CaptchaInfo {
+  kind: "recaptcha" | "turnstile" | "hcaptcha";
+  sitekey: string | null;
 }
 
 /**
@@ -280,5 +293,55 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
     );
   });
 
-  return { fields, hiddenFieldCount: hiddenFields.length };
+  return {
+    fields,
+    hiddenFieldCount: hiddenFields.length,
+    captcha: detectCaptcha(doc),
+    oauthIndicators: detectOAuthIndicators(doc),
+  };
+}
+
+function detectCaptcha(doc: Document): CaptchaInfo | null {
+  const getSitekey = (el: Element | null): string | null =>
+    el?.getAttribute("data-sitekey") ?? null;
+
+  // Google reCAPTCHA — covers v2 (visible/invisible), v3 (token-only), Enterprise.
+  const recaptchaEl = doc.querySelector(
+    '[name="g-recaptcha-response"], .g-recaptcha, iframe[src*="recaptcha/api2"], iframe[src*="recaptcha/enterprise"]'
+  );
+  if (recaptchaEl) {
+    return { kind: "recaptcha", sitekey: getSitekey(doc.querySelector(".g-recaptcha")) };
+  }
+  // Cloudflare Turnstile
+  const turnstileEl = doc.querySelector(
+    '[name="cf-turnstile-response"], .cf-turnstile, iframe[src*="challenges.cloudflare.com/turnstile"]'
+  );
+  if (turnstileEl) {
+    return { kind: "turnstile", sitekey: getSitekey(doc.querySelector(".cf-turnstile")) };
+  }
+  // hCaptcha
+  const hcaptchaEl = doc.querySelector(
+    '[name="h-captcha-response"], .h-captcha, iframe[src*="hcaptcha.com/captcha"]'
+  );
+  if (hcaptchaEl) {
+    return { kind: "hcaptcha", sitekey: getSitekey(doc.querySelector(".h-captcha")) };
+  }
+  return null;
+}
+
+function detectOAuthIndicators(doc: Document): string[] {
+  // Scan obvious clickable elements for "Continue with X" / "Sign in with X"
+  // strings, the standard pattern for OAuth provider buttons. Cuts off after
+  // 6 matches to avoid noise from sites that list every conceivable provider.
+  const out: string[] = [];
+  const re = /^(continue|sign in|sign up|log in|log on)\s+with\s+(google|github|microsoft|apple|facebook|twitter|x|discord|slack|gitlab|linkedin|notion)$/i;
+  for (const el of Array.from(doc.querySelectorAll<HTMLElement>('button, a, [role="button"]'))) {
+    const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+    if (!text || text.length > 60) continue;
+    if (re.test(text)) {
+      if (!out.includes(text)) out.push(text);
+      if (out.length >= 6) break;
+    }
+  }
+  return out;
 }
