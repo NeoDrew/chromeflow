@@ -24798,39 +24798,72 @@ ${lines.join("\n")}` }]
     }
   );
   server.tool(
+    "close_tab",
+    `Close a tab by number, URL substring, or title substring. Mirrors switch_to_tab's matcher. Defaults to closing the ACTIVE tab when no query is given. Use this to clean up the tab pile after a multi-step workflow.`,
+    {
+      query: external_exports.union([external_exports.string(), external_exports.number()]).optional().describe("Tab number (1-based), URL substring, or title substring. Omit to close the active tab.")
+    },
+    async ({ query }) => {
+      const raw = query === void 0 || query === null || query === "" ? void 0 : String(query);
+      const response = await bridge.request({ type: "close_tab", query: raw });
+      const r = response;
+      if (r.message) return { content: [{ type: "text", text: r.message }] };
+      const closedList = (r.closed ?? []).map((t) => `${t.index}. ${t.title} \u2014 ${t.url}`).join("\n");
+      return {
+        content: [{ type: "text", text: `Closed ${(r.closed ?? []).length} tab(s):
+${closedList}` }]
+      };
+    }
+  );
+  server.tool(
+    "close_other_tabs",
+    `Close every tab in the current window EXCEPT the active one (or any tab matching keep_query). Use at the end of a session to tidy up; do NOT use mid-flow if you may need to return to one of the closed tabs.`,
+    {
+      keep_query: external_exports.string().optional().describe("URL substring or title substring. Tabs matching this are KEPT; all others are closed. When omitted, only the active tab is kept.")
+    },
+    async ({ keep_query }) => {
+      const response = await bridge.request({ type: "close_other_tabs", keep_query });
+      const r = response;
+      if (r.message) return { content: [{ type: "text", text: r.message }] };
+      const closedCount = (r.closed ?? []).length;
+      const keptCount = (r.kept ?? []).length;
+      const keptList = (r.kept ?? []).map((t) => `  ${t.index}. ${t.title} \u2014 ${t.url}`).join("\n");
+      return {
+        content: [{ type: "text", text: `Closed ${closedCount} tab(s), kept ${keptCount}:
+${keptList}` }]
+      };
+    }
+  );
+  server.tool(
     "take_screenshot",
-    `Capture a screenshot of the active tab. By default returns the PNG to the agent only; set save_to or copy_to_clipboard to also share it. Reserved for cases where DOM lookup has already failed \u2014 use get_page_text and find_text for reading content.`,
+    `Capture a screenshot of the active tab. By default the image is returned to the agent inline UNLESS it exceeds ~500KB base64, in which case it's saved to a temp file and the path is returned instead (preserves the agent's context window). Set inline="always" to force inline regardless of size, or inline="never" to always write to a file. Set save_to or copy_to_clipboard to also share the image with the user. Reserved for cases where DOM lookup has already failed \u2014 use get_page_text and find_text for reading content.`,
     {
       copy_to_clipboard: external_exports.boolean().optional().describe("Copy the PNG to the system clipboard (macOS only). Default false."),
-      save_to: external_exports.enum(["downloads", "cwd", "none"]).optional().describe(`Save the PNG to disk: "downloads" (~/Downloads), "cwd" (Claude's working directory), or "none" (default \u2014 image returned only to Claude).`)
+      save_to: external_exports.enum(["downloads", "cwd", "none"]).optional().describe(`Save the PNG to disk: "downloads" (~/Downloads), "cwd" (the agent's working directory), or "none" (default \u2014 image returned only to the agent, no disk artifact).`),
+      inline: external_exports.enum(["auto", "always", "never"]).optional().describe('Whether to return the image base64 inline to the agent. "auto" (default): inline if under 500KB base64, otherwise write to a temp file and return the path. "always": inline regardless of size \u2014 large images may exceed the MCP token ceiling. "never": always return the path, never inline.')
     },
-    async ({ copy_to_clipboard = false, save_to = "none" }) => {
+    async ({ copy_to_clipboard = false, save_to = "none", inline = "auto" }) => {
       const sharing = copy_to_clipboard || save_to !== "none";
       const response = await bridge.request({ type: "screenshot", grid: !sharing });
       if (response.type !== "screenshot_response") {
         throw new Error("Unexpected response from extension");
       }
-      if (!sharing) {
-        return {
-          content: [
-            { type: "image", data: response.image, mimeType: "image/png" },
-            {
-              type: "text",
-              text: `Screenshot captured (${response.width}x${response.height}). Analyze the image to identify element positions for highlighting.`
-            }
-          ]
-        };
-      }
+      const base64Len = response.image.length;
+      const INLINE_CAP = 5e5;
+      const shouldInline = inline === "always" || inline === "auto" && base64Len <= INLINE_CAP;
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const filename = `chromeflow-${timestamp}.png`;
       const imageBuffer = Buffer.from(response.image, "base64");
       const tmpPath = join(tmpdir(), filename);
-      writeFileSync(tmpPath, imageBuffer);
+      const needTmp = !shouldInline || sharing;
+      if (needTmp) writeFileSync(tmpPath, imageBuffer);
       const notes = [];
+      let landedPath = tmpPath;
       if (save_to !== "none") {
         const savePath = save_to === "cwd" ? join(process.cwd(), filename) : join(homedir(), "Downloads", filename);
         copyFileSync(tmpPath, savePath);
         notes.push(`Saved to ${savePath}`);
+        landedPath = savePath;
       }
       if (copy_to_clipboard) {
         try {
@@ -24839,11 +24872,18 @@ ${lines.join("\n")}` }]
         } catch {
         }
       }
+      if (shouldInline) {
+        const msg = notes.length ? notes.join(". ") + "." : `Screenshot captured (${response.width}x${response.height}, ${base64Len} base64 chars). Analyze the image to identify element positions for highlighting.`;
+        return {
+          content: [
+            { type: "image", data: response.image, mimeType: "image/png" },
+            { type: "text", text: msg }
+          ]
+        };
+      }
+      notes.push(`Image saved to ${landedPath} (${response.width}x${response.height}, ~${Math.round(imageBuffer.byteLength / 1024)}KB) \u2014 Read the file or use OS image viewer. To force inline despite size, pass inline="always".`);
       return {
-        content: [
-          { type: "image", data: response.image, mimeType: "image/png" },
-          { type: "text", text: notes.length ? notes.join(". ") + "." : `Screenshot captured (${response.width}x${response.height}).` }
-        ]
+        content: [{ type: "text", text: notes.join(". ") + "." }]
       };
     }
   );
@@ -24956,14 +24996,22 @@ To fill: fill_input("${r2.fields[0].label}", "<value>")` }] };
       if (response.type !== "form_fields_response") throw new Error("Unexpected response");
       const r = response;
       const fields = r.fields;
-      if (fields.length === 0) return { content: [{ type: "text", text: "No form fields found on page." + (r.warning ?? "") }] };
+      const captchaLine = r.captcha ? `
+
+\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. Synthetic submits will be silently rejected. Pre-fill, then highlight the submit button and call wait_for_click.` : "";
+      const oauthLine = r.oauthIndicators && r.oauthIndicators.length > 0 ? `
+
+\u2139 OAuth providers detected on this form: ${r.oauthIndicators.join(", ")}. If the user wants to sign in via one of these, click it instead of filling email/password.` : "";
+      if (fields.length === 0) {
+        return { content: [{ type: "text", text: "No form fields found on page." + (r.warning ?? "") + captchaLine + oauthLine }] };
+      }
       const lines = fields.map((f) => {
         const val = f.value ? ` [currently: "${f.value}"]` : "";
         const ctx = f.context ? ` [under: "${f.context}"]` : "";
         return `${f.index}. [${f.type}] "${f.label}"${val}${ctx} \u2014 y:${f.y}`;
       });
       return { content: [{ type: "text", text: `Form fields (${fields.length} total, sorted top-to-bottom):
-${lines.join("\n")}${r.warning ?? ""}` }] };
+${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
     }
   );
   server.tool(
@@ -25007,9 +25055,11 @@ ${lines.join("\n")}${r.warning ?? ""}` }] };
   );
   server.tool(
     "execute_script",
-    `Execute JavaScript in the current page's context and return the result. Use for reading framework state or DOM properties not visible in text \u2014 prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
+    `Execute JavaScript in the active tab's MAIN world (the page's own context, not the extension's isolated world). Use for reading framework state or DOM properties not visible in text \u2014 prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
 
-CSP-strict pages (Stripe, GitHub) silently fall through to a CDP eval path. Page alerts (alert/confirm/prompt) fired since the last script appear as PAGE ALERT in the result.`,
+MAIN-world means the page's Content-Security-Policy applies: \`fetch()\` against authenticated APIs is often blocked by the page's connect-src directive. When that happens, switch to fetch_url \u2014 it runs in the extension's privileged context (full host_permissions, automatic cookie jar, no page CSP).
+
+CSP-strict pages that disallow eval (Stripe, GitHub) silently fall through to a CDP eval path. Page alerts (alert/confirm/prompt) fired since the last script appear as PAGE ALERT in the result.`,
     {
       code: external_exports.string().describe(
         "JavaScript expression or multi-statement script to evaluate in the page. Top-level `return` is supported."
@@ -25032,13 +25082,14 @@ PAGE ALERT: "${alert}" \u2014 the page showed a dialog with this message. Read i
   );
   server.tool(
     "inspect_request_headers",
-    `Navigate to a URL and capture the request headers Chrome sends for the main document \u2014 useful for diagnosing server-side bot detection. Returns method, URL, and all headers. Cookie values are redacted by default to avoid leaking session tokens into the agent context; pass redact_cookies: false to see them. This tool DOES navigate the active tab.`,
+    `Capture the request headers Chrome sends to a URL \u2014 useful for diagnosing server-side bot detection. Returns method, URL, and all headers. Cookie values are redacted by default to avoid leaking session tokens into the agent context; pass redact_cookies: false to see them. By default opens a background tab for the inspection so your active tab keeps its scroll position and form state \u2014 set new_tab: false to use the active tab instead.`,
     {
       url: external_exports.string().url().describe("URL to navigate to and capture headers for"),
-      redact_cookies: external_exports.boolean().optional().describe("Replace each cookie's value with [REDACTED]. Default true. Set false only when you genuinely need the cookie content for debugging.")
+      redact_cookies: external_exports.boolean().optional().describe("Replace each cookie's value with [REDACTED]. Default true. Set false only when you genuinely need the cookie content for debugging."),
+      new_tab: external_exports.boolean().optional().describe("Open the inspection in a background tab and close it when done. Default true (preserves the active tab's state). Set false to use the active tab \u2014 the active tab WILL navigate.")
     },
-    async ({ url, redact_cookies = true }) => {
-      const response = await bridge.request({ type: "inspect_request_headers", url }, 2e4);
+    async ({ url, redact_cookies = true, new_tab = true }) => {
+      const response = await bridge.request({ type: "inspect_request_headers", url, new_tab }, 3e4);
       const r = response;
       let text = r.message ?? "(no headers captured)";
       if (redact_cookies) {
@@ -25098,8 +25149,8 @@ Returns whether the element was found. Set valueToType only when the user must p
 }
 
 // packages/mcp-server/src/tools/capture.ts
-import { appendFileSync, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "fs";
-import { resolve, relative, isAbsolute } from "path";
+import { appendFileSync, mkdirSync, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "fs";
+import { resolve, relative, isAbsolute, dirname } from "path";
 function registerCaptureTools(server, bridge) {
   server.tool(
     "fill_input",
@@ -25128,13 +25179,31 @@ Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirr
       if (selector) {
         const response2 = await bridge.request({ type: "react_set_input", selector, value, frame: frame ?? "" });
         const r2 = response2;
-        return { content: [{ type: "text", text: r2.message ?? (r2.success ? `Set "${selector}"` : `Failed to set "${selector}"`) }] };
+        if (!r2.success) {
+          const workaround = `
+
+Workaround when selector-mode keeps failing:
+  1. click_element("<visible label or selector text>") to focus the input.
+  2. type_text("${value.slice(0, 40)}") via trusted keyboard events.
+Or for React/CodeMirror/contenteditable that ignores synthetic events, drop into execute_script with the React-aware native value-setter (see CLAUDE.md \u2192 React Select recipes).`;
+          return { content: [{ type: "text", text: `Failed to set "${selector}": ${r2.message ?? "unknown"}${workaround}` }] };
+        }
+        return { content: [{ type: "text", text: r2.message ?? `Set "${selector}"` }] };
       }
       const response = await bridge.request({ type: "fill_input", textHint, value, nth, exact });
       if (response.type !== "fill_response") throw new Error("Unexpected response");
       const r = response;
+      if (!r.success) {
+        const workaround = `
+
+Workaround when textHint-mode keeps failing:
+  1. find_input("${textHint}") to confirm the field exists and see its exact label.
+  2. click_element("${textHint}") to focus it, then type_text("${value.slice(0, 40)}").
+Or pass selector="<css>" instead of textHint to bypass fuzzy matching entirely.`;
+        return { content: [{ type: "text", text: `Could not fill "${textHint}": ${r.message}${workaround}` }] };
+      }
       return {
-        content: [{ type: "text", text: r.success ? `Filled "${textHint}": ${r.message}` : `Could not fill "${textHint}": ${r.message}` }]
+        content: [{ type: "text", text: `Filled "${textHint}": ${r.message}` }]
       };
     }
   );
@@ -25321,22 +25390,51 @@ Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is r
       body: external_exports.string().optional().describe("Request body for POST/PUT/PATCH/DELETE (ignored for GET/HEAD). Pass JSON as a string."),
       binary: external_exports.boolean().optional().describe("If true, return body as base64 (body_base64). Use for PDFs, images, zips. Default false (UTF-8 text in body_text)."),
       timeout_ms: external_exports.number().int().min(1e3).optional().describe("Abort the request after this many ms (default 30000)."),
-      max_bytes: external_exports.number().int().min(1).optional().describe("Truncate body at this many bytes (default 2000000 \u2248 2MB). The response reports truncated:true and total_bytes for paginating.")
+      max_bytes: external_exports.number().int().min(1).optional().describe("Truncate body at this many bytes (default 100000 \u2248 25K tokens, the MCP transport ceiling). Bumped down from 2MB in 0.9.4 because larger responses overflow the agent's context. For larger payloads, set `to_file` to write to disk instead."),
+      to_file: external_exports.string().optional().describe("Absolute path on disk under the agent's working directory. When set, the FULL response body is written to this path (no max_bytes truncation) and the response carries only {path, size, content_type, status, headers}. Parent directories are created if missing. Use this for anything you'd otherwise have to paginate through max_bytes.")
     },
-    async ({ url, method, headers, body, binary, timeout_ms, max_bytes }) => {
+    async ({ url, method, headers, body, binary, timeout_ms, max_bytes, to_file }) => {
+      const effectiveMaxBytes = to_file ? Number.MAX_SAFE_INTEGER : max_bytes ?? 1e5;
+      const effectiveBinary = to_file ? true : binary;
+      const wsTimeout = to_file ? Math.max(12e4, (timeout_ms ?? 3e4) + 3e4) : Math.max(3e4, (timeout_ms ?? 3e4) + 5e3);
       const response = await bridge.request({
         type: "fetch_url",
         url,
         method,
         headers,
         body,
-        binary,
+        binary: effectiveBinary,
         timeout_ms,
-        max_bytes
-      });
+        max_bytes: effectiveMaxBytes
+      }, wsTimeout);
       if (response.type !== "fetch_url_response") throw new Error(`Unexpected response: ${response.type}`);
       const r = response;
-      const header = `HTTP ${r.status} ${r.status_text} \u2014 ${r.content_type || "no content-type"} \u2014 ${r.total_bytes} bytes${r.truncated ? ` (truncated to ${max_bytes ?? 2e6})` : ""}`;
+      if (to_file) {
+        const cwd = process.cwd();
+        const resolved = isAbsolute(to_file) ? to_file : resolve(cwd, to_file);
+        const rel = relative(cwd, resolved);
+        if (rel.startsWith("..") || isAbsolute(rel)) {
+          throw new Error(
+            `Refusing to write fetch_url body outside the project directory. Target "${resolved}" is not under "${cwd}".`
+          );
+        }
+        mkdirSync(dirname(resolved), { recursive: true });
+        const buf = r.body_base64 ? Buffer.from(r.body_base64, "base64") : Buffer.from(r.body_text ?? "", "utf-8");
+        writeFileSync2(resolved, buf);
+        const hdrLines = Object.keys(r.headers).sort().map((k) => `  ${k}: ${r.headers[k]}`).join("\n");
+        return {
+          content: [{
+            type: "text",
+            text: `HTTP ${r.status} ${r.status_text} \u2014 ${r.content_type || "no content-type"} \u2014 ${r.total_bytes} bytes
+Written to: ${resolved}
+Size on disk: ${buf.byteLength}
+
+Headers:
+${hdrLines}`
+          }]
+        };
+      }
+      const header = `HTTP ${r.status} ${r.status_text} \u2014 ${r.content_type || "no content-type"} \u2014 ${r.total_bytes} bytes${r.truncated ? ` (truncated to ${max_bytes ?? 1e5}; set to_file=<path> to capture the full ${r.total_bytes} bytes)` : ""}`;
       const bodyPart = r.body_base64 ? `
 
 [base64, ${r.body_base64.length} chars]
@@ -25358,24 +25456,30 @@ function registerFlowTools(server, bridge) {
 - until_selector \u2014 CSS selector that should appear after the click
 - until_url_contains \u2014 substring that should appear in the URL
 - until_text_contains \u2014 substring that should appear in page text
+- expect_submit \u2014 broad anti-bot detector for form submissions (toast, alert, modal, URL change, form removal). See note below.
 
-Returns {success, message, before_url, after_url, navigated}. \`navigated\` is true when the post-click URL differs from the pre-click URL \u2014 surfaces silent redirects without a second list_tabs call. Refuses to click 0\xD70 elements. Use \`nth\` (1-based) when multiple elements share the same label.`,
+Returns {success, message, before_url, after_url, navigated}. \`navigated\` is true when the post-click URL differs from the pre-click URL \u2014 surfaces silent redirects without a second list_tabs call. Refuses to click 0\xD70 elements and now ranks visible candidates above hidden when text/aria match; when forced to refuse a hidden element it surfaces the next visible candidate in the error message.
+
+Shadow DOM (open AND closed) is pierced by default via chrome.dom.openOrClosedShadowRoot \u2014 Reddit faceplate-* / r-post-form-submit-button / web-component-heavy SPAs no longer need manual deepFind recipes.
+
+ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit, X / Twitter, GitHub device-code, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry \u2014 pre-fill the form, then highlight the submit button and call wait_for_click so a real human gesture fires the submission.`,
     {
       textHint: external_exports.string().describe(
         "The visible label of the button or link (e.g. 'Save product', 'Continue', 'Add a product', 'Create')"
       ),
-      nth: external_exports.number().int().min(1).optional().describe("Which match to click when multiple elements share the same label (1 = first/topmost, default 1)"),
+      nth: external_exports.number().int().min(1).optional().describe("Which match to click when multiple elements share the same label (1 = first/topmost, default 1). Visible candidates are ranked above hidden, so a hidden flair-dropdown won't claim nth=1 over the visible submit button."),
       until_selector: external_exports.string().optional().describe('Wait until this CSS selector appears on the page after the click (e.g. ".success-toast"). Returns success=false if it does not appear within until_timeout_ms.'),
       until_url_contains: external_exports.string().optional().describe('Wait until the URL contains this substring after the click (e.g. "/checkout/complete"). Returns success=false if it does not.'),
       until_text_contains: external_exports.string().optional().describe('Wait until the visible page text contains this substring after the click (e.g. "Listing published"). Returns success=false if it does not.'),
-      until_timeout_ms: external_exports.number().int().min(500).optional().describe("How long to wait for the until-condition, in milliseconds (default 5000). Only used if one of until_* is set.")
+      until_timeout_ms: external_exports.number().int().min(500).optional().describe("How long to wait for the until-condition, in milliseconds (default 5000). Only used if one of until_* is set."),
+      expect_submit: external_exports.boolean().optional().describe(`Broad anti-bot detector. After the click, watch up to 4s for ANY of: URL change, [role=alert] / [data-sonner-toast] / .toast / .notification / aria-live appearance, [role=dialog] / [aria-modal=true] appearance. Returns success=false with "submit silently rejected (likely anti-bot)" when no signal fires. Use on form submits when the until_* destination isn't known. Ignored when any until_* is set (those are more specific).`)
     },
-    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms }) => {
+    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms, expect_submit }) => {
       const wsTimeout = Math.max(3e4, (until_timeout_ms ?? 0) + 1e4);
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms },
+          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms, expect_submit },
           wsTimeout
         );
       } catch (err) {
@@ -25428,18 +25532,21 @@ If the click causes page navigation, this resolves when the new page finishes lo
         type: "start_click_watch",
         timeout: timeout * 1e3
       });
-      if (response.type === "navigation_complete") {
+      const r = response;
+      const targetLine = r.target ? `
+Clicked element: <${r.target.tag}>${r.target.text ? ` "${r.target.text}"` : ""} at (${r.target.x}, ${r.target.y}) \u2014 selector: ${r.target.selector}` : "";
+      if (r.type === "navigation_complete") {
         return {
           content: [
             {
               type: "text",
-              text: `User clicked. Page navigated to: ${response.url}`
+              text: `User clicked. Page navigated to: ${r.url ?? "(unknown)"}${targetLine}`
             }
           ]
         };
       }
       return {
-        content: [{ type: "text", text: "User clicked the highlighted element." }]
+        content: [{ type: "text", text: `User clicked the highlighted element.${targetLine}` }]
       };
     }
   );
@@ -25456,10 +25563,11 @@ If the click causes page navigation, this resolves when the new page finishes lo
       scope_selector: external_exports.string().optional().describe("Text mode: limit search to this CSS selector's subtree."),
       regex: external_exports.boolean().optional().describe("Text mode: interpret query as a case-insensitive regex."),
       frame: external_exports.string().optional().describe("Same-origin iframe CSS selector to wait inside (text mode)."),
-      settle_ms: external_exports.number().int().optional().describe("change_in mode: ms to wait after the first mutation for batching (default 150).")
+      settle_ms: external_exports.number().int().optional().describe("change_in mode: ms to wait after the first mutation for batching (default 150)."),
+      max_chars: external_exports.number().int().min(50).optional().describe("change_in mode: cap the returned text content (default 1000). Chat-style mutations can dump huge text; agents that need more should opt in explicitly.")
     },
     async (args) => {
-      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, settle_ms } = args;
+      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, settle_ms, max_chars } = args;
       const set = [selector, text, change_in].filter((v) => v !== void 0 && v !== null && v !== "").length;
       if (set !== 1) {
         return { content: [{ type: "text", text: "wait_for: pass exactly one of selector, text, or change_in." }] };
@@ -25491,7 +25599,9 @@ context: ${r2.context}` }] };
       );
       const r = response;
       if (!r.ok) return { content: [{ type: "text", text: r.message ?? `wait_for change_in timed out on "${change_in}"` }] };
-      const preview = (r.text ?? "").slice(0, 5e3);
+      const fullText = r.text ?? "";
+      const cap = max_chars ?? 1e3;
+      const preview = fullText.length > cap ? `${fullText.slice(0, cap)}... [truncated, ${fullText.length} chars total \u2014 pass max_chars to see more]` : fullText;
       return { content: [{ type: "text", text: `Element "${change_in}" changed.
 
 ${preview}` }] };
@@ -25636,7 +25746,7 @@ ${lines.join("\n")}` }] };
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.9.4" : "dev";
+var PACKAGE_VERSION = true ? "0.9.5" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

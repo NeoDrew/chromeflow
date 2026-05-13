@@ -17,17 +17,32 @@ import { markerIds } from "../markers.js";
 export function prepareClickTarget(
   textHint: string,
   nth?: number
-): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean } {
+): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean; nextCandidate?: string } {
   // Clear any stale tags from a previous click
   document.querySelectorAll(`[${markerIds.clickTargetAttr()}]`).forEach((el) => el.removeAttribute(markerIds.clickTargetAttr()));
   document.querySelectorAll(`[${markerIds.preCheckedAttr()}]`).forEach((el) => el.removeAttribute(markerIds.preCheckedAttr()));
 
   const lower = textHint.toLowerCase().trim();
-  const el = findClickable(lower, nth);
+  const matches = findClickableAll(lower);
+  // Merged list: visible first, hidden last. nth=N picks the Nth across the
+  // merged list — so if a flair-dropdown's hidden "Post this video as a GIF"
+  // was previously match #1, the visible "Post" button now wins #1 instead.
+  const merged = [...matches.visible, ...matches.hidden];
+  const idx = (nth && nth >= 1 ? nth : 1) - 1;
+  const el = merged[idx];
 
   if (!el) {
     return { success: false, message: `No clickable element found for "${textHint}"` };
   }
+
+  // If the resolved target is in the hidden bucket BUT there's a visible
+  // alternative, surface it in nextCandidate so the caller can suggest a
+  // retry. The 0×0/hidden refusal at the background-script level uses this
+  // to give an actionable error message.
+  const isHidden = !matches.visible.includes(el);
+  const nextCandidate = isHidden && matches.visible[0]
+    ? describeCandidate(matches.visible[0], textHint)
+    : undefined;
 
   const checkable = resolveCheckableInput(el);
 
@@ -62,7 +77,23 @@ export function prepareClickTarget(
     el.getAttribute("aria-label") ||
     textHint;
 
-  return { success: true, message: `Target prepared: "${label}"`, x, y, width: rect.width, height: rect.height, label };
+  return { success: true, message: `Target prepared: "${label}"`, x, y, width: rect.width, height: rect.height, label, nextCandidate };
+}
+
+/**
+ * Produce a one-line description of an alternative match — used in error
+ * messages when the matcher had to fall back to a 0×0/hidden candidate but a
+ * visible peer existed. Format: `"Save" button at (1180, 740, 54×40)`.
+ */
+function describeCandidate(el: Element, hint: string): string {
+  const rect = el.getBoundingClientRect();
+  const tag = el.tagName.toLowerCase();
+  const text =
+    ((el as HTMLElement).innerText || el.textContent || el.getAttribute("aria-label") || hint)
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 40);
+  return `"${text}" ${tag} at (${Math.round(rect.left)}, ${Math.round(rect.top)}, ${Math.round(rect.width)}×${Math.round(rect.height)})`;
 }
 
 /**
@@ -270,62 +301,110 @@ function scrollSmartIntoView(el: Element) {
   }
 }
 
-function findClickable(lower: string, nth: number = 1): Element | null {
+/**
+ * Collect every candidate matching `lower`, then split into visible and
+ * hidden buckets. The caller prefers visible — a hidden element (display:none,
+ * [hidden] attr, 0×0 dimensions, aria-hidden) only wins if no visible peer
+ * has the same text-strength.
+ *
+ * Without this split, an exact-text match on a hidden flair-dropdown item
+ * outranks a partial-text match on the actually-visible submit button on
+ * Reddit's new submit page.
+ */
+function findClickableAll(lower: string): { visible: Element[]; hidden: Element[] } {
   const interactiveSelectors =
     'button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], input[type="submit"], input[type="button"], label, [onclick], [tabindex]';
 
   const candidates = queryAllDeep(document, interactiveSelectors);
+  const ranked: Element[] = [];
 
-  // Collect all usable matches in priority order, then pick the nth
-  const allMatches: Element[] = [];
+  function addIfNew(el: Element) {
+    if (!ranked.includes(el)) ranked.push(el);
+  }
 
   // Exact text matches
   candidates.forEach((el) => {
-    if (isUsable(el) && el.textContent?.toLowerCase().trim() === lower) allMatches.push(el);
+    if (el.textContent?.toLowerCase().trim() === lower) addIfNew(el);
   });
 
   // Partial text matches (sorted shortest first for specificity), deduplicated
   const partials = candidates
-    .filter((el) => isUsable(el) && !allMatches.includes(el) && el.textContent?.toLowerCase().includes(lower))
+    .filter((el) => !ranked.includes(el) && el.textContent?.toLowerCase().includes(lower))
     .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0));
-  allMatches.push(...partials);
+  partials.forEach(addIfNew);
 
   // aria-label matches
   queryAllDeep(document, "[aria-label]").forEach((el) => {
-    if (isUsable(el) && !allMatches.includes(el) && el.getAttribute("aria-label")?.toLowerCase().includes(lower))
-      allMatches.push(el);
+    if (el.getAttribute("aria-label")?.toLowerCase().includes(lower)) addIfNew(el);
   });
 
   // value attribute (input[type=submit], input[type=button])
   queryAllDeep<HTMLInputElement>(document, "input[type=submit], input[type=button]").forEach((el) => {
-    if (isUsable(el) && !allMatches.includes(el) && el.value.toLowerCase().includes(lower))
-      allMatches.push(el);
+    if (el.value.toLowerCase().includes(lower)) addIfNew(el);
   });
 
   // title / data-testid
   queryAllDeep(document, "[title], [data-testid]").forEach((el) => {
     const v = el.getAttribute("title") ?? el.getAttribute("data-testid") ?? "";
-    if (isUsable(el) && !allMatches.includes(el) && v.toLowerCase().includes(lower))
-      allMatches.push(el);
+    if (v.toLowerCase().includes(lower)) addIfNew(el);
   });
 
-  if (allMatches.length === 0) return null;
-
-  const target = allMatches[nth - 1] ?? allMatches[allMatches.length - 1];
-  return target;
+  const visible: Element[] = [];
+  const hidden: Element[] = [];
+  for (const el of ranked) {
+    if (isVisibleAndUsable(el)) visible.push(el);
+    else hidden.push(el);
+  }
+  return { visible, hidden };
 }
 
 /**
- * Returns true if the element is rendered (not display:none / visibility:hidden).
- * Deliberately does NOT require the element to be inside the viewport — elements
- * below the fold (e.g. Save buttons in a drawer) are still usable.
+ * Compatibility shim for the synthetic-click path. Returns the nth match
+ * preferring visible candidates first, falling back to hidden if none
+ * visible are available.
  */
-function isUsable(el: Element): boolean {
-  const style = getComputedStyle(el);
-  if (style.display === "none") return false;
-  if (style.visibility === "hidden") return false;
-  if (style.opacity === "0") return false;
+function findClickable(lower: string, nth: number = 1): Element | null {
+  const { visible, hidden } = findClickableAll(lower);
+  const merged = [...visible, ...hidden];
+  if (merged.length === 0) return null;
+  return merged[nth - 1] ?? merged[merged.length - 1];
+}
+
+/**
+ * Returns true if the element is actually rendered to the user:
+ * - element AND all ancestors must not have [hidden], display:none,
+ *   visibility:hidden, or opacity:0
+ * - element must have non-zero bounding rect OR non-zero offsetWidth/Height
+ * - aria-hidden=true on element or any ancestor disqualifies
+ *
+ * This is stricter than the old `isUsable` (which only checked the element's
+ * own computed style and missed [hidden], ancestor display:none, and 0×0).
+ * Without the ancestor walk, a hidden flair-dropdown item passed `isUsable`
+ * and got picked over the actually-visible submit button on Reddit.
+ */
+function isVisibleAndUsable(el: Element): boolean {
+  // Walk ancestors for the obvious DOM-attribute and computed-style killers.
+  for (let cur: Element | null = el; cur && cur !== document.documentElement; cur = cur.parentElement) {
+    if (cur.hasAttribute("hidden")) return false;
+    if (cur.getAttribute("aria-hidden") === "true") return false;
+    const cs = getComputedStyle(cur);
+    if (cs.display === "none") return false;
+    if (cs.visibility === "hidden") return false;
+    if (cs.opacity === "0") return false;
+  }
   if ((el as HTMLButtonElement).disabled) return false;
+  // 0×0 dimensions: triple-check (bounding-rect, offset, getClientRects). An
+  // element clipped by an overflow:hidden scroll container still reports
+  // non-zero offsetWidth/Height, so clipped-but-clickable elements pass.
+  const rect = el.getBoundingClientRect();
+  const htmlEl = el as HTMLElement;
+  if (
+    rect.width === 0 && rect.height === 0 &&
+    !htmlEl.offsetWidth && !htmlEl.offsetHeight &&
+    el.getClientRects().length === 0
+  ) {
+    return false;
+  }
   return true;
 }
 
