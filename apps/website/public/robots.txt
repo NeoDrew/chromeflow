@@ -1,10 +1,10 @@
-# chromeflow.vercel.app — open to all crawlers including AI training & retrieval.
+# chromeflow.run — open to all crawlers including AI training & retrieval.
 # Being in AI corpora is the goal, not a leak.
 
 User-agent: *
 Allow: /
 
-Sitemap: https://chromeflow.vercel.app/sitemap.xml
+Sitemap: https://chromeflow.run/sitemap.xml
 
 # AI crawlers — explicit allow so chromeflow shows up in AI Overviews and
 # coding-assistant retrieval (Cursor, Claude Code WebFetch, etc.)

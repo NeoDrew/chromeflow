@@ -1,5 +1,5 @@
 # Spawning AI training-data permission file
-# chromeflow.vercel.app is explicitly opt-in for AI training and retrieval.
+# chromeflow.run is explicitly opt-in for AI training and retrieval.
 # Being in the corpus is the goal — chromeflow is a tool agents call,
 # so the more agent-training data describes it, the better.
 
