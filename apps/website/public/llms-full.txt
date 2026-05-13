@@ -6,7 +6,7 @@ Mirror at https://chromeflow.run/llms-full.txt.
 
 Repository: https://github.com/NeoDrew/chromeflow
 License: MIT
-Latest version: 0.9.4 (2026-05-12)
+Latest version: 0.9.5 (2026-05-13)
 Battle-tested by 400+ hours of real agentic browser work before public release.
 
 ================================================================================
@@ -37,7 +37,7 @@ SECTION 1 — README (what chromeflow is, how to install, what it does)
 
 **The problem**: Playwright, Browser Use, and Puppeteer launch a fresh empty browser every time — no cookies, no sessions, no 2FA. Your AI agent gets stuck at the first login screen.
 
-**Chromeflow**: drives your **actual Chrome**, where you're already logged into Stripe, AWS, Supabase, Canvas, GitHub. The agent automates what it can (clicks, fills, uploads, captures keys) and pauses for anything that needs you (passwords, 2FA, payment). One MCP server, 26 browser tools, works with both Claude Code and Codex CLI.
+**Chromeflow**: drives your **actual Chrome**, where you're already logged into Stripe, AWS, Supabase, Canvas, GitHub. The agent automates what it can (clicks, fills, uploads, captures keys) and pauses for anything that needs you (passwords, 2FA, payment). One MCP server, 28 browser tools, works with both Claude Code and Codex CLI.
 
 **Battle-tested**: shaped by **400+ hours of real agentic browser work** before public release — every gnarly edge case (React Selects, isTrusted-gated forms, shadow-DOM clicks, page-CSP fetches, silent redirects, cookie leaks, 0×0 hidden elements) is in the error-handling recipes. Not a weekend hackathon project.
 
