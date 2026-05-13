@@ -1,0 +1,194 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Chromeflow vs Puppeteer — when the CDP library still wins, and when it doesn't</title>
+<meta name="description" content="Chromeflow vs Puppeteer for AI agent browser automation. Real-Chrome agent plugin (Chromeflow) vs the original Chrome DevTools Protocol library (Puppeteer). Headless rendering, server-side scripting, MCP integration, session inheritance, 2FA, credential capture, and the cases where each tool wins." />
+<meta name="keywords" content="chromeflow vs puppeteer, puppeteer alternative for AI agents, puppeteer real Chrome session, puppeteer Claude Code, puppeteer MCP, puppeteer 2FA, server-side puppeteer agent" />
+<meta name="theme-color" content="#e85d2c" />
+<link rel="canonical" href="https://chromeflow.run/compare/puppeteer" />
+<link rel="icon" type="image/x-icon" href="/chromeflow.ico" />
+<link rel="apple-touch-icon" href="/chromeflow.png" />
+
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Chromeflow" />
+<meta property="og:title" content="Chromeflow vs Puppeteer" />
+<meta property="og:description" content="The original Chrome DevTools Protocol library vs the real-Chrome MCP plugin — where each one's strengths actually land." />
+<meta property="og:url" content="https://chromeflow.run/compare/puppeteer" />
+<meta property="og:image" content="https://chromeflow.run/og-image.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Chromeflow vs Puppeteer" />
+<meta name="twitter:description" content="Headless library vs real-Chrome agent — the honest comparison for AI workflows that need a logged-in browser." />
+<meta name="twitter:image" content="https://chromeflow.run/og-image.png" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Chromeflow vs Puppeteer",
+  "description": "Side-by-side comparison of Chromeflow (real-Chrome MCP plugin) and Puppeteer (CDP library). Headless rendering, server-side use, agent integration, session inheritance, credential capture.",
+  "url": "https://chromeflow.run/compare/puppeteer",
+  "datePublished": "2026-05-13",
+  "author": {"@type": "Person", "name": "Andrew Robertson", "url": "https://github.com/NeoDrew"},
+  "publisher": {"@type": "Organization", "name": "Chromeflow", "url": "https://chromeflow.run"},
+  "image": "https://chromeflow.run/og-image.png",
+  "about": [
+    {"@type": "SoftwareApplication", "name": "Chromeflow", "applicationCategory": "DeveloperApplication"},
+    {"@type": "SoftwareApplication", "name": "Puppeteer", "applicationCategory": "DeveloperApplication"}
+  ]
+}
+</script>
+
+<style>
+  :root {
+    --bg: #f9f8f4;
+    --surface: #ffffff;
+    --text: #1c1a16;
+    --muted: #78706a;
+    --amber: #d97706;
+    --orange: #e85d2c;
+    --green: #16a05a;
+    --red: #c94020;
+    --border: rgba(28,26,22,0.09);
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; line-height: 1.6; }
+  header { padding: 32px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  header .wrap { max-width: 960px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  header img { width: 56px; height: 56px; border-radius: 12px; }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: -0.01em; }
+  header a { color: var(--orange); text-decoration: none; }
+  header .nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 24px 96px; }
+  main > h2 { font-size: 38px; letter-spacing: -0.02em; margin: 0 0 8px; line-height: 1.15; }
+  main > p.lead { font-size: 18px; color: var(--muted); margin: 0 0 32px; max-width: 720px; }
+  .breadcrumb { font-size: 14px; color: var(--muted); margin: 0 0 24px; }
+  .breadcrumb a { color: var(--orange); text-decoration: none; }
+  .quick-take { margin: 0 0 40px; padding: 20px 24px; background: rgba(232,93,44,0.06); border: 1px solid rgba(232,93,44,0.2); border-left: 4px solid var(--orange); border-radius: 12px; }
+  .quick-take strong { color: #c14a1f; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); margin: 24px 0 40px; }
+  th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: top; }
+  th { background: rgba(28,26,22,0.03); font-weight: 600; }
+  th:first-child { width: 36%; }
+  tr:last-child td { border-bottom: 0; }
+  .yes { color: var(--green); font-weight: 600; }
+  .no { color: var(--red); font-weight: 600; }
+  .partial { color: var(--amber); font-weight: 600; }
+  h3 { margin: 36px 0 12px; font-size: 22px; letter-spacing: -0.01em; }
+  h3.tool { color: #c14a1f; }
+  p, ul { color: #2a2620; }
+  code { background: rgba(232,93,44,0.08); color: #c14a1f; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  .related { margin-top: 48px; padding: 20px 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .related h4 { margin: 0 0 12px; font-size: 16px; }
+  .related ul { margin: 0; padding-left: 20px; }
+  .related a { color: var(--orange); text-decoration: none; }
+  footer { max-width: 960px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer a { color: var(--orange); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/"><img src="/chromeflow.png" alt="Chromeflow" /></a>
+    <h1><a href="/">Chromeflow</a></h1>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">Compare</a>
+      <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<p class="breadcrumb"><a href="/">Home</a> · <a href="/compare">Compare</a> · Chromeflow vs Puppeteer</p>
+
+<h2>Chromeflow vs Puppeteer</h2>
+<p class="lead">Puppeteer is the original Chrome DevTools Protocol library — light, stable, used everywhere from server-side PDF rendering to web scraping. It's also a non-starter for AI agents that need a logged-in browser.</p>
+
+<div class="quick-take">
+  <strong>TL;DR:</strong> Puppeteer is the smallest, fastest, most stable way to drive Chrome from a Node script. For headless rendering, PDF generation, screenshot pipelines, and scraping public content at scale — it's still the right answer. But like Playwright, it spawns a <strong>fresh browser instance</strong> with no inherited sessions, and it offers nothing specific to AI-agent workflows. If your agent's job is "drive my logged-in Chrome to do a thing", Chromeflow is the only one that runs in your actual browser with your actual sessions.
+</div>
+
+<h3>Capability matrix</h3>
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>Chromeflow</th>
+  <th>Puppeteer</th>
+</tr>
+</thead>
+<tbody>
+<tr><th>Runs in your real Chrome with sessions intact</th><td class="yes">Yes</td><td class="no">No — fresh profile</td></tr>
+<tr><th>Inherits your existing logins (Stripe, GitHub, Canvas, AWS…)</th><td class="yes">Yes</td><td class="no">No — re-login every run</td></tr>
+<tr><th>Handles 2FA / passkeys</th><td class="yes">Yes — pauses for you</td><td class="no">No</td></tr>
+<tr><th>One-command install as an MCP plugin</th><td class="yes"><code>/plugin install chromeflow</code></td><td class="no">Library — wire your own MCP server</td></tr>
+<tr><th>Native integration with Claude Code & Codex CLI</th><td class="yes">Yes (28 MCP tools)</td><td class="partial">DIY — wrap with custom MCP server</td></tr>
+<tr><th>Captures API keys → <code>.env</code></th><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><th>Privileged fetch (Chrome cookies, bypasses page CSP)</th><td class="yes">Yes</td><td class="partial">CDP route exists, no built-in tool</td></tr>
+<tr><th>Authenticated file downloads</th><td class="yes">One call</td><td class="partial">DIY via CDP <code>Page.downloadProgress</code></td></tr>
+<tr><th>Headless mode for server-side work</th><td class="no">Headed only (it's your Chrome)</td><td class="yes">Yes — primary mode</td></tr>
+<tr><th>Server-side PDF generation</th><td class="no">No</td><td class="yes">Yes — battle-tested</td></tr>
+<tr><th>Resource cost per run</th><td class="yes">Zero new processes</td><td class="partial">Spawns a Chrome instance</td></tr>
+<tr><th>Cross-browser (Chromium / Firefox / WebKit)</th><td class="no">Chromium only</td><td class="partial">Chromium primary, experimental Firefox</td></tr>
+<tr><th>License & cost</th><td class="yes">Free, MIT</td><td class="yes">Free, Apache 2.0</td></tr>
+</tbody>
+</table>
+
+<h3 class="tool">Where Puppeteer still wins</h3>
+<p><strong>Server-side PDF rendering.</strong> The single biggest use case for Puppeteer in production. Spin up a Node service, point Puppeteer at any HTML, get a polished PDF out — receipts, reports, invoices, certificates. Nothing else competes for this on cost-per-page or render quality. Chromeflow is the wrong tool here entirely; this is a server-side, headless, no-human workflow.</p>
+<p><strong>Headless screenshot pipelines.</strong> Capturing OG-card previews, social-card snapshots, or any "render this URL and give me a PNG" pipeline. Puppeteer's <code>page.screenshot()</code> with viewport overrides is the gold standard. Pair it with an image-optimization pipeline and you have a service that powers social previews for an entire SaaS.</p>
+<p><strong>Public-content scraping at scale.</strong> Puppeteer's resource model (spawn-pool-recycle) and concurrency story makes it well-suited for scraping pipelines that pull from many public pages. No login = no session-sharing benefit from Chromeflow.</p>
+<p><strong>Browser automation as a library inside a larger codebase.</strong> Puppeteer is one <code>npm install</code> away. If you're writing a CLI tool, a CI step, or an internal automation that needs Chrome — Puppeteer is the right primitive.</p>
+
+<h3 class="tool">Where Chromeflow wins</h3>
+<p><strong>Agentic workflows behind a login.</strong> The whole point. Puppeteer launches a fresh browser; your agent has to script logins from scratch and there's no path past 2FA. Chromeflow runs in <em>your</em> Chrome where every session you've spent the last year setting up is already there. The agent doesn't need to know your Stripe password — it just opens the dashboard you're already in.</p>
+<p><strong>Native MCP integration.</strong> Chromeflow is a one-command install as a plugin for Claude Code or Codex CLI. With Puppeteer you'd build the MCP server yourself: define schemas for 28 tools, wire WebSocket transport, manage Chrome process lifecycle, handle errors, write the skill that teaches the agent how to use it. Days of work that's already done in Chromeflow.</p>
+<p><strong>Credential capture, attachment parsing, privileged fetch.</strong> <code>write_to_env</code> writes captured keys to <code>.env</code> in one call. <code>read_attachment</code> parses authenticated docx attachments in-extension (no local <code>libreoffice</code>). <code>fetch_url</code> bypasses page CSP and includes your Chrome cookies. None of these exist in Puppeteer — you'd assemble each one as custom CDP code.</p>
+<p><strong>Visual handoff for human-in-the-loop steps.</strong> When a workflow hits "enter your password" or "approve this 2FA prompt", Chromeflow highlights the field with a callout and pauses with <code>wait_for_click</code>. Puppeteer has nothing for this — agent flows that need a human just hang.</p>
+
+<h3>The decision rule</h3>
+<ul>
+<li><strong>Server-side, headless, no human in the loop, no inherited session needed</strong> → Puppeteer.</li>
+<li><strong>Interactive, agent-driven, behind a login, needs visual feedback or human handoff</strong> → Chromeflow.</li>
+<li><strong>Mixed:</strong> Chromeflow during the interactive setup phase (capture API keys, configure dashboards, download attachments) → Puppeteer in CI for headless verification.</li>
+</ul>
+
+<h3>"Puppeteer with <code>--remote-debugging-port</code>"</h3>
+<p>The closest Puppeteer equivalent to Chromeflow's real-Chrome model is <code>puppeteer.connect({ browserURL: 'http://127.0.0.1:9222' })</code> attaching to a Chrome you launched with <code>--remote-debugging-port=9222</code>. Same caveats as with Playwright: you can't attach to a Chrome you opened normally (must launch with the flag from the command line), the agent has no native visual handoff, no <code>write_to_env</code>, no MCP integration, and DevTools-open + CDP-connected gets unstable on newer Chrome versions. A workaround for one scenario, not a competitive replacement.</p>
+
+<h3>Performance notes</h3>
+<ul>
+<li><strong>Cold-start cost:</strong> Puppeteer spawns Chrome (~500–800 ms). Chromeflow uses the Chrome already running on your machine (zero cold start, zero new processes).</li>
+<li><strong>Memory:</strong> Puppeteer's Chrome instance is ~150–300 MB resident. Chromeflow adds zero memory beyond what your Chrome is already using.</li>
+<li><strong>Throughput:</strong> Puppeteer wins at horizontal scale (spawn 10 Chrome workers for parallel scraping). Chromeflow wins at "agent does one careful authenticated task end-to-end".</li>
+</ul>
+
+<div class="related">
+  <h4>Related comparisons</h4>
+  <ul>
+    <li><a href="/compare/playwright">Chromeflow vs Playwright</a> — the Microsoft testing-framework angle</li>
+    <li><a href="/compare/browser-use">Chromeflow vs Browser Use</a> — DOM vs vision-model agents</li>
+    <li><a href="/compare">Full four-way comparison</a></li>
+    <li><a href="/faq">Chromeflow FAQ</a></li>
+  </ul>
+</div>
+
+<p style="margin-top: 40px;"><a href="/compare" style="color: var(--orange); text-decoration: none; font-weight: 600;">← Back to all comparisons</a></p>
+
+</main>
+
+<footer>
+  <div>© 2026 Andrew Robertson · MIT licensed</div>
+  <div>
+    <a href="/">Home</a> · <a href="/faq">FAQ</a> · <a href="/compare">Compare</a> · <a href="https://github.com/NeoDrew/chromeflow">GitHub</a> · <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime">Chrome Web Store</a>
+    </div>
+</footer>
+
+</body>
+</html>

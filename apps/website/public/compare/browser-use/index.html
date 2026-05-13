@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Chromeflow vs Browser Use — DOM queries vs vision-model agents</title>
+<meta name="description" content="Chromeflow vs Browser Use for AI browser automation. DOM-query precision (Chromeflow) vs screenshot + vision-model reasoning (Browser Use). Token cost, latency, reliability, real-session inheritance, MCP integration with Claude Code and Codex CLI, and when each approach wins." />
+<meta name="keywords" content="chromeflow vs browser use, browser-use alternative, vision model browser agent, AI agent DOM vs screenshot, browser-use Claude Code, browser-use MCP, browser-use token cost, browser-use real session" />
+<meta name="theme-color" content="#e85d2c" />
+<link rel="canonical" href="https://chromeflow.run/compare/browser-use" />
+<link rel="icon" type="image/x-icon" href="/chromeflow.ico" />
+<link rel="apple-touch-icon" href="/chromeflow.png" />
+
+<meta property="og:type" content="article" />
+<meta property="og:site_name" content="Chromeflow" />
+<meta property="og:title" content="Chromeflow vs Browser Use" />
+<meta property="og:description" content="DOM-query precision vs vision-model reasoning — the token cost, latency, and reliability trade-offs nobody benchmarks honestly." />
+<meta property="og:url" content="https://chromeflow.run/compare/browser-use" />
+<meta property="og:image" content="https://chromeflow.run/og-image.png" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Chromeflow vs Browser Use" />
+<meta name="twitter:description" content="DOM queries vs vision-model — the honest comparison agent engineers needed before they paid the screenshot tax." />
+<meta name="twitter:image" content="https://chromeflow.run/og-image.png" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Article",
+  "headline": "Chromeflow vs Browser Use",
+  "description": "Side-by-side comparison of Chromeflow (DOM-query, MCP plugin) and Browser Use (vision-model, standalone agent). Token cost, latency, reliability, real-session inheritance.",
+  "url": "https://chromeflow.run/compare/browser-use",
+  "datePublished": "2026-05-13",
+  "author": {"@type": "Person", "name": "Andrew Robertson", "url": "https://github.com/NeoDrew"},
+  "publisher": {"@type": "Organization", "name": "Chromeflow", "url": "https://chromeflow.run"},
+  "image": "https://chromeflow.run/og-image.png",
+  "about": [
+    {"@type": "SoftwareApplication", "name": "Chromeflow", "applicationCategory": "DeveloperApplication"},
+    {"@type": "SoftwareApplication", "name": "Browser Use", "applicationCategory": "DeveloperApplication"}
+  ]
+}
+</script>
+
+<style>
+  :root {
+    --bg: #f9f8f4;
+    --surface: #ffffff;
+    --text: #1c1a16;
+    --muted: #78706a;
+    --amber: #d97706;
+    --orange: #e85d2c;
+    --green: #16a05a;
+    --red: #c94020;
+    --border: rgba(28,26,22,0.09);
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.06);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; line-height: 1.6; }
+  header { padding: 32px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  header .wrap { max-width: 960px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  header img { width: 56px; height: 56px; border-radius: 12px; }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: -0.01em; }
+  header a { color: var(--orange); text-decoration: none; }
+  header .nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 24px 96px; }
+  main > h2 { font-size: 38px; letter-spacing: -0.02em; margin: 0 0 8px; line-height: 1.15; }
+  main > p.lead { font-size: 18px; color: var(--muted); margin: 0 0 32px; max-width: 720px; }
+  .breadcrumb { font-size: 14px; color: var(--muted); margin: 0 0 24px; }
+  .breadcrumb a { color: var(--orange); text-decoration: none; }
+  .quick-take { margin: 0 0 40px; padding: 20px 24px; background: rgba(232,93,44,0.06); border: 1px solid rgba(232,93,44,0.2); border-left: 4px solid var(--orange); border-radius: 12px; }
+  .quick-take strong { color: #c14a1f; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); margin: 24px 0 40px; }
+  th, td { padding: 14px 16px; text-align: left; border-bottom: 1px solid var(--border); font-size: 14px; vertical-align: top; }
+  th { background: rgba(28,26,22,0.03); font-weight: 600; }
+  th:first-child { width: 36%; }
+  tr:last-child td { border-bottom: 0; }
+  .yes { color: var(--green); font-weight: 600; }
+  .no { color: var(--red); font-weight: 600; }
+  .partial { color: var(--amber); font-weight: 600; }
+  h3 { margin: 36px 0 12px; font-size: 22px; letter-spacing: -0.01em; }
+  h3.tool { color: #c14a1f; }
+  p, ul { color: #2a2620; }
+  code { background: rgba(232,93,44,0.08); color: #c14a1f; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+  .related { margin-top: 48px; padding: 20px 24px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  .related h4 { margin: 0 0 12px; font-size: 16px; }
+  .related ul { margin: 0; padding-left: 20px; }
+  .related a { color: var(--orange); text-decoration: none; }
+  footer { max-width: 960px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer a { color: var(--orange); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/"><img src="/chromeflow.png" alt="Chromeflow" /></a>
+    <h1><a href="/">Chromeflow</a></h1>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/faq">FAQ</a>
+      <a href="/compare">Compare</a>
+      <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<p class="breadcrumb"><a href="/">Home</a> · <a href="/compare">Compare</a> · Chromeflow vs Browser Use</p>
+
+<h2>Chromeflow vs Browser Use</h2>
+<p class="lead">Two different bets about how AI agents should read a webpage. Chromeflow queries the DOM. Browser Use takes a screenshot and asks a vision model. The trade-off shows up in your token bill.</p>
+
+<div class="quick-take">
+  <strong>TL;DR:</strong> Browser Use bets on vision models being smart enough to make sense of any page from a screenshot. Chromeflow bets on the DOM still being the canonical source of truth. For sites with normal-quality DOMs (Stripe, GitHub, Canvas, the vast majority of real services), Chromeflow returns <strong>200–600 chars per tool call</strong> — Browser Use returns tens of thousands plus a vision-model round trip. Across a 50-step workflow that's a <strong>50–100× cost difference</strong>. Pick Browser Use only when the DOM is deliberately obfuscated or you genuinely need to reason about pixel layout. For everything else, DOM queries are faster, cheaper, and more deterministic.
+</div>
+
+<h3>Capability matrix</h3>
+<table>
+<thead>
+<tr>
+  <th></th>
+  <th>Chromeflow</th>
+  <th>Browser Use</th>
+</tr>
+</thead>
+<tbody>
+<tr><th>How it reads the page</th><td class="yes">DOM queries (cheap, deterministic)</td><td class="partial">Screenshot → vision-model reasoning (expensive, probabilistic)</td></tr>
+<tr><th>Per-action token cost</th><td class="yes">~200–600 chars per call</td><td class="no">~10–30K tokens per step (screenshot + vision)</td></tr>
+<tr><th>Per-action latency</th><td class="yes">Chrome render time (~100–300 ms)</td><td class="no">+1–3 s for vision-model round trip</td></tr>
+<tr><th>Determinism / reproducibility</th><td class="yes">DOM queries are stable</td><td class="partial">Vision misreads, page re-layouts shift everything</td></tr>
+<tr><th>Runs in your real Chrome with sessions intact</th><td class="yes">Yes</td><td class="no">No — fresh profile, Playwright under the hood</td></tr>
+<tr><th>Native MCP plugin for Claude Code & Codex CLI</th><td class="yes">Yes (28 tools, one-command install)</td><td class="partial">Standalone agent — runs its own LLM client</td></tr>
+<tr><th>Brings its own LLM</th><td class="no">No — agent's LLM (you choose)</td><td class="yes">Yes (multi-provider)</td></tr>
+<tr><th>Human-in-the-loop for 2FA / payment</th><td class="yes">Yes (highlight + wait_for_click)</td><td class="no">No native pause-for-human</td></tr>
+<tr><th>Captures credentials → <code>.env</code></th><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><th>Privileged fetch (bypasses page CSP, uses Chrome cookies)</th><td class="yes">Yes</td><td class="no">No</td></tr>
+<tr><th>Handles deliberately obfuscated DOMs / heavy anti-bot</th><td class="partial">Falls back to coordinates + <code>execute_script</code></td><td class="yes">Vision reads pixels regardless of DOM</td></tr>
+<tr><th>License & cost</th><td class="yes">Free, MIT</td><td class="yes">Free, MIT</td></tr>
+</tbody>
+</table>
+
+<h3 class="tool">The DOM-vs-vision trade-off</h3>
+<p>Browser Use's pitch is real: vision models are getting good enough that "look at the screen and decide what to click" works on more sites every month. The cost is the cost — every step requires a screenshot (often 0.5–2 MB encoded as base64), shipped to a vision model, which returns a few hundred tokens of reasoning, which the agent then translates to a click coordinate. Even a 20-step workflow can cost more in vision-model tokens than your code-generating LLM cost for the whole session.</p>
+<p>Chromeflow's pitch is the inverse: <strong>the DOM is already a structured representation of the page</strong>. <code>find_text("Save")</code> returns the matched element's selector, surrounding context, and click coordinates in 300 chars. <code>get_form_fields()</code> returns a typed inventory of every input on the page in 1–2 KB. The agent doesn't need to "reason about pixels" because the DOM has already done that work.</p>
+
+<h3 class="tool">Where Browser Use genuinely wins</h3>
+<p><strong>Sites where the DOM is intentionally junked.</strong> Some sites (Cloudflare-protected, heavy anti-bot, deliberately-obfuscated CAPTCHAs, canvas-rendered apps like Figma or Notion's whiteboard mode) produce a DOM that's useless to query — class names are random hashes, structure is intentionally meaningless, content lives in <code>&lt;canvas&gt;</code> elements. Vision models can still read these screenshots. Chromeflow can fall back to coordinates plus <code>execute_script</code>, but Browser Use is more ergonomic for pure-pixel reading.</p>
+<p><strong>Demos and prototypes where the model is the point.</strong> Browser Use is a fantastic showcase for what frontier vision models can do. If you're building a demo to impress someone with "look, the model just reads any website", Browser Use is the right choice.</p>
+
+<h3 class="tool">Where Chromeflow wins</h3>
+<p><strong>Cost-sensitive production workflows.</strong> If a workflow runs daily across a team, the screenshot tax compounds. 50 steps × 30K tokens × 100 runs/month = a substantial monthly bill for vision-model calls that DOM queries handle for ~1/100th the cost. Chromeflow makes long-running agents economically viable.</p>
+<p><strong>Tasks behind a login.</strong> Browser Use launches Playwright under the hood — fresh profile, no inherited sessions, no 2FA story. Setting up Stripe, grabbing API keys from Supabase, downloading Canvas attachments — none of these work without your existing login. Chromeflow drives your actual Chrome, so the agent inherits everything.</p>
+<p><strong>Determinism for CI / scheduled runs.</strong> Vision-model reasoning is probabilistic. A page re-layout, a font change, or a new banner can cause the model to misclick. Chromeflow's <code>until_*</code> clauses on <code>click_element</code> verify post-conditions deterministically — the click either landed on the URL/selector/text you expected, or you get <code>success=false</code> and can recover.</p>
+<p><strong>Integration with the AI coding agents people actually use.</strong> Chromeflow is an MCP plugin for Claude Code and Codex CLI — install once, use everywhere. Browser Use is its own thing with its own LLM client; integrating it into an agentic workflow means shelling out from your main agent or running it as a sidecar.</p>
+
+<h3>The actual cost benchmark</h3>
+<p>A representative "set up Stripe Connect for a new SaaS" workflow involves ~25 interactions: dismiss a cookie banner, open product creation, fill a name and price, click Save, navigate to API keys, reveal the secret, click Copy, paste into <code>.env</code>, configure webhook URL, send a test event, verify the response, and back-and-forth across a few tabs.</p>
+<ul>
+<li><strong>Chromeflow:</strong> ~25 tool calls × 400 chars/call = 10 KB total ≈ 2.5K input tokens to the agent. Cost: cents.</li>
+<li><strong>Browser Use:</strong> ~25 steps × 20K tokens/step (screenshot + vision reasoning) = 500K tokens. At GPT-4o vision rates that's $1.25 per run; at Claude vision rates higher.</li>
+</ul>
+<p>The 50–100× cost ratio holds for any DOM-readable site. For DOM-junked sites (Figma canvas, Cloudflare-rendered, heavy-obfuscation anti-bot pages) Browser Use's cost looks more reasonable because Chromeflow can't read them either.</p>
+
+<h3>What about reliability?</h3>
+<p>Browser Use's vision model can hallucinate click coordinates on dense pages — it confuses "Save" with "Save and continue" or clicks an ad it thought was the primary CTA. Chromeflow's DOM queries return exact selectors with verifiable text match — there's no probabilistic element. v0.9.5 added <code>expect_submit=true</code> on <code>click_element</code> which watches for URL change / toast / modal / aria-live region appearance after the click, returning <code>success=false</code> when the submit silently fails (common on anti-bot social platforms).</p>
+
+<h3>The decision rule</h3>
+<p>Try <strong>Chromeflow first</strong>. It's cheaper, faster, more deterministic, and works on 90%+ of real-world sites. Reach for Browser Use only when the DOM is genuinely unreadable (canvas-rendered, intentionally obfuscated, heavy anti-bot) — and even then, evaluate whether <code>execute_script</code> with a fallback CDP approach in Chromeflow can do the job.</p>
+
+<div class="related">
+  <h4>Related comparisons</h4>
+  <ul>
+    <li><a href="/compare/playwright">Chromeflow vs Playwright</a> — the testing-framework tradeoff</li>
+    <li><a href="/compare/puppeteer">Chromeflow vs Puppeteer</a> — the lighter CDP library</li>
+    <li><a href="/compare">Full four-way comparison</a></li>
+    <li><a href="/faq">Chromeflow FAQ</a></li>
+  </ul>
+</div>
+
+<p style="margin-top: 40px;"><a href="/compare" style="color: var(--orange); text-decoration: none; font-weight: 600;">← Back to all comparisons</a></p>
+
+</main>
+
+<footer>
+  <div>© 2026 Andrew Robertson · MIT licensed</div>
+  <div>
+    <a href="/">Home</a> · <a href="/faq">FAQ</a> · <a href="/compare">Compare</a> · <a href="https://github.com/NeoDrew/chromeflow">GitHub</a> · <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime">Chrome Web Store</a>
+    </div>
+</footer>
+
+</body>
+</html>
