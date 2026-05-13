@@ -11,11 +11,11 @@
   <a href="https://github.com/NeoDrew/chromeflow/releases"><img src="https://img.shields.io/github/v/release/NeoDrew/chromeflow?label=release&color=e85d2c" alt="Latest release" /></a>
   <a href="https://github.com/NeoDrew/chromeflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/NeoDrew/chromeflow?color=d97706" alt="MIT License" /></a>
   <a href="https://github.com/NeoDrew/chromeflow/stargazers"><img src="https://img.shields.io/github/stars/NeoDrew/chromeflow?style=social" alt="GitHub stars" /></a>
-  <a href="https://chromeflow.vercel.app"><img src="https://img.shields.io/badge/website-chromeflow.vercel.app-1c1a16" alt="Website" /></a>
+  <a href="https://chromeflow.run"><img src="https://img.shields.io/badge/website-chromeflow.run-1c1a16" alt="Website" /></a>
 </p>
 
 <p align="center">
-  <a href="#setup">Install</a> · <a href="#what-claude-can-do">Tools</a> · <a href="https://chromeflow.vercel.app">Website</a> · <a href="https://github.com/NeoDrew/chromeflow/blob/main/SECURITY.md">Security</a>
+  <a href="#setup">Install</a> · <a href="#what-claude-can-do">Tools</a> · <a href="https://chromeflow.run">Website</a> · <a href="https://github.com/NeoDrew/chromeflow/blob/main/SECURITY.md">Security</a>
 </p>
 
 ---
