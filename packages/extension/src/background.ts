@@ -43,9 +43,14 @@ async function setWindowId(port: number, windowId: number): Promise<void> {
 
 // Pending click-watch callbacks keyed by requestId. Each entry tracks the
 // source port so we know which Claude window's tabs to watch.
+type ClickWatchResult = {
+  type: string;
+  url?: string;
+  target?: { selector: string; text: string; tag: string; x: number; y: number } | null;
+};
 const pendingClicks = new Map<
   string,
-  { port: number; cb: (result: { type: string; url?: string }) => void }
+  { port: number; cb: (result: ClickWatchResult) => void }
 >();
 
 // Recent navigation completions per tab — used to resolve click-watches that
@@ -110,7 +115,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const entry = pendingClicks.get(msg.requestId);
       if (entry) {
         pendingClicks.delete(msg.requestId);
-        entry.cb({ type: "click_detected" });
+        entry.cb({ type: "click_detected", target: msg.target ?? null });
       }
     }
     sendResponse({ ok: true });
@@ -308,6 +313,47 @@ async function getActiveTab(port: number): Promise<chrome.tabs.Tab> {
   throw new Error("Created new Chrome window but its active tab never appeared.");
 }
 
+/**
+ * Count anti-bot-friendly "something happened" selectors on the active page.
+ * Used by click_element's `expect_submit` flag: snapshot pre-click counts,
+ * compare after to detect NEW alerts/toasts/modals appearing. Without the
+ * snapshot, a pre-existing toast would be misread as a post-submit signal.
+ *
+ * Selectors chosen to cover the common UI libraries: Radix (role=alert),
+ * Sonner (data-sonner-toast), shadcn / Tailwind UI (.toast, .notification),
+ * accessibility-correct apps (aria-live), and any modal / dialog. Excludes
+ * aria-hidden elements (offscreen carriers used for screen-reader semantics).
+ */
+async function getSubmitSignalCounts(tabId: number): Promise<{ alert: number; toast: number; modal: number }> {
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const c = (sel: string) => {
+          try { return document.querySelectorAll(sel).length; }
+          catch { return 0; }
+        };
+        return {
+          alert:
+            c('[role="alert"]:not([aria-hidden="true"])') +
+            c('[aria-live="polite"]:not(:empty):not([aria-hidden="true"])') +
+            c('[aria-live="assertive"]:not(:empty):not([aria-hidden="true"])'),
+          toast:
+            c('[data-sonner-toast]') +
+            c('.toast:not(.hidden):not([aria-hidden="true"])') +
+            c('.notification:not(.hidden):not([aria-hidden="true"])'),
+          modal:
+            c('[role="dialog"]:not([aria-hidden="true"])') +
+            c('[aria-modal="true"]'),
+        };
+      },
+    });
+    return (r[0]?.result as { alert: number; toast: number; modal: number } | undefined) ?? { alert: 0, toast: 0, modal: 0 };
+  } catch {
+    return { alert: 0, toast: 0, modal: 0 };
+  }
+}
+
 function isScriptableUrl(url: string | undefined): boolean {
   if (!url) return false;
   return (
@@ -477,6 +523,74 @@ async function handleMcpMessage(msg: {
       return { type: "tabs_response", tabs };
     }
 
+    case "close_tab": {
+      await getActiveTab(port);
+      const wid = getWindowId(port)!;
+      const allTabs = await chrome.tabs.query({ windowId: wid });
+      const query = msg.query as string | undefined;
+
+      let target: chrome.tabs.Tab | undefined;
+      if (query === undefined) {
+        // No query: close the active tab.
+        target = allTabs.find(t => t.active);
+      } else {
+        const lower = query.toLowerCase();
+        const byIndex = parseInt(query, 10);
+        if (!isNaN(byIndex)) {
+          target = allTabs[byIndex - 1];
+        } else {
+          target = allTabs.find(
+            (t) =>
+              (t.url ?? "").toLowerCase().includes(lower) ||
+              (t.title ?? "").toLowerCase().includes(lower)
+          );
+        }
+      }
+      if (!target?.id) {
+        const list = allTabs.map((t, i) => `${i + 1}. ${t.title} — ${t.url}`).join("\n");
+        return { type: "action_done", message: `No tab matching "${query ?? "(active)"}". Open tabs:\n${list}` };
+      }
+      const snapshot = { index: allTabs.indexOf(target) + 1, title: target.title ?? "", url: target.url ?? "" };
+      await chrome.tabs.remove(target.id);
+      return { type: "action_done", closed: [snapshot] };
+    }
+
+    case "close_other_tabs": {
+      await getActiveTab(port);
+      const wid = getWindowId(port)!;
+      const allTabs = await chrome.tabs.query({ windowId: wid });
+      const keepQuery = msg.keep_query as string | undefined;
+      const keepLower = keepQuery?.toLowerCase();
+
+      // Determine which tabs to keep. Either matches keep_query, or active when no query.
+      const kept: chrome.tabs.Tab[] = [];
+      const toClose: chrome.tabs.Tab[] = [];
+      for (const t of allTabs) {
+        const matchesKeep = keepLower
+          ? (t.url ?? "").toLowerCase().includes(keepLower) || (t.title ?? "").toLowerCase().includes(keepLower)
+          : !!t.active;
+        if (matchesKeep) kept.push(t);
+        else toClose.push(t);
+      }
+
+      // Refuse to close ALL tabs — Chrome will close the window. Keep the
+      // active tab as a safety floor.
+      if (kept.length === 0) {
+        const active = allTabs.find(t => t.active);
+        if (active) {
+          kept.push(active);
+          const idx = toClose.indexOf(active);
+          if (idx >= 0) toClose.splice(idx, 1);
+        }
+      }
+
+      const closedSnapshot = toClose.map(t => ({ index: allTabs.indexOf(t) + 1, title: t.title ?? "", url: t.url ?? "" }));
+      const keptSnapshot = kept.map(t => ({ index: allTabs.indexOf(t) + 1, title: t.title ?? "", url: t.url ?? "" }));
+      const closeIds = toClose.map(t => t.id).filter((id): id is number => id !== undefined);
+      if (closeIds.length > 0) await chrome.tabs.remove(closeIds);
+      return { type: "action_done", closed: closedSnapshot, kept: keptSnapshot };
+    }
+
     case "screenshot": {
       const tab = await getActiveTab(port);
       // Use window.innerWidth/Height from the page — these are always in CSS pixels.
@@ -581,7 +695,7 @@ async function handleMcpMessage(msg: {
       return new Promise((resolve, reject) => {
         let done = false;
 
-        const finish = (result: { type: string; url?: string }) => {
+        const finish = (result: ClickWatchResult) => {
           if (done) return;
           done = true;
           clearTimeout(timer);
@@ -636,14 +750,27 @@ async function handleMcpMessage(msg: {
             const results = await chrome.scripting.executeScript({
               target: { tabId: tab.id! },
               func: (sel: string, requireShadow: boolean) => {
-                // Shadow-piercing query: walks open shadow roots so selectors
-                // for elements inside web components (Outlier, Lit, Stencil)
-                // are found without needing a shadow-DOM-aware caller.
+                // Shadow-piercing query: walks open AND closed shadow roots
+                // (via chrome.dom.openOrClosedShadowRoot when available in
+                // isolated-world content scripts) so selectors for elements
+                // inside web components (Outlier, Lit, Stencil, Reddit's
+                // faceplate-* web components) are found without needing a
+                // shadow-DOM-aware caller.
+                const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+                function getShadowRoot(el: Element): ShadowRoot | null {
+                  if (chromeDom?.openOrClosedShadowRoot) {
+                    try {
+                      const sr = chromeDom.openOrClosedShadowRoot(el);
+                      if (sr) return sr;
+                    } catch { /* fall through */ }
+                  }
+                  return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+                }
                 function findFirst(root: Document | Element | ShadowRoot): Element | null {
                   const direct = root.querySelector(sel);
                   if (direct) return direct;
                   for (const el of Array.from(root.querySelectorAll<Element>("*"))) {
-                    const sr = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+                    const sr = getShadowRoot(el);
                     if (sr) {
                       const inner = findFirst(sr);
                       if (inner) return inner;
@@ -654,8 +781,7 @@ async function handleMcpMessage(msg: {
                 const found = findFirst(document);
                 if (!found) return false;
                 if (requireShadow) {
-                  const sr = (found as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
-                  return sr != null;
+                  return getShadowRoot(found) != null;
                 }
                 return true;
               },
@@ -812,14 +938,25 @@ async function handleMcpMessage(msg: {
       // Retry up to 3 times with 500ms gap. Elements briefly disappear during
       // a React re-render and a single attempt fails; a short retry loop
       // turns those into successful clicks instead of 30s timeouts.
-      let prep: { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean } | undefined;
+      type PrepResult = {
+        success: boolean;
+        message: string;
+        x?: number;
+        y?: number;
+        width?: number;
+        height?: number;
+        label?: string;
+        skipClick?: boolean;
+        nextCandidate?: string;
+      };
+      let prep: PrepResult | undefined;
       for (let attempt = 0; attempt < 3; attempt++) {
         prep = await forwardToContentScript(tab, {
           type: "prepare_click_target",
           requestId: msg.requestId,
           textHint: msg.textHint,
           nth: msg.nth,
-        }) as { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean };
+        }) as PrepResult;
         if (prep.success) break;
         if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
       }
@@ -842,10 +979,13 @@ async function handleMcpMessage(msg: {
       // message so the caller can wait for visibility first.
       if (prep.width === 0 && prep.height === 0) {
         const label = prep.label ?? msg.textHint;
+        const nextSuggestion = prep.nextCandidate
+          ? ` Next visible candidate: ${prep.nextCandidate}. Retry without nth=, with a different nth, or with a more specific textHint.`
+          : ` No visible candidates matched "${msg.textHint}".`;
         return {
           type: "click_element_response",
           success: false,
-          message: `Matched element "${label}" is 0×0 (hidden, display:none, or not yet rendered). Refusing to click — a click at this size would dispatch no useful event. Try wait_for_selector with a state-specific selector that only matches the visible state, scroll_to_element to bring it into view, or pass an until_* clause with a higher timeout to wait for the element to materialize.`,
+          message: `Matched element "${label}" is 0×0 (hidden, display:none, or not yet rendered). Refusing to click — a click at this size would dispatch no useful event.${nextSuggestion}`,
           before_url,
           after_url: before_url,
           navigated: false,
@@ -947,7 +1087,16 @@ async function handleMcpMessage(msg: {
       const untilUrlContains = msg.until_url_contains as string | undefined;
       const untilTextContains = msg.until_text_contains as string | undefined;
       const untilTimeoutMs = (msg.until_timeout_ms as number | undefined) ?? 5000;
+      const expectSubmit = msg.expect_submit === true;
       const hasUntil = !!(untilSelector || untilUrlContains || untilTextContains);
+
+      // For expect_submit: snapshot the pre-click counts of alert/toast/modal
+      // selectors so we can detect NEW ones appearing after the click.
+      // Without this snapshot, a pre-existing toast would be misread as a
+      // post-submit signal.
+      const preSubmitCounts = expectSubmit && !hasUntil && isScriptableUrl(tab.url)
+        ? await getSubmitSignalCounts(tabId)
+        : null;
 
       let untilResult: { ok: boolean; reason: string } | null = null;
       let navigationResult: string | null = null;
@@ -1002,12 +1151,51 @@ async function handleMcpMessage(msg: {
           ].filter(Boolean).join(" or ");
           untilResult = { ok: false, reason: `Click fired but ${conditions} did not appear within ${untilTimeoutMs}ms — the click may not have registered. Try execute_script with a direct .click() on the matched element, or pass a different until_* value.` };
         }
+      } else if (expectSubmit) {
+        // expect_submit: poll for any anti-bot-friendly submit signal within
+        // 4s. Catches the "synthetic click silently rejected" case on Reddit /
+        // X / and similar handlers without needing a specific until_* destination.
+        const start = Date.now();
+        while (Date.now() - start < 4000) {
+          const [t] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+          const url = t?.url ?? "";
+          if (url && url !== before_url) {
+            untilResult = { ok: true, reason: `URL changed to ${url}` };
+            navigationResult = url;
+            break;
+          }
+          if (t?.id && isScriptableUrl(url)) {
+            const counts = await getSubmitSignalCounts(t.id);
+            const pre = preSubmitCounts ?? { alert: 0, toast: 0, modal: 0 };
+            if (counts.alert > pre.alert) {
+              untilResult = { ok: true, reason: `alert/aria-live element appeared` };
+              break;
+            }
+            if (counts.toast > pre.toast) {
+              untilResult = { ok: true, reason: `toast / notification element appeared` };
+              break;
+            }
+            if (counts.modal > pre.modal) {
+              untilResult = { ok: true, reason: `modal / [role=dialog] appeared` };
+              break;
+            }
+          }
+          await new Promise((r) => setTimeout(r, 300));
+        }
+        if (!untilResult) {
+          untilResult = {
+            ok: false,
+            reason: `submit silently rejected (likely anti-bot): no URL change, toast, alert, or modal appeared within 4s. Synthetic clicks fail on Reddit / X / and similar handlers / mcp.so even though isTrusted passes — pre-fill the form, then highlight + wait_for_click so a real human gesture fires the submit.`,
+          };
+        }
       } else {
-        // No until-clause — keep the existing race so callers without explicit
-        // verification still get the navigation URL when the click navigated.
+        // No until-clause and no expect_submit — race a real-load wait against
+        // a brief hard cap. 1500ms is the SPA-pushState window — most React-
+        // router clicks complete their pushState in <1000ms; 1500ms gives margin
+        // without making non-navigating clicks feel slow.
         navigationResult = await Promise.race([
           waitForNavigation(tab.id!, 4000),
-          new Promise<null>((r) => setTimeout(() => r(null), 600)),
+          new Promise<null>((r) => setTimeout(() => r(null), 1500)),
         ]);
       }
 
@@ -1551,10 +1739,29 @@ async function handleMcpMessage(msg: {
     }
 
     case "inspect_request_headers": {
-      const tab = await getActiveTab(port);
-      const tabId = tab.id!;
       const targetUrl = msg.url as string;
+      const useNewTab = msg.new_tab !== false; // default true
 
+      // Pick the tab we'll attach the debugger to. When useNewTab is true,
+      // open a fresh tab in chromeflow's window (so the user's active tab keeps
+      // its form/scroll state) and close it once headers are captured.
+      let tabId: number;
+      let cleanupTabId: number | null = null;
+      if (useNewTab) {
+        await getActiveTab(port); // ensure window assigned
+        const wid = getWindowId(port)!;
+        const newTab = await chrome.tabs.create({ url: "about:blank", active: false, windowId: wid });
+        if (!newTab.id) {
+          throw new Error("Could not open a background tab for inspect_request_headers.");
+        }
+        tabId = newTab.id;
+        cleanupTabId = newTab.id;
+      } else {
+        const tab = await getActiveTab(port);
+        tabId = tab.id!;
+      }
+
+      try {
       const captured = await withDebugger(tabId, async () => {
         const dbg = chrome.debugger as unknown as {
           sendCommand: (target: { tabId: number }, method: string, params?: object) => Promise<unknown>;
@@ -1634,6 +1841,12 @@ async function handleMcpMessage(msg: {
         lines.push("(no headers captured — extra-info event never fired; try again)");
       }
       return { type: "action_done", requestId: msg.requestId, message: lines.join("\n") };
+      } finally {
+        // Close the side-tab we opened for inspection, regardless of success.
+        if (cleanupTabId !== null) {
+          try { await chrome.tabs.remove(cleanupTabId); } catch { /* tab may already be gone */ }
+        }
+      }
     }
 
     case "read_attachment": {

@@ -7,6 +7,8 @@ export type DistributiveOmit<T, K extends keyof T> = T extends unknown
 export type ServerMessage =
   | { type: "navigate"; requestId: string; url: string; newTab?: boolean; background?: boolean }
   | { type: "switch_to_tab"; requestId: string; query: string }
+  | { type: "close_tab"; requestId: string; query?: string }
+  | { type: "close_other_tabs"; requestId: string; keep_query?: string }
   | { type: "screenshot"; requestId: string; grid?: boolean }
   | { type: "find_highlight"; requestId: string; text: string; message: string; valueToType?: string }
   | {
@@ -34,6 +36,7 @@ export type ServerMessage =
       until_url_contains?: string;
       until_text_contains?: string;
       until_timeout_ms?: number;
+      expect_submit?: boolean;
     }
   | { type: "prepare_click_target"; requestId: string; textHint: string; nth?: number }
   | { type: "post_click_inspect"; requestId: string }
@@ -51,7 +54,7 @@ export type ServerMessage =
   | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }>; exact?: boolean }
   | { type: "set_file_input"; requestId: string; hint: string; filePath: string; waitMs?: number; verifySelector?: string }
   | { type: "type_text"; requestId: string; text: string; frame?: string }
-  | { type: "inspect_request_headers"; requestId: string; url: string }
+  | { type: "inspect_request_headers"; requestId: string; url: string; new_tab?: boolean }
   | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string }
   | {
       type: "react_call_prop";
@@ -138,8 +141,17 @@ export type ClientMessage =
   | { type: "find_highlight_response"; requestId: string; found: boolean }
   | { type: "action_done"; requestId: string }
   | { type: "read_response"; requestId: string; value: string | null }
-  | { type: "click_detected"; requestId: string }
-  | { type: "navigation_complete"; requestId: string; url: string }
+  | {
+      type: "click_detected";
+      requestId: string;
+      target?: { selector: string; text: string; tag: string; x: number; y: number } | null;
+    }
+  | {
+      type: "navigation_complete";
+      requestId: string;
+      url: string;
+      target?: { selector: string; text: string; tag: string; x: number; y: number } | null;
+    }
   | { type: "fill_response"; requestId: string; success: boolean; message: string; matched?: string }
   | {
       type: "click_element_response";
@@ -154,7 +166,14 @@ export type ClientMessage =
   | { type: "script_response"; requestId: string; result: string; alert?: string | null }
   | { type: "error"; requestId: string; message: string }
   | { type: "elements_response"; requestId: string; elements: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> }
-  | { type: "form_fields_response"; requestId: string; fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }> }
+  | {
+      type: "form_fields_response";
+      requestId: string;
+      fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }>;
+      warning?: string;
+      captcha?: { kind: "recaptcha" | "turnstile" | "hcaptcha"; sitekey: string | null } | null;
+      oauthIndicators?: string[];
+    }
   | { type: "save_state_response"; requestId: string; state: PageFieldState[] }
   | { type: "tabs_response"; requestId: string; tabs: Array<{ index: number; title: string; url: string; active: boolean }> }
   | { type: "fill_form_response"; requestId: string; results: Array<{ label: string; success: boolean; message: string; matched?: string }>; succeeded: number; total: number }

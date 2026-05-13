@@ -77,8 +77,51 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
   );
 
   server.tool(
+    "close_tab",
+    `Close a tab by number, URL substring, or title substring. Mirrors switch_to_tab's matcher. Defaults to closing the ACTIVE tab when no query is given. Use this to clean up the tab pile after a multi-step workflow.`,
+    {
+      query: z
+        .union([z.string(), z.number()])
+        .optional()
+        .describe("Tab number (1-based), URL substring, or title substring. Omit to close the active tab."),
+    },
+    async ({ query }) => {
+      const raw = query === undefined || query === null || query === "" ? undefined : String(query);
+      const response = await bridge.request({ type: "close_tab", query: raw });
+      const r = response as { closed?: Array<{ index: number; title: string; url: string }>; message?: string };
+      if (r.message) return { content: [{ type: "text", text: r.message }] };
+      const closedList = (r.closed ?? []).map(t => `${t.index}. ${t.title} — ${t.url}`).join("\n");
+      return {
+        content: [{ type: "text", text: `Closed ${(r.closed ?? []).length} tab(s):\n${closedList}` }],
+      };
+    }
+  );
+
+  server.tool(
+    "close_other_tabs",
+    `Close every tab in the current window EXCEPT the active one (or any tab matching keep_query). Use at the end of a session to tidy up; do NOT use mid-flow if you may need to return to one of the closed tabs.`,
+    {
+      keep_query: z
+        .string()
+        .optional()
+        .describe("URL substring or title substring. Tabs matching this are KEPT; all others are closed. When omitted, only the active tab is kept."),
+    },
+    async ({ keep_query }) => {
+      const response = await bridge.request({ type: "close_other_tabs", keep_query });
+      const r = response as { closed?: Array<{ index: number; title: string; url: string }>; kept?: Array<{ index: number; title: string; url: string }>; message?: string };
+      if (r.message) return { content: [{ type: "text", text: r.message }] };
+      const closedCount = (r.closed ?? []).length;
+      const keptCount = (r.kept ?? []).length;
+      const keptList = (r.kept ?? []).map(t => `  ${t.index}. ${t.title} — ${t.url}`).join("\n");
+      return {
+        content: [{ type: "text", text: `Closed ${closedCount} tab(s), kept ${keptCount}:\n${keptList}` }],
+      };
+    }
+  );
+
+  server.tool(
     "take_screenshot",
-    `Capture a screenshot of the active tab. By default returns the PNG to the agent only; set save_to or copy_to_clipboard to also share it. Reserved for cases where DOM lookup has already failed — use get_page_text and find_text for reading content.`,
+    `Capture a screenshot of the active tab. By default the image is returned to the agent inline UNLESS it exceeds ~500KB base64, in which case it's saved to a temp file and the path is returned instead (preserves the agent's context window). Set inline="always" to force inline regardless of size, or inline="never" to always write to a file. Set save_to or copy_to_clipboard to also share the image with the user. Reserved for cases where DOM lookup has already failed — use get_page_text and find_text for reading content.`,
     {
       copy_to_clipboard: z
         .boolean()
@@ -87,9 +130,13 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
       save_to: z
         .enum(["downloads", "cwd", "none"])
         .optional()
-        .describe('Save the PNG to disk: "downloads" (~/Downloads), "cwd" (Claude\'s working directory), or "none" (default — image returned only to Claude).'),
+        .describe('Save the PNG to disk: "downloads" (~/Downloads), "cwd" (the agent\'s working directory), or "none" (default — image returned only to the agent, no disk artifact).'),
+      inline: z
+        .enum(["auto", "always", "never"])
+        .optional()
+        .describe('Whether to return the image base64 inline to the agent. "auto" (default): inline if under 500KB base64, otherwise write to a temp file and return the path. "always": inline regardless of size — large images may exceed the MCP token ceiling. "never": always return the path, never inline.'),
     },
-    async ({ copy_to_clipboard = false, save_to = "none" }) => {
+    async ({ copy_to_clipboard = false, save_to = "none", inline = "auto" }) => {
       const sharing = copy_to_clipboard || save_to !== "none";
       // grid:false when sharing — coord grid is noise when the image is for
       // pasting into chats / uploading to forms.
@@ -98,33 +145,28 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
         throw new Error("Unexpected response from extension");
       }
 
-      if (!sharing) {
-        return {
-          content: [
-            { type: "image", data: response.image, mimeType: "image/png" },
-            {
-              type: "text",
-              text: `Screenshot captured (${response.width}x${response.height}). Analyze the image to identify element positions for highlighting.`,
-            },
-          ],
-        };
-      }
+      const base64Len = response.image.length;
+      const INLINE_CAP = 500_000; // ~375KB image
+      const shouldInline = inline === "always" || (inline === "auto" && base64Len <= INLINE_CAP);
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const filename = `chromeflow-${timestamp}.png`;
       const imageBuffer = Buffer.from(response.image, "base64");
-
-      // Write to temp file first (needed for osascript clipboard copy)
       const tmpPath = join(tmpdir(), filename);
-      writeFileSync(tmpPath, imageBuffer);
+      // Always write the temp file when not inlining OR when sharing — used by
+      // both the auto-file return path and the clipboard/copy paths.
+      const needTmp = !shouldInline || sharing;
+      if (needTmp) writeFileSync(tmpPath, imageBuffer);
 
       const notes: string[] = [];
+      let landedPath = tmpPath;
       if (save_to !== "none") {
         const savePath = save_to === "cwd"
           ? join(process.cwd(), filename)
           : join(homedir(), "Downloads", filename);
         copyFileSync(tmpPath, savePath);
         notes.push(`Saved to ${savePath}`);
+        landedPath = savePath;
       }
       if (copy_to_clipboard) {
         try {
@@ -135,11 +177,22 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
         }
       }
 
+      if (shouldInline) {
+        const msg = notes.length
+          ? notes.join(". ") + "."
+          : `Screenshot captured (${response.width}x${response.height}, ${base64Len} base64 chars). Analyze the image to identify element positions for highlighting.`;
+        return {
+          content: [
+            { type: "image", data: response.image, mimeType: "image/png" },
+            { type: "text", text: msg },
+          ],
+        };
+      }
+
+      // Path-only return — image is too large for inline.
+      notes.push(`Image saved to ${landedPath} (${response.width}x${response.height}, ~${Math.round(imageBuffer.byteLength / 1024)}KB) — Read the file or use OS image viewer. To force inline despite size, pass inline="always".`);
       return {
-        content: [
-          { type: "image", data: response.image, mimeType: "image/png" },
-          { type: "text", text: notes.length ? notes.join(". ") + "." : `Screenshot captured (${response.width}x${response.height}).` },
-        ],
+        content: [{ type: "text", text: notes.join(". ") + "." }],
       };
     }
   );
@@ -265,15 +318,28 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
       // Inventory mode.
       const response = await bridge.request({ type: "get_form_fields" });
       if (response.type !== "form_fields_response") throw new Error("Unexpected response");
-      const r = response as { fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string }>; warning?: string };
+      const r = response as {
+        fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string }>;
+        warning?: string;
+        captcha?: { kind: string; sitekey: string | null } | null;
+        oauthIndicators?: string[];
+      };
       const fields = r.fields;
-      if (fields.length === 0) return { content: [{ type: "text", text: "No form fields found on page." + (r.warning ?? "") }] };
+      const captchaLine = r.captcha
+        ? `\n\n⚠ CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. Synthetic submits will be silently rejected. Pre-fill, then highlight the submit button and call wait_for_click.`
+        : "";
+      const oauthLine = r.oauthIndicators && r.oauthIndicators.length > 0
+        ? `\n\nℹ OAuth providers detected on this form: ${r.oauthIndicators.join(", ")}. If the user wants to sign in via one of these, click it instead of filling email/password.`
+        : "";
+      if (fields.length === 0) {
+        return { content: [{ type: "text", text: "No form fields found on page." + (r.warning ?? "") + captchaLine + oauthLine }] };
+      }
       const lines = fields.map(f => {
         const val = f.value ? ` [currently: "${f.value}"]` : "";
         const ctx = f.context ? ` [under: "${f.context}"]` : "";
         return `${f.index}. [${f.type}] "${f.label}"${val}${ctx} — y:${f.y}`;
       });
-      return { content: [{ type: "text", text: `Form fields (${fields.length} total, sorted top-to-bottom):\n${lines.join("\n")}${r.warning ?? ""}` }] };
+      return { content: [{ type: "text", text: `Form fields (${fields.length} total, sorted top-to-bottom):\n${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
     }
   );
 
@@ -334,9 +400,11 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
 
   server.tool(
     "execute_script",
-    `Execute JavaScript in the current page's context and return the result. Use for reading framework state or DOM properties not visible in text — prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
+    `Execute JavaScript in the active tab's MAIN world (the page's own context, not the extension's isolated world). Use for reading framework state or DOM properties not visible in text — prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
 
-CSP-strict pages (Stripe, GitHub) silently fall through to a CDP eval path. Page alerts (alert/confirm/prompt) fired since the last script appear as PAGE ALERT in the result.`,
+MAIN-world means the page's Content-Security-Policy applies: \`fetch()\` against authenticated APIs is often blocked by the page's connect-src directive. When that happens, switch to fetch_url — it runs in the extension's privileged context (full host_permissions, automatic cookie jar, no page CSP).
+
+CSP-strict pages that disallow eval (Stripe, GitHub) silently fall through to a CDP eval path. Page alerts (alert/confirm/prompt) fired since the last script appear as PAGE ALERT in the result.`,
     {
       code: z
         .string()
@@ -360,13 +428,14 @@ CSP-strict pages (Stripe, GitHub) silently fall through to a CDP eval path. Page
 
   server.tool(
     "inspect_request_headers",
-    `Navigate to a URL and capture the request headers Chrome sends for the main document — useful for diagnosing server-side bot detection. Returns method, URL, and all headers. Cookie values are redacted by default to avoid leaking session tokens into the agent context; pass redact_cookies: false to see them. This tool DOES navigate the active tab.`,
+    `Capture the request headers Chrome sends to a URL — useful for diagnosing server-side bot detection. Returns method, URL, and all headers. Cookie values are redacted by default to avoid leaking session tokens into the agent context; pass redact_cookies: false to see them. By default opens a background tab for the inspection so your active tab keeps its scroll position and form state — set new_tab: false to use the active tab instead.`,
     {
       url: z.string().url().describe("URL to navigate to and capture headers for"),
       redact_cookies: z.boolean().optional().describe("Replace each cookie's value with [REDACTED]. Default true. Set false only when you genuinely need the cookie content for debugging."),
+      new_tab: z.boolean().optional().describe("Open the inspection in a background tab and close it when done. Default true (preserves the active tab's state). Set false to use the active tab — the active tab WILL navigate."),
     },
-    async ({ url, redact_cookies = true }) => {
-      const response = await bridge.request({ type: "inspect_request_headers", url }, 20_000);
+    async ({ url, redact_cookies = true, new_tab = true }) => {
+      const response = await bridge.request({ type: "inspect_request_headers", url, new_tab }, 30_000);
       const r = response as { message?: string };
       let text = r.message ?? "(no headers captured)";
       if (redact_cookies) {

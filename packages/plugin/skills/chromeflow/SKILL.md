@@ -1,8 +1,3 @@
----
-name: chromeflow
-description: Use when working on a task that needs a real browser — setting up third-party services (Stripe, Supabase, SendGrid, Vercel, OAuth), retrieving API keys or secrets to put in .env, configuring webhooks, filling forms in a web UI, navigating dashboards, or any browser-based step blocking code work. Also use when the user asks how to use chromeflow, what chromeflow tools exist, or how to drive a specific site (eBay, DataAnnotation, Notion, Stripe, etc.). Covers chromeflow MCP tool usage patterns, form filling on React / contenteditable / CodeMirror / Monaco / Stripe inputs, error handling, multi-tab flows, credential capture, and visual handoff to the user for 2FA / passwords / payments.
----
-
 # Chromeflow — Claude Instructions
 
 ## What chromeflow is
@@ -37,6 +32,16 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
 3. **Use `wait_for(selector=…)` to wait for async page changes** (build completion, modals,
    toasts). Never poll with repeated `take_screenshot` calls.
 
+4. **Form submits on social/auth platforms require a real human click.** Reddit, X /
+   Twitter, OAuth login, mcp.so, and most modern anti-bot-protected sites silently
+   reject synthetic submit clicks — `click_element` returns success but nothing happens.
+   For known anti-bot platforms: pre-fill the form via `fill_form`/`fill_input`, then
+   `highlight_region` the submit button and call `wait_for_click()` so the user's real
+   gesture fires the submit. To detect this case on an unknown form, pass
+   `expect_submit: true` on the submit click — chromeflow returns `success=false` with
+   "submit silently rejected" when no URL change / toast / alert / modal appears within 4s.
+   Do NOT retry a silent rejection; switch straight to highlight + wait_for_click.
+
 ## Guided flow pattern
 
 ```
@@ -45,6 +50,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
    a. Claude acts directly:
         click_element("Save")               — press buttons/links Claude can press
         click_element("Save", until_selector=".success-toast")  — when synthetic clicks may silently no-op on a React-heavy site, require an observable post-click condition (or until_url_contains / until_text_contains)
+        click_element("Post", expect_submit=true)  — broad anti-bot detector for form submits. Watches URL change / role=alert / toast / modal for 4s; returns success=false if none appear. Use when the destination signal isn't known up front.
         fill_form([{label, value}, ...], exact=true)  — fill multiple fields in one call; pass exact=true on dense forms to refuse fuzzy text-walk matches
         fill_input(textHint="Product name", value="Pro")   — fill a single field by label hint (works on React, CodeMirror, and contenteditable). Always check the response — it names the matched element so you can spot wrong-field matches
         fill_input(textHint="Rate", value="5", exact=true) — exact-match mode for short generic labels that may collide with neighbouring fields
@@ -108,11 +114,11 @@ Use the absolute path for `envPath` — it's the Claude Code working directory +
 
 For authenticated network access, use the **privileged-context** tools — they run in the extension's background service worker with full host_permissions, automatically include the user's Chrome cookies, and bypass page CSP entirely:
 
-- `fetch_url(url, method?, headers?, body?, binary?)` — generic HTTP request, returns `{status, headers, body_text or body_base64, truncated, total_bytes}`. Use for AJAX endpoints, JSON APIs, anything where you need a clean response object. Pass `binary: true` for non-text bodies (PDFs, images, zips).
-- `download_file(url, filename?)` — Chrome's authenticated download flow, returns the absolute path the file landed at. Use when you need the bytes saved to disk for another tool to read (or to hand the path to the user).
-- `read_attachment(url, format?, max_chars?)` — privileged fetch + format-aware text extraction in one call. Supports docx (via in-extension ZIP extraction, no local CLI), txt, md, csv, json, xml, html. PDF returns a structured error pointing you at `download_file` + your local `pdftotext`/`textutil` (PDF native support is planned for v0.9.4).
+- `fetch_url(url, method?, headers?, body?, binary?, max_bytes?, to_file?)` — generic HTTP request. Default `max_bytes` is **100,000** (≈25K tokens, the MCP transport ceiling). For larger payloads, pass `to_file: "/absolute/path"` and the FULL body is written to disk; the response carries only `{path, size, content_type, status, headers}` so your context window stays clean. `to_file` must be under the current working directory. Pass `binary: true` for non-text bodies (PDFs, images, zips).
+- `download_file(url, filename?)` — Chrome's authenticated download flow, returns the absolute path the file landed at. Use when you want the file in `~/Downloads` (or wherever Chrome's default is); use `fetch_url(to_file=…)` when you want it at a specific path under the project.
+- `read_attachment(url, format?, max_chars?)` — privileged fetch + format-aware text extraction in one call. Supports docx (via in-extension ZIP extraction, no local CLI), txt, md, csv, json, xml, html. PDF returns a structured error pointing you at `download_file` + your local `pdftotext`/`textutil`.
 
-**Mental model**: page context for DOM manipulation, privileged context for network access. If `execute_script("...await fetch(...)...")` returns "Failed to fetch" or a `Content-Security-Policy` error, switch to `fetch_url` (or `read_attachment` if you just want the text).
+**Mental model**: page context for DOM manipulation, privileged context for network access. If `execute_script("...await fetch(...)...")` returns "Failed to fetch" or a `Content-Security-Policy` error, switch to `fetch_url` (or `read_attachment` if you just want the text). `execute_script` runs in MAIN world (page context) — fetch() there is subject to page CSP. `fetch_url` runs in the extension's privileged service worker and bypasses page CSP entirely.
 
 ## Discoverability — `list_frames`
 
@@ -125,8 +131,14 @@ This is how you avoid "frame not accessible" errors after the fact. Top-level fr
 
 To capture and share a screenshot (e.g. for uploading to a form or pasting into a chat),
 use `take_screenshot(copy_to_clipboard=true, save_to="downloads")` — saves a PNG to ~/Downloads
-and copies it to the clipboard. The defaults (`copy_to_clipboard=false, save_to="none"`) return
-the image to Claude only.
+and copies it to the clipboard.
+
+By default the image is returned inline to Claude UNLESS it exceeds ~500KB base64, in
+which case it's auto-saved to a temp file and only the path is returned (preserves
+context window — Reddit / X / large PR pages routinely hit this). Pass
+`inline="always"` to force inline regardless of size, or `inline="never"` to always
+get a path. Pixel-coordinate work usually benefits from the inline image; "show this
+to the user" usually benefits from the path + `save_to`.
 
 ## Working with complex forms
 - Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory
@@ -136,6 +148,11 @@ the image to Claude only.
   If you only need one or two specific fields, use `find_input("hint")` instead — targeted
   lookup is much cheaper than the full inventory and returns labels you can pipe straight
   into `fill_input`.
+- `get_form_fields()` also surfaces **captcha presence** (reCAPTCHA / Cloudflare Turnstile /
+  hCaptcha) and **OAuth provider buttons** ("Continue with Google", "Sign in with GitHub").
+  When captcha is detected: synthetic submits will be silently rejected — pre-fill the form,
+  then highlight the submit and call `wait_for_click`. When OAuth providers are surfaced and
+  the user wants to use one, click that button instead of filling email/password.
 - `get_form_fields()` includes `[type=file]` fields even when they are visually hidden behind
   custom drag-and-drop zones. Use `set_file_input(hint, filePath)` to upload a file — provide
   the label/hint text and the absolute path to the file on disk.
@@ -192,7 +209,7 @@ Three lightweight tools save tokens vs `get_page_text` / `get_form_fields` when 
 - `find_input("Email")` — fuzzy form-field lookup, top-N. Returns labels you can pipe straight into `fill_input(label, value)` — both tools share the same match ranks (`aria-eq` → `placeholder-eq` → `label-text-eq` → `name-eq` → `id-eq` → `*-includes` → `fuzzy-text-walk`). Cheaper than `get_form_fields` when you just need a couple of specific fields. Pass `type_filter="email"` to restrict to a specific input type.
 - `wait_for_text("Saved")` — wait for text to appear without knowing the selector ahead of time. Complements `wait_for_selector` for the case where you only know the post-action message.
 
-All three pierce open shadow roots and accept `frame="iframe.selector"` for same-origin iframes. Pass `regex=true` on `find_text` / `wait_for_text` for case-insensitive regex matching. Pass `exact=true` on `find_input` to refuse fuzzy text-walk matches.
+All three pierce **open AND closed shadow roots** (via `chrome.dom.openOrClosedShadowRoot` in content scripts) and accept `frame="iframe.selector"` for same-origin iframes. Pass `regex=true` on `find_text` / `wait_for_text` for case-insensitive regex matching. Pass `exact=true` on `find_input` to refuse fuzzy text-walk matches. `find_text`'s `clickable` flag now walks ancestors for `[hidden]` / `display:none` / `visibility:hidden` — flair-dropdown items inside collapsed panels no longer report as clickable.
 
 ```
 find_text("Build complete", scope_selector=".log-output")     — only check the build log section
@@ -208,6 +225,10 @@ Reach for these BEFORE `get_page_text` / `get_form_fields` when the goal is "is 
 - `open_page(url, new_tab=true)` opens a URL without losing the current tab. Use sparingly —
   prefer switching to an existing tab over opening a new one.
 - `switch_to_tab("1")` switches by tab number; `switch_to_tab("form")` matches by URL or title substring.
+- `close_tab(query)` closes a tab by number / URL substring / title substring; omit query to
+  close the active tab. `close_other_tabs(keep_query?)` closes every tab except the active
+  one (or anything matching keep_query). Use at the END of a long distribution sprint
+  to tidy up — do NOT use mid-flow if you might still need a tab.
 - Before navigating away from a partially-filled form, call `save_page_state()` so the form
   can be restored if the tab reloads or the page loses its state on return.
 - **In long-lived self-rescheduling loops**, the active tab can silently drift mid-session

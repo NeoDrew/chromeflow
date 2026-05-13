@@ -9,8 +9,13 @@ export function registerFlowTools(server: McpServer, bridge: WsBridge) {
 - until_selector — CSS selector that should appear after the click
 - until_url_contains — substring that should appear in the URL
 - until_text_contains — substring that should appear in page text
+- expect_submit — broad anti-bot detector for form submissions (toast, alert, modal, URL change, form removal). See note below.
 
-Returns {success, message, before_url, after_url, navigated}. \`navigated\` is true when the post-click URL differs from the pre-click URL — surfaces silent redirects without a second list_tabs call. Refuses to click 0×0 elements. Use \`nth\` (1-based) when multiple elements share the same label.`,
+Returns {success, message, before_url, after_url, navigated}. \`navigated\` is true when the post-click URL differs from the pre-click URL — surfaces silent redirects without a second list_tabs call. Refuses to click 0×0 elements and now ranks visible candidates above hidden when text/aria match; when forced to refuse a hidden element it surfaces the next visible candidate in the error message.
+
+Shadow DOM (open AND closed) is pierced by default via chrome.dom.openOrClosedShadowRoot — Reddit faceplate-* / r-post-form-submit-button / web-component-heavy SPAs no longer need manual deepFind recipes.
+
+ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X / Twitter, OAuth login, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry — pre-fill the form, then highlight the submit button and call wait_for_click so a real human gesture fires the submission.`,
     {
       textHint: z
         .string()
@@ -22,7 +27,7 @@ Returns {success, message, before_url, after_url, navigated}. \`navigated\` is t
         .int()
         .min(1)
         .optional()
-        .describe("Which match to click when multiple elements share the same label (1 = first/topmost, default 1)"),
+        .describe("Which match to click when multiple elements share the same label (1 = first/topmost, default 1). Visible candidates are ranked above hidden, so a hidden flair-dropdown won't claim nth=1 over the visible submit button."),
       until_selector: z
         .string()
         .optional()
@@ -41,14 +46,18 @@ Returns {success, message, before_url, after_url, navigated}. \`navigated\` is t
         .min(500)
         .optional()
         .describe("How long to wait for the until-condition, in milliseconds (default 5000). Only used if one of until_* is set."),
+      expect_submit: z
+        .boolean()
+        .optional()
+        .describe('Broad anti-bot detector. After the click, watch up to 4s for ANY of: URL change, [role=alert] / [data-sonner-toast] / .toast / .notification / aria-live appearance, [role=dialog] / [aria-modal=true] appearance. Returns success=false with "submit silently rejected (likely anti-bot)" when no signal fires. Use on form submits when the until_* destination isn\'t known. Ignored when any until_* is set (those are more specific).'),
     },
-    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms }) => {
+    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms, expect_submit }) => {
       // The WS request must outlive the until-poll, with a buffer for navigation.
       const wsTimeout = Math.max(30_000, (until_timeout_ms ?? 0) + 10_000);
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms },
+          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms, expect_submit },
           wsTimeout
         );
       } catch (err) {
@@ -109,18 +118,27 @@ If the click causes page navigation, this resolves when the new page finishes lo
         timeout: timeout * 1000,
       });
 
-      if (response.type === "navigation_complete") {
+      const r = response as {
+        type: string;
+        url?: string;
+        target?: { selector: string; text: string; tag: string; x: number; y: number } | null;
+      };
+      const targetLine = r.target
+        ? `\nClicked element: <${r.target.tag}>${r.target.text ? ` "${r.target.text}"` : ""} at (${r.target.x}, ${r.target.y}) — selector: ${r.target.selector}`
+        : "";
+
+      if (r.type === "navigation_complete") {
         return {
           content: [
             {
               type: "text",
-              text: `User clicked. Page navigated to: ${(response as { url: string }).url}`,
+              text: `User clicked. Page navigated to: ${r.url ?? "(unknown)"}${targetLine}`,
             },
           ],
         };
       }
       return {
-        content: [{ type: "text", text: "User clicked the highlighted element." }],
+        content: [{ type: "text", text: `User clicked the highlighted element.${targetLine}` }],
       };
     }
   );
@@ -139,9 +157,10 @@ If the click causes page navigation, this resolves when the new page finishes lo
       regex: z.boolean().optional().describe("Text mode: interpret query as a case-insensitive regex."),
       frame: z.string().optional().describe("Same-origin iframe CSS selector to wait inside (text mode)."),
       settle_ms: z.number().int().optional().describe("change_in mode: ms to wait after the first mutation for batching (default 150)."),
+      max_chars: z.number().int().min(50).optional().describe("change_in mode: cap the returned text content (default 1000). Chat-style mutations can dump huge text; agents that need more should opt in explicitly."),
     },
     async (args) => {
-      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, settle_ms } = args;
+      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, settle_ms, max_chars } = args;
       const set = [selector, text, change_in].filter((v) => v !== undefined && v !== null && v !== "").length;
       if (set !== 1) {
         return { content: [{ type: "text", text: "wait_for: pass exactly one of selector, text, or change_in." }] };
@@ -172,7 +191,11 @@ If the click causes page navigation, this resolves when the new page finishes lo
       );
       const r = response as unknown as { ok: boolean; text?: string; message?: string };
       if (!r.ok) return { content: [{ type: "text", text: r.message ?? `wait_for change_in timed out on "${change_in}"` }] };
-      const preview = (r.text ?? "").slice(0, 5000);
+      const fullText = r.text ?? "";
+      const cap = max_chars ?? 1000;
+      const preview = fullText.length > cap
+        ? `${fullText.slice(0, cap)}... [truncated, ${fullText.length} chars total — pass max_chars to see more]`
+        : fullText;
       return { content: [{ type: "text", text: `Element "${change_in}" changed.\n\n${preview}` }] };
     }
   );
