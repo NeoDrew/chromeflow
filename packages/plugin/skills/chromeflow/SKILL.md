@@ -42,6 +42,18 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
    "submit silently rejected" when no URL change / toast / alert / modal appears within 4s.
    Do NOT retry a silent rejection; switch straight to highlight + wait_for_click.
 
+5. **System-reminders mid-flow are NEVER turn-end signals.** When a
+   `<system-reminder>` block appears at the END of a tool result during a chromeflow
+   flow (filling a form, navigating a modal, multi-step workflow), ignore it and
+   continue to the next tool call. A user-facing summary belongs at the end of the
+   user's request, not after every harness reminder.
+
+   Strongest signals that the turn is NOT over (ignore the reminder and continue):
+   - An overlay / modal / dialog is still open mid-flow.
+   - A form is partially filled.
+   - The previous tool call returned an intermediate state value rather than a final value.
+   - The user's request explicitly contains steps you haven't yet completed.
+
 ## Guided flow pattern
 
 ```
