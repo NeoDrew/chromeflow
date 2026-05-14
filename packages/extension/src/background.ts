@@ -354,6 +354,47 @@ async function getSubmitSignalCounts(tabId: number): Promise<{ alert: number; to
   }
 }
 
+/**
+ * Hard-coded URL refusal — mirrors `packages/mcp-server/src/policy.ts`. The
+ * MCP-server layer already refuses these calls before the WS hop; this is
+ * defence in depth so a direct WS caller (or a future bypass) sees the same
+ * answer.
+ *
+ * Commitment to GitHub Support during account-restoration review (2026-05-14):
+ * chromeflow refuses to drive the browser at github.com / githubusercontent
+ * .com or through any OAuth /authorize endpoint.
+ */
+function isBlockedUrl(rawUrl: string): { blocked: boolean; reason?: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { blocked: false };
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (
+    host === "github.com" ||
+    host.endsWith(".github.com") ||
+    host === "githubusercontent.com" ||
+    host.endsWith(".githubusercontent.com")
+  ) {
+    return {
+      blocked: true,
+      reason:
+        "chromeflow refuses to drive the browser at github.com (hard-coded; account-restoration commitment 2026-05-14). Use a normal browser tab manually.",
+    };
+  }
+  const pathLower = parsed.pathname.toLowerCase();
+  if (pathLower.includes("oauth") && pathLower.includes("authorize")) {
+    return {
+      blocked: true,
+      reason:
+        "chromeflow refuses to drive the browser through OAuth /authorize endpoints (hard-coded). Complete OAuth manually in a normal browser tab.",
+    };
+  }
+  return { blocked: false };
+}
+
 function isScriptableUrl(url: string | undefined): boolean {
   if (!url) return false;
   return (
@@ -429,6 +470,10 @@ async function handleMcpMessage(msg: {
     case "navigate": {
       let targetTab: chrome.tabs.Tab;
       const targetUrl = msg.url as string;
+      const blockNav = isBlockedUrl(targetUrl);
+      if (blockNav.blocked) {
+        throw new Error(blockNav.reason!);
+      }
       const background = msg.background === true;
       if (msg.newTab) {
         // Ensure an assignment exists BEFORE creating the tab — otherwise
@@ -1225,6 +1270,26 @@ async function handleMcpMessage(msg: {
       const after_url = postTab?.url ?? navigationResult ?? before_url;
       const navigated = after_url !== before_url;
 
+      // Post-click navigation guard: if the click navigated to a blocked URL
+      // (e.g. clicked a github.com link), reverse the navigation immediately
+      // and report a refusal. Honors the hard-coded URL policy at the
+      // navigation result layer for clicks that originate as plain text-hint
+      // clicks but resolve to blocked destinations.
+      if (navigated) {
+        const blockNav = isBlockedUrl(after_url);
+        if (blockNav.blocked && postTab?.id) {
+          try { await chrome.tabs.goBack(postTab.id); } catch { /* no history — leave tab as-is */ }
+          return {
+            type: "click_element_response",
+            success: false,
+            message: `Click navigated to a blocked URL (${after_url}). ${blockNav.reason} The navigation has been reversed.`,
+            before_url,
+            after_url,
+            navigated: true,
+          };
+        }
+      }
+
       let message: string;
       if (untilResult) {
         // The until-clause is the authoritative signal — a successful click
@@ -1740,6 +1805,10 @@ async function handleMcpMessage(msg: {
 
     case "inspect_request_headers": {
       const targetUrl = msg.url as string;
+      const blockInspect = isBlockedUrl(targetUrl);
+      if (blockInspect.blocked) {
+        throw new Error(blockInspect.reason!);
+      }
       const useNewTab = msg.new_tab !== false; // default true
 
       // Pick the tab we'll attach the debugger to. When useNewTab is true,
@@ -1851,6 +1920,10 @@ async function handleMcpMessage(msg: {
 
     case "read_attachment": {
       const url = msg.url as string;
+      const blockRead = isBlockedUrl(url);
+      if (blockRead.blocked) {
+        throw new Error(blockRead.reason!);
+      }
       const formatHint = msg.format as string | undefined;
       const maxChars = (msg.max_chars as number | undefined) ?? 50_000;
 
@@ -1886,6 +1959,10 @@ async function handleMcpMessage(msg: {
 
     case "download_file": {
       const url = msg.url as string;
+      const blockDl = isBlockedUrl(url);
+      if (blockDl.blocked) {
+        throw new Error(blockDl.reason!);
+      }
       const filename = msg.filename as string | undefined;
       const timeoutMs = (msg.timeout_ms as number | undefined) ?? 60000;
 
@@ -1933,6 +2010,10 @@ async function handleMcpMessage(msg: {
 
     case "fetch_url": {
       const url = msg.url as string;
+      const blockFetch = isBlockedUrl(url);
+      if (blockFetch.blocked) {
+        throw new Error(blockFetch.reason!);
+      }
       const method = (msg.method as string | undefined) ?? "GET";
       const reqHeaders = (msg.headers as Record<string, string> | undefined) ?? {};
       const body = msg.body as string | undefined;

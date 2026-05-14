@@ -3,6 +3,7 @@ import { z } from "zod";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { resolve, relative, isAbsolute, dirname } from "path";
 import type { WsBridge } from "../ws-bridge.js";
+import { isBlockedUrl } from "../policy.js";
 
 export function registerCaptureTools(server: McpServer, bridge: WsBridge) {
   server.tool(
@@ -207,6 +208,10 @@ Pass level="error" to see only errors, or omit to see all levels.`,
       max_chars: z.number().int().min(1).optional().describe("Maximum characters to return (default 20000)."),
     },
     async ({ url, format, max_chars }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `read_attachment refused: ${block.reason}` }] };
+      }
       const effective_max = max_chars ?? 20_000;
       const response = await bridge.request({ type: "read_attachment", url, format, max_chars: effective_max });
       if (response.type !== "read_attachment_response") throw new Error(`Unexpected response: ${response.type}`);
@@ -233,6 +238,10 @@ The file is saved to the user's default downloads directory (usually ~/Downloads
       timeout_ms: z.number().int().min(1000).optional().describe("Abort if the download isn't complete in this many ms (default 60000)."),
     },
     async ({ url, filename, timeout_ms }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `download_file refused: ${block.reason}` }] };
+      }
       const response = await bridge.request({ type: "download_file", url, filename, timeout_ms }, Math.max(30_000, (timeout_ms ?? 60_000) + 5_000));
       if (response.type !== "download_file_response") throw new Error(`Unexpected response: ${response.type}`);
       const r = response as { path: string; mime: string; size: number };
@@ -297,6 +306,10 @@ Set binary=true for non-text responses (PDFs, images, zips) — the body is retu
         .describe("Absolute path on disk under the agent's working directory. When set, the FULL response body is written to this path (no max_bytes truncation) and the response carries only {path, size, content_type, status, headers}. Parent directories are created if missing. Use this for anything you'd otherwise have to paginate through max_bytes."),
     },
     async ({ url, method, headers, body, binary, timeout_ms, max_bytes, to_file }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `fetch_url refused: ${block.reason}` }] };
+      }
       // When to_file is set, request the full body — no truncation. The body
       // is written to disk on this side; the MCP response carries only metadata.
       // binary=true on the WS request ensures we get raw bytes (base64) so

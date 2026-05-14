@@ -5,6 +5,7 @@ import { tmpdir, homedir } from "os";
 import { join } from "path";
 import { execSync } from "child_process";
 import type { WsBridge } from "../ws-bridge.js";
+import { isBlockedUrl } from "../policy.js";
 
 export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
   server.tool(
@@ -21,6 +22,10 @@ Set background=true (only with new_tab=true) to open the new tab WITHOUT switchi
         .describe("If new_tab=true, do not switch focus to the new tab. Default false. Ignored when new_tab is false."),
     },
     async ({ url, new_tab, background }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `open_page refused: ${block.reason}` }] };
+      }
       await bridge.request({ type: "navigate", url, newTab: new_tab ?? false, background: background ?? false });
       return {
         content: [{ type: "text", text: `Navigated to ${url}${new_tab ? (background ? " (new background tab)" : " (new tab)") : ""}` }],
@@ -435,6 +440,10 @@ CSP-strict pages that disallow eval (Stripe, GitHub) silently fall through to a 
       new_tab: z.boolean().optional().describe("Open the inspection in a background tab and close it when done. Default true (preserves the active tab's state). Set false to use the active tab — the active tab WILL navigate."),
     },
     async ({ url, redact_cookies = true, new_tab = true }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `inspect_request_headers refused: ${block.reason}` }] };
+      }
       const response = await bridge.request({ type: "inspect_request_headers", url, new_tab }, 30_000);
       const r = response as { message?: string };
       let text = r.message ?? "(no headers captured)";
