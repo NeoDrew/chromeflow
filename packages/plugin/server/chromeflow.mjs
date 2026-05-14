@@ -24738,6 +24738,33 @@ import { writeFileSync, copyFileSync, readFileSync } from "fs";
 import { tmpdir, homedir } from "os";
 import { join } from "path";
 import { execSync } from "child_process";
+
+// packages/mcp-server/src/policy.ts
+function isBlockedUrl(rawUrl) {
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return { blocked: false };
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host === "github.com" || host.endsWith(".github.com") || host === "githubusercontent.com" || host.endsWith(".githubusercontent.com")) {
+    return {
+      blocked: true,
+      reason: "chromeflow refuses to drive the browser at github.com. This is hard-coded per a commitment to GitHub Support during an account-restoration review (2026-05-14). Interact with GitHub manually in a normal browser tab."
+    };
+  }
+  const pathLower = parsed.pathname.toLowerCase();
+  if (pathLower.includes("oauth") && pathLower.includes("authorize")) {
+    return {
+      blocked: true,
+      reason: "chromeflow refuses to drive the browser through OAuth /authorize endpoints. This is hard-coded per the same GitHub Support commitment. Complete OAuth manually in a normal browser tab."
+    };
+  }
+  return { blocked: false };
+}
+
+// packages/mcp-server/src/tools/browser.ts
 function registerBrowserTools(server, bridge) {
   server.tool(
     "open_page",
@@ -24750,6 +24777,10 @@ Set background=true (only with new_tab=true) to open the new tab WITHOUT switchi
       background: external_exports.boolean().optional().describe("If new_tab=true, do not switch focus to the new tab. Default false. Ignored when new_tab is false.")
     },
     async ({ url, new_tab, background }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `open_page refused: ${block.reason}` }] };
+      }
       await bridge.request({ type: "navigate", url, newTab: new_tab ?? false, background: background ?? false });
       return {
         content: [{ type: "text", text: `Navigated to ${url}${new_tab ? background ? " (new background tab)" : " (new tab)" : ""}` }]
@@ -25089,6 +25120,10 @@ PAGE ALERT: "${alert}" \u2014 the page showed a dialog with this message. Read i
       new_tab: external_exports.boolean().optional().describe("Open the inspection in a background tab and close it when done. Default true (preserves the active tab's state). Set false to use the active tab \u2014 the active tab WILL navigate.")
     },
     async ({ url, redact_cookies = true, new_tab = true }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `inspect_request_headers refused: ${block.reason}` }] };
+      }
       const response = await bridge.request({ type: "inspect_request_headers", url, new_tab }, 3e4);
       const r = response;
       let text = r.message ?? "(no headers captured)";
@@ -25326,6 +25361,10 @@ ${lines.join("\n")}` }] };
       max_chars: external_exports.number().int().min(1).optional().describe("Maximum characters to return (default 20000).")
     },
     async ({ url, format, max_chars }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `read_attachment refused: ${block.reason}` }] };
+      }
       const effective_max = max_chars ?? 2e4;
       const response = await bridge.request({ type: "read_attachment", url, format, max_chars: effective_max });
       if (response.type !== "read_attachment_response") throw new Error(`Unexpected response: ${response.type}`);
@@ -25354,6 +25393,10 @@ The file is saved to the user's default downloads directory (usually ~/Downloads
       timeout_ms: external_exports.number().int().min(1e3).optional().describe("Abort if the download isn't complete in this many ms (default 60000).")
     },
     async ({ url, filename, timeout_ms }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `download_file refused: ${block.reason}` }] };
+      }
       const response = await bridge.request({ type: "download_file", url, filename, timeout_ms }, Math.max(3e4, (timeout_ms ?? 6e4) + 5e3));
       if (response.type !== "download_file_response") throw new Error(`Unexpected response: ${response.type}`);
       const r = response;
@@ -25394,6 +25437,10 @@ Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is r
       to_file: external_exports.string().optional().describe("Absolute path on disk under the agent's working directory. When set, the FULL response body is written to this path (no max_bytes truncation) and the response carries only {path, size, content_type, status, headers}. Parent directories are created if missing. Use this for anything you'd otherwise have to paginate through max_bytes.")
     },
     async ({ url, method, headers, body, binary, timeout_ms, max_bytes, to_file }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `fetch_url refused: ${block.reason}` }] };
+      }
       const effectiveMaxBytes = to_file ? Number.MAX_SAFE_INTEGER : max_bytes ?? 1e5;
       const effectiveBinary = to_file ? true : binary;
       const wsTimeout = to_file ? Math.max(12e4, (timeout_ms ?? 3e4) + 3e4) : Math.max(3e4, (timeout_ms ?? 3e4) + 5e3);
