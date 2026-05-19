@@ -138,10 +138,16 @@ If the click causes page navigation, this resolves when the new page finishes lo
         .describe("Max seconds to wait for the click (default 120)"),
     },
     async ({ timeout = 120 }) => {
-      const response = await bridge.request({
-        type: "start_click_watch",
-        timeout: timeout * 1000,
-      });
+      // The WS request must outlive the click watch — otherwise long timeouts
+      // are silently capped at the default 30s WS REQUEST_TIMEOUT_MS.
+      const watchMs = timeout * 1000;
+      const response = await bridge.request(
+        {
+          type: "start_click_watch",
+          timeout: watchMs,
+        },
+        watchMs + 5_000,
+      );
 
       const r = response as {
         type: string;

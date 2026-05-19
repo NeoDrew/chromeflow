@@ -25604,10 +25604,14 @@ If the click causes page navigation, this resolves when the new page finishes lo
       timeout: external_exports.number().optional().describe("Max seconds to wait for the click (default 120)")
     },
     async ({ timeout = 120 }) => {
-      const response = await bridge.request({
-        type: "start_click_watch",
-        timeout: timeout * 1e3
-      });
+      const watchMs = timeout * 1e3;
+      const response = await bridge.request(
+        {
+          type: "start_click_watch",
+          timeout: watchMs
+        },
+        watchMs + 5e3
+      );
       const r = response;
       const targetLine = r.target ? `
 Clicked element: <${r.target.tag}>${r.target.text ? ` "${r.target.text}"` : ""} at (${r.target.x}, ${r.target.y}) \u2014 selector: ${r.target.selector}` : "";
@@ -25822,7 +25826,7 @@ ${lines.join("\n")}` }] };
 }
 
 // src/index.ts
-var PACKAGE_VERSION = true ? "0.9.7" : "dev";
+var PACKAGE_VERSION = true ? "0.9.8" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);
