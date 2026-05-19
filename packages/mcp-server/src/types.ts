@@ -35,16 +35,19 @@ export type ServerMessage =
       until_selector?: string;
       until_url_contains?: string;
       until_text_contains?: string;
+      until_url_changes?: boolean;
       until_timeout_ms?: number;
       expect_submit?: boolean;
+      within_selector?: string;
+      near_text?: string;
     }
-  | { type: "prepare_click_target"; requestId: string; textHint: string; nth?: number }
+  | { type: "prepare_click_target"; requestId: string; textHint: string; nth?: number; within_selector?: string; near_text?: string }
   | { type: "post_click_inspect"; requestId: string }
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
   | { type: "get_page_text"; requestId: string; selector?: string; startIndex?: number }
   | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number; refresh?: number; shadow_root?: boolean }
   | { type: "wait_for_change"; requestId: string; selector: string; timeout: number; settle?: number }
-  | { type: "execute_script"; requestId: string; code: string }
+  | { type: "execute_script"; requestId: string; code: string; tab_query?: string }
   | { type: "get_elements"; requestId: string }
   | { type: "get_form_fields"; requestId: string }
   | { type: "scroll_to_element"; requestId: string; query: string }
@@ -161,9 +164,10 @@ export type ClientMessage =
       before_url?: string;
       after_url?: string;
       navigated?: boolean;
+      scope_missed?: boolean;
     }
   | { type: "page_text_response"; requestId: string; text: string }
-  | { type: "script_response"; requestId: string; result: string; alert?: string | null }
+  | { type: "script_response"; requestId: string; result: string; alert?: string | null; context?: "main"; navigated?: boolean; reauthorized?: boolean }
   | { type: "error"; requestId: string; message: string }
   | { type: "elements_response"; requestId: string; elements: Array<{ index: number; type: string; label: string; value: string; x: number; y: number; width: number; height: number }> }
   | {

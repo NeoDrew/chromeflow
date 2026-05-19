@@ -45,10 +45,11 @@ type FillableInput = HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
 export function fillInput(
   textHint: string,
   value: string,
-  nth: number = 1,
+  nth?: number,
   exact: boolean = false
 ): { success: boolean; message: string; matched?: string } {
   const lower = textHint.toLowerCase().trim();
+  const nthExplicit = typeof nth === "number" && nth >= 1;
 
   // Try CodeMirror 6 editors first (.cm-editor wrapping a .cm-content div)
   const cmResult = fillCodeMirror(lower, value);
@@ -73,7 +74,7 @@ export function fillInput(
     return { success: true, message: `Filled "${textHint}" → ${matched} (contenteditable)`, matched };
   }
 
-  const found = findInput(lower, nth, exact);
+  const found = findInput(lower, nth ?? 1, exact);
   if (!found) {
     // Last resort: the user may have just clicked/focused the target field via
     // wait_for_click — try to fill whatever is currently focused.
@@ -116,7 +117,19 @@ export function fillInput(
     return { success: false, message: `No input found for "${textHint}"` };
   }
 
-  const { input, kind } = found;
+  const { input, kind, fuzzyCount, fuzzyCandidates } = found;
+
+  // Ambiguous fuzzy walk: when the winner only matched via the lowest-confidence
+  // pathway AND there were 2+ such candidates, refuse rather than silently
+  // overwriting an adjacent textarea. The caller can disambiguate by passing
+  // `selector=...`, `exact: true`, or an explicit `nth`.
+  if (kind === "fuzzy-text-walk" && !exact && !nthExplicit && fuzzyCount >= 2) {
+    const list = fuzzyCandidates.map((c, i) => `  ${i + 1}. ${c}`).join("\n");
+    return {
+      success: false,
+      message: `Ambiguous fuzzy match for "${textHint}" — ${fuzzyCount} candidates matched via fuzzy-text-walk and none has a stronger label association. Disambiguate with exact: true, an explicit nth, or selector="<css>". Candidates:\n${list}`,
+    };
+  }
 
   // Focus the element first (triggers any focus handlers)
   input.focus();
@@ -208,7 +221,7 @@ function findInput(
   lower: string,
   nth: number = 1,
   exact: boolean = false
-): { input: FillableInput; kind: MatchKind } | null {
+): { input: FillableInput; kind: MatchKind; fuzzyCount: number; fuzzyCandidates: string[] } | null {
   const matches: Array<{ input: FillableInput; kind: MatchKind }> = [];
   const seen = new Set<Element>();
 
@@ -313,12 +326,17 @@ function findInput(
   if (matches.length === 0) return null;
   // Sort by rank (lower = stronger). Stable sort preserves DOM order within a rank.
   matches.sort((a, b) => RANK[a.kind] - RANK[b.kind]);
+  const fuzzyMatches = matches.filter((m) => m.kind === "fuzzy-text-walk");
+  const fuzzyCount = fuzzyMatches.length;
+  const fuzzyCandidates = fuzzyMatches.slice(0, 5).map((m) => describeElement(m.input));
   if (exact) {
     const exactOnly = matches.filter((m) => RANK[m.kind] <= EXACT_MAX);
     if (exactOnly.length === 0) return null;
-    return exactOnly[nth - 1] ?? exactOnly[exactOnly.length - 1];
+    const winner = exactOnly[nth - 1] ?? exactOnly[exactOnly.length - 1];
+    return { ...winner, fuzzyCount, fuzzyCandidates };
   }
-  return matches[nth - 1] ?? matches[matches.length - 1];
+  const winner = matches[nth - 1] ?? matches[matches.length - 1];
+  return { ...winner, fuzzyCount, fuzzyCandidates };
 }
 
 /**

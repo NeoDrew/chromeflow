@@ -249,6 +249,10 @@ Reach for these BEFORE `get_page_text` / `get_form_fields` when the goal is "is 
   expected target — if not, `switch_to_tab(<URL or title substring>)` before running
   `execute_script` or any other tab-scoped tool. Without this guard, scripts run on the
   wrong tab and fail with confusing "undefined" errors that look like page bugs.
+- For a one-off cross-tab read or write that should NOT steal focus from the user's
+  foreground tab, pass `execute_script(..., tab_query="<index | url substring | title>")` —
+  it targets a specific tab without firing `tabs.update({active: true})`. Use this for
+  background heartbeats and parallel-session scripts. The same query syntax as `switch_to_tab`.
 
 ## Error handling
 
@@ -264,8 +268,9 @@ screenshot to check what happened.
 `click_element("Remove", nth=3)` — use `nth` (1-based) to target the specific one by order top-to-bottom. Check `get_form_fields` or `get_page_text` first to determine which index corresponds to the right section.
 
 **`fill_input` matched the wrong field** (always read the response — it names the matched element):
-- If you wanted "Ad rate" and got back `<input name="title">`, the fuzzy text walker latched onto a neighbour. Retry with `exact=true` and a more specific hint, or use `react_set_input(selector, value)` with a precise CSS selector.
+- If you wanted "Ad rate" and got back `<input name="title">`, the fuzzy text walker latched onto a neighbour. Retry with `exact=true` and a more specific hint, or use `fill_input(selector=...)` with a precise CSS selector.
 - The match-strength is reported as `aria-eq`, `placeholder-eq`, `name-eq`, `id-eq`, `label-text-eq`, or fuzzier kinds. Anything labeled `fuzzy-text-walk` or `*-includes` is the lowest-confidence kind — verify the matched element really was what you wanted.
+- **Ambiguous fuzzy matches are now refused** rather than silently picking the first candidate. When 2+ inputs would match via fuzzy-text-walk and no explicit `nth` was passed, `fill_input` returns success=false with a `Candidates:` list — disambiguate via `exact: true`, an explicit `nth`, or `selector="<css>"`. This prevents the "overwrote the wrong textarea" bug on forms with multiple rationale-style fields.
 
 **`fill_input` not found or rejected by the page:**
 1. `click_element(hint)` to focus the field, then retry `fill_input`
@@ -288,8 +293,18 @@ Pass an `until_*` clause to require an observable post-click condition. `click_e
 click_element("List with displayed fees", until_url_contains="/listing-published")
 click_element("Save", until_selector=".success-toast")
 click_element("Confirm", until_text_contains="Order placed")
+click_element("Submit", until_url_changes=true)   — ANY URL change. Use when the destination URL isn't known up front (e.g. submit that navigates to /tasks/<new-id>).
 ```
-If success=false: try `react_set_input` to fire the click via the page's own React handler, or use `execute_script("document.querySelector(...).click()")` directly.
+`until_url_contains` automatically requires a URL change when the substring is already present in the pre-click URL — so `until_url_contains="tasks/"` on a `/tasks/OLD → /tasks/NEW` submit no longer false-positives instantly.
+
+If success=false: try `fill_input(selector=...)` to fire the click via the page's own React handler, or use `execute_script("document.querySelector(...).click()")` directly.
+
+**`click_element` nth across the whole document — scope it to a section**: when a long form has the same label per section (one "Minor Issue(s)" radio per evaluation axis), pass `within_selector` to restrict candidate counting to a CSS scope, or `near_text` to scope to the nearest container whose heading starts with the given text:
+```
+click_element("Minor Issue(s)", nth=1, within_selector="#response-b-style")
+click_element("Minor Issue(s)", nth=1, near_text="RESPONSE B - Style")
+```
+Mirror of `find_text`'s `scope_selector`. When the scope doesn't match anything, the response carries `scope_missed: true` so callers can branch.
 
 **Spotting silent redirects**: every `click_element` response now includes `before_url`, `after_url`, and `navigated`. The agent-facing text appends a `→ Navigated: <url>` line whenever `before_url !== after_url`. This catches the "I clicked Assessment but the page bounced me to course home" case without needing a separate `list_tabs` round-trip. If the URL didn't change but the click is supposed to navigate, that's a sign the click never registered.
 
@@ -322,13 +337,16 @@ wait_for_selector("iframe", shadow_root=true)   — wait until the iframe both e
 
 **Waiting for an existing region to update** (e.g. click Save, then get the confirmation toast; send a chat message, then get the reply): `wait_for_change(selector)` uses a MutationObserver on the element's subtree and returns its new text content as soon as the mutation settles. Prefer this over `wait_for_selector` + `get_page_text` when the element already exists and you just need its next state — one call instead of two, no polling.
 
-**Pre-filling `prompt()` and `confirm()` dialogs**: When a page action will trigger a JS
-dialog (e.g. "Save As" calling `prompt()`), call `set_dialog_response` BEFORE the action:
+**Pre-filling `prompt()` and `confirm()` dialogs** (browser-native, not in-page DOM modals):
+When a page action will trigger a JS dialog (e.g. "Save As" calling `prompt()`), override
+the global BEFORE the action via `execute_script`:
+```js
+window.prompt = () => 'my-filename';
+window.confirm = () => true;
 ```
-set_dialog_response(type="prompt", value="my-filename")   — next prompt() returns "my-filename"
-set_dialog_response(type="confirm", value="true")          — next confirm() returns true
-```
-Then trigger the action (e.g. `click_element("Save As")`). The response is consumed once.
+Then trigger the action (e.g. `click_element("Save As")`). Caveats:
+- The override is a property on `window`; content-script reload after a navigation wipes it. **Re-install after every navigation** that re-loads the page modules.
+- This only intercepts the browser-native `window.prompt()` / `window.confirm()` / `window.alert()` triad. For **in-page DOM modals** (Radix dialogs, Headless UI modals, Stripe drawers, the DataAnnotation force-submit modal), the modal is regular DOM and `window.prompt` overrides do nothing. Click the modal's button directly via `click_element` or `react_call_prop`, and fill its textarea via `fill_input`.
 
 **React Select / custom styled dropdowns** (e.g. "Select..." components on DataAnnotation):
 `click_element` and `fill_input` do NOT work on these — they intercept native events. The cleanest path is `react_set_input` (which handles the prototype-from-instance setter for you) followed by a click on the filtered option:
@@ -388,6 +406,25 @@ document.body.style.zoom = '1';
 `execute_script` sometimes fails due to CSP or timing. If a download doesn't trigger:
 1. Retry the exact same `execute_script` call
 2. If still failing, use `find_and_highlight` to show the user a download button to click manually
+
+**`execute_script` lost host permission ("Cannot access contents of the page")**: idle tabs
+sometimes lose extension host access after a long idle (Chrome quietly evicts the content
+script). The tool now auto-recovers: when it detects the host-permission error, it reloads
+the active tab once and retries the script. The response carries `reauthorized: true` so
+callers can see the recovery happened (the auto-reload may clear in-page form state, so
+prefer `save_page_state` before long idles on pages with unsaved input).
+
+**`execute_script` navigated mid-script**: when the page navigates during the script's
+execution (a click handler that fires `location.href = ...`, a router pushState, etc.), the
+tool returns `result: "[navigated]"` with `navigated: true` instead of throwing the cryptic
+"Frame with ID 0 was removed" error. Verify post-navigation state with `get_page_text` or
+`wait_for`.
+
+Every `execute_script` response carries `context: "main"` in the agent-facing header so
+debugging "why didn't my fetch work?" is one glance away: MAIN world is subject to page CSP,
+fetch() against authenticated APIs there is often blocked by connect-src. For privileged
+network access from the extension's service worker (no page CSP, full cookie jar), use
+`fetch_url` or `read_attachment`.
 
 **React-controlled native radios/checkboxes that don't update `checked`**: `click_element`
 auto-handles this for native `<input type=radio>` and `<input type=checkbox>` inputs
@@ -485,11 +522,12 @@ return JSON.stringify(fields);   // write the returned string to a temp file via
 ```
 Restore reverses the process: read JSON, set values, dispatch `input`/`change` events.
 
-**`set_dialog_response` → `execute_script` override**
+**`set_dialog_response` → `execute_script` override** (browser-native dialogs only — see the dedicated section above for full caveats and the in-page DOM modal alternative)
 ```js
 // Before triggering the action that shows a prompt():
 window.prompt = () => 'my response';
 window.confirm = () => true;
 // Then trigger the action.
+// Re-install after any navigation — content-script reload clears the override.
 ```
 

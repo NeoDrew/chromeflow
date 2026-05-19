@@ -115,16 +115,24 @@ export class WsBridge {
   }
 
   /** Send a message and wait for a response from the extension. */
-  request(message: ServerMessagePayload, timeoutMs = REQUEST_TIMEOUT_MS): Promise<ClientMessage> {
+  async request(message: ServerMessagePayload, timeoutMs = REQUEST_TIMEOUT_MS): Promise<ClientMessage> {
     if (!this.isConnected()) {
-      return Promise.reject(
-        new Error(
+      // Grace window for the multi-instance startup race: a freshly spawned
+      // MCP on a non-default port may arrive before the extension's WS to
+      // that port has cleared its exponential-backoff timer.
+      const grace = Math.min(10_000, timeoutMs);
+      const start = Date.now();
+      while (!this.isConnected() && Date.now() - start < grace) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      if (!this.isConnected()) {
+        throw new Error(
           "Chromeflow extension is not connected. Open Chrome and ensure the extension is installed."
-        )
-      );
+        );
+      }
     }
     const requestId = crypto.randomUUID();
-    return new Promise((resolve, reject) => {
+    return new Promise<ClientMessage>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
         reject(new Error(`Request timed out after ${timeoutMs}ms`));
