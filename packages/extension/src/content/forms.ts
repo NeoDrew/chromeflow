@@ -36,6 +36,24 @@ export interface CaptchaInfo {
 }
 
 /**
+ * True if the element OR any ancestor is `display:none`, `visibility:hidden`,
+ * or `aria-hidden="true"`. Catches the common "form section in a hidden
+ * collapsible parent" pattern where the input itself reports default styles
+ * but is invisible because of an ancestor.
+ */
+function isAncestorHidden(el: Element, doc: Document): boolean {
+  const view = doc.defaultView;
+  if (!view) return false;
+  for (let cur: Element | null = el; cur && cur !== doc.documentElement; cur = cur.parentElement) {
+    if (cur.getAttribute("aria-hidden") === "true") return true;
+    const s = view.getComputedStyle(cur);
+    if (s.display === "none") return true;
+    if (s.visibility === "hidden") return true;
+  }
+  return false;
+}
+
+/**
  * Walk up an element's ancestors looking for the nearest section-like
  * heading. Returns the heading's trimmed text, or "" if none found within
  * 8 levels.
@@ -177,9 +195,7 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
   const FIELD_SELECTORS =
     "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=file]), textarea, select";
   for (const el of Array.from(doc.querySelectorAll<HTMLElement>(FIELD_SELECTORS))) {
-    const view = doc.defaultView;
-    const s = view ? view.getComputedStyle(el) : null;
-    if (s && (s.display === "none" || s.visibility === "hidden")) continue;
+    if (isAncestorHidden(el, doc)) continue;
 
     const label = deriveInputLabel(el, doc);
 
@@ -206,9 +222,8 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
 
   // CodeMirror 6 editors
   for (const editor of Array.from(doc.querySelectorAll<HTMLElement>(".cm-editor"))) {
+    if (isAncestorHidden(editor, doc)) continue;
     const view = doc.defaultView;
-    const s = view ? view.getComputedStyle(editor) : null;
-    if (s && (s.display === "none" || s.visibility === "hidden")) continue;
     const rect = editor.getBoundingClientRect();
     const scrollY = view?.scrollY ?? 0;
 
@@ -238,9 +253,7 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
 
   // Monaco editors
   for (const editor of Array.from(doc.querySelectorAll<HTMLElement>(".monaco-editor"))) {
-    const view = doc.defaultView;
-    const s = view ? view.getComputedStyle(editor) : null;
-    if (s && (s.display === "none" || s.visibility === "hidden")) continue;
+    if (isAncestorHidden(editor, doc)) continue;
 
     let label = editor.getAttribute("aria-label") ?? "";
     if (!label) {
@@ -278,20 +291,14 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
   });
 
   // Count hidden fields for the warning that get_form_fields appends.
+  // Walks the ancestor chain so inputs inside a `display:none` collapsible
+  // parent (the most common pattern for conditional form sections) are
+  // counted, not just inputs hidden directly via their own style.
   const hiddenFields = Array.from(
     doc.querySelectorAll<HTMLElement>(
       "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select"
     )
-  ).filter((el) => {
-    const view = doc.defaultView;
-    if (!view) return false;
-    const s = view.getComputedStyle(el);
-    return (
-      s.display === "none" ||
-      s.visibility === "hidden" ||
-      el.getAttribute("aria-hidden") === "true"
-    );
-  });
+  ).filter((el) => isAncestorHidden(el, doc));
 
   return {
     fields,

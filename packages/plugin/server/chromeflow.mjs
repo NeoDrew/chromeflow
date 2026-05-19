@@ -25822,7 +25822,7 @@ ${lines.join("\n")}` }] };
 }
 
 // src/index.ts
-var PACKAGE_VERSION = true ? "0.9.6" : "dev";
+var PACKAGE_VERSION = true ? "0.9.7" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);
