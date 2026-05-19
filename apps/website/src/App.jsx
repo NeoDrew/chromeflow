@@ -1,3 +1,4 @@
+import Nav from './components/Nav'
 import Hero from './components/Hero'
 import Setup from './components/Setup'
 import Demo from './components/Demo'
@@ -13,14 +14,17 @@ export default function App() {
   if (path === '/privacy') return <Privacy />
 
   return (
-    <main>
-      <Hero />
-      <Setup />
-      <Demo />
-      <OctoWave />
-      <BeforeAfter />
-      <InfiniteTasks />
-      <Comparison />
-    </main>
+    <>
+      <Nav />
+      <main>
+        <Hero />
+        <Setup />
+        <Demo />
+        <OctoWave />
+        <BeforeAfter />
+        <InfiniteTasks />
+        <Comparison />
+      </main>
+    </>
   )
 }
