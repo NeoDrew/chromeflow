@@ -1,8 +1,8 @@
 {
   "name": "chromeflow",
   "owner": {
-    "name": "NeoDrew",
-    "url": "https://github.com/NeoDrew"
+    "name": "NeoDrewX",
+    "url": "https://github.com/NeoDrewX"
   },
   "plugins": [
     {
@@ -11,7 +11,7 @@
       "description": "Let Claude Code drive your real browser — clicks, fills forms, grabs API keys, writes them to .env.",
       "version": "0.9.5",
       "homepage": "https://chromeflow.run",
-      "repository": "https://github.com/NeoDrew/chromeflow",
+      "repository": "https://github.com/NeoDrewX/chromeflow",
       "license": "MIT",
       "keywords": ["mcp", "browser", "chrome", "automation", "claude-code"]
     }

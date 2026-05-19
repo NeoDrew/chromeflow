@@ -3,7 +3,7 @@
   "version": "0.9.5",
   "description": "Let Codex drive your real browser — clicks, fills forms, grabs API keys, writes them to .env. Bundles the chromeflow MCP server and usage skill.",
   "homepage": "https://chromeflow.run",
-  "repository": "https://github.com/NeoDrew/chromeflow",
+  "repository": "https://github.com/NeoDrewX/chromeflow",
   "license": "MIT",
   "keywords": [
     "mcp",

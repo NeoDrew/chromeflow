@@ -1,10 +1,10 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
-  "name": "io.github.NeoDrew/chromeflow",
+  "name": "io.github.NeoDrewX/chromeflow",
   "description": "Lets Claude Code or Codex CLI drive your real Chrome — sessions intact, 28 browser tools.",
   "version": "0.9.5",
   "repository": {
-    "url": "https://github.com/NeoDrew/chromeflow",
+    "url": "https://github.com/NeoDrewX/chromeflow",
     "source": "github"
   },
   "websiteUrl": "https://chromeflow.run"

@@ -180,7 +180,7 @@ function render(state: State) {
             <div class="step-num">1</div>
             <div class="step-body">
               Add &amp; install the Chromeflow plugin in Claude Code:
-              <code>/plugin marketplace add NeoDrew/chromeflow</code>
+              <code>/plugin marketplace add NeoDrewX/chromeflow</code>
               <code>/plugin install chromeflow</code>
             </div>
           </div>
