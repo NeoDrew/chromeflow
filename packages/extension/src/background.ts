@@ -846,12 +846,34 @@ async function handleMcpMessage(msg: {
     }
 
     case "execute_script": {
-      const tab = await getActiveTab(port);
+      // Resolve target tab: tab_query lets the caller target a tab without
+      // focus-switching. Used by self-rescheduling loops where the active tab
+      // may have drifted while the user was AFK.
+      const tabQuery = msg.tab_query as string | undefined;
+      let tab: chrome.tabs.Tab;
+      if (tabQuery) {
+        await getActiveTab(port);
+        const wid = getWindowId(port)!;
+        const allTabs = await chrome.tabs.query({ windowId: wid });
+        const lower = tabQuery.toLowerCase();
+        const byIndex = parseInt(tabQuery, 10);
+        const match = !isNaN(byIndex)
+          ? allTabs[byIndex - 1]
+          : allTabs.find((t) => (t.url ?? "").toLowerCase().includes(lower) || (t.title ?? "").toLowerCase().includes(lower));
+        if (!match?.id) {
+          const list = allTabs.map((t, i) => `${i + 1}. ${t.title} — ${t.url}`).join("\n");
+          throw new Error(`tab_query "${tabQuery}" matched no tab. Open tabs:\n${list}`);
+        }
+        tab = match;
+      } else {
+        tab = await getActiveTab(port);
+      }
       if (!isScriptableUrl(tab.url)) {
         throw new Error(`Cannot execute script on ${tab.url}`);
       }
       const code = msg.code as string;
-      const tabId = tab.id!;
+      let tabId = tab.id!;
+      let reauthorized = false;
 
       // Detect top-level `await` so the script can use it directly. The
       // word-boundary check excludes false positives like `myawaitable`. With
@@ -865,42 +887,75 @@ async function handleMcpMessage(msg: {
       let alertMsg: string | null = null;
       let cspBlocked = false;
 
-      try {
-        const results = await chrome.scripting.executeScript({
-          target: { tabId },
-          world: "MAIN",
-          func: async (code: string, usesAwait: boolean) => {
-            let result: unknown;
-            try {
-              if (usesAwait) {
-                // Wrap in an async IIFE expression so eval parses the body as
-                // an async function (top-level await works inside async fns).
-                // Then await the returned promise here.
-                result = await (0, eval)(`(async () => { ${code} })()`);
-              } else {
-                result = (0, eval)(code);
-              }
-            } catch (e) {
-              if (String(e).includes("Illegal return")) {
-                try {
-                  if (usesAwait) {
-                    result = await (0, eval)(`(async () => { ${code} })()`);
-                  } else {
-                    result = (0, eval)(`(function() { ${code} })()`);
-                  }
-                } catch (e2) {
-                  result = `Error: ${e2}`;
-                }
-              } else {
-                result = `Error: ${e}`;
-              }
+      const runInjection = () => chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: async (code: string, usesAwait: boolean) => {
+          let result: unknown;
+          try {
+            if (usesAwait) {
+              // Wrap in an async IIFE expression so eval parses the body as
+              // an async function (top-level await works inside async fns).
+              // Then await the returned promise here.
+              result = await (0, eval)(`(async () => { ${code} })()`);
+            } else {
+              result = (0, eval)(code);
             }
-            const captured = (window as any)._alertCapture ?? null;
-            if (captured) (window as any)._alertCapture = null;
-            return JSON.stringify({ result: String(result ?? "undefined"), alert: captured });
-          },
-          args: [code, usesAwait],
-        });
+          } catch (e) {
+            if (String(e).includes("Illegal return")) {
+              try {
+                if (usesAwait) {
+                  result = await (0, eval)(`(async () => { ${code} })()`);
+                } else {
+                  result = (0, eval)(`(function() { ${code} })()`);
+                }
+              } catch (e2) {
+                result = `Error: ${e2}`;
+              }
+            } else {
+              result = `Error: ${e}`;
+            }
+          }
+          const captured = (window as any)._alertCapture ?? null;
+          if (captured) (window as any)._alertCapture = null;
+          return JSON.stringify({ result: String(result ?? "undefined"), alert: captured });
+        },
+        args: [code, usesAwait],
+      });
+
+      try {
+        let results;
+        try {
+          results = await runInjection();
+        } catch (e) {
+          const errStr = String(e);
+          if (errStr.includes("Cannot access contents of the page") || errStr.includes("Extension manifest must request permission")) {
+            // Idle tab lost host access (Chrome silently revokes after long
+            // periods, navigation between origin variants, etc). Reload the
+            // tab once to re-attach the content script, then retry.
+            await new Promise<void>((resolve) => {
+              const listener = (id: number, info: chrome.tabs.TabChangeInfo) => {
+                if (id === tabId && info.status === "complete") {
+                  chrome.tabs.onUpdated.removeListener(listener);
+                  resolve();
+                }
+              };
+              chrome.tabs.onUpdated.addListener(listener);
+              chrome.tabs.reload(tabId).catch(() => {
+                chrome.tabs.onUpdated.removeListener(listener);
+                resolve();
+              });
+              setTimeout(() => {
+                chrome.tabs.onUpdated.removeListener(listener);
+                resolve();
+              }, 15_000);
+            });
+            reauthorized = true;
+            results = await runInjection();
+          } else {
+            throw e;
+          }
+        }
         try {
           const parsed = JSON.parse(String(results[0]?.result ?? "{}"));
           result = parsed.result ?? "undefined";
@@ -916,6 +971,20 @@ async function handleMcpMessage(msg: {
         const errStr = String(e);
         if (errStr.includes("EvalError") || errStr.includes("Content Security Policy") || errStr.includes("unsafe-eval")) {
           cspBlocked = true;
+        } else if (/Frame with ID \d+ was removed/i.test(errStr) || errStr.includes("No frame with id")) {
+          // Page navigated during script execution. The script's effects may
+          // or may not have completed; surface as a non-error signal so the
+          // caller can verify post-navigation state rather than treating
+          // this as a hard failure.
+          return {
+            type: "script_response",
+            requestId: msg.requestId,
+            result: "[navigated]",
+            alert: null,
+            context: "main" as const,
+            navigated: true,
+            reauthorized: reauthorized || undefined,
+          };
         } else {
           throw e;
         }
@@ -970,6 +1039,8 @@ async function handleMcpMessage(msg: {
         requestId: msg.requestId,
         result,
         alert: alertMsg,
+        context: "main" as const,
+        reauthorized: reauthorized || undefined,
       };
     }
 
@@ -993,6 +1064,7 @@ async function handleMcpMessage(msg: {
         label?: string;
         skipClick?: boolean;
         nextCandidate?: string;
+        scope_missed?: boolean;
       };
       let prep: PrepResult | undefined;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -1001,13 +1073,17 @@ async function handleMcpMessage(msg: {
           requestId: msg.requestId,
           textHint: msg.textHint,
           nth: msg.nth,
+          within_selector: msg.within_selector,
+          near_text: msg.near_text,
         }) as PrepResult;
         if (prep.success) break;
+        // Don't retry when the scope itself was missing — it won't appear on a 500ms delay.
+        if (prep.scope_missed) break;
         if (attempt < 2) await new Promise((r) => setTimeout(r, 500));
       }
 
       if (!prep || !prep.success) {
-        return { type: "click_element_response", success: false, message: prep?.message ?? "click failed", before_url, after_url: before_url, navigated: false };
+        return { type: "click_element_response", success: false, message: prep?.message ?? "click failed", before_url, after_url: before_url, navigated: false, scope_missed: prep?.scope_missed };
       }
 
       // Pre-flight skip: matched element resolved to an already-checked radio.
@@ -1115,7 +1191,17 @@ async function handleMcpMessage(msg: {
         result = { success: true, message: `Clicked "${prep.label ?? msg.textHint}"${postNote}` };
       } else {
         // Fallback: content-script synthetic click (isTrusted=false).
-        result = await forwardToContentScript(tab, msg) as { success: boolean; message: string };
+        try {
+          result = await forwardToContentScript(tab, msg) as { success: boolean; message: string };
+        } catch (e) {
+          const errStr = String(e);
+          if (/Frame with ID \d+ was removed/i.test(errStr) || errStr.includes("No frame with id")) {
+            // Click triggered navigation mid-handler — treat as success.
+            result = { success: true, message: `Clicked "${prep.label ?? msg.textHint}" — page navigated during click` };
+          } else {
+            throw e;
+          }
+        }
         if (!result.success) {
           const [postFailTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
           const after_url = postFailTab?.url ?? before_url;
@@ -1131,9 +1217,14 @@ async function handleMcpMessage(msg: {
       const untilSelector = msg.until_selector as string | undefined;
       const untilUrlContains = msg.until_url_contains as string | undefined;
       const untilTextContains = msg.until_text_contains as string | undefined;
+      const untilUrlChanges = msg.until_url_changes === true;
       const untilTimeoutMs = (msg.until_timeout_ms as number | undefined) ?? 5000;
       const expectSubmit = msg.expect_submit === true;
-      const hasUntil = !!(untilSelector || untilUrlContains || untilTextContains);
+      const hasUntil = !!(untilSelector || untilUrlContains || untilTextContains || untilUrlChanges);
+      // If the substring is already present in the pre-click URL, require
+      // an actual URL change too — otherwise /tasks/OLD → /tasks/NEW with
+      // until_url_contains="tasks/" matches instantly on the pre-click URL.
+      const urlContainsRequiresChange = !!(untilUrlContains && before_url.includes(untilUrlContains));
 
       // For expect_submit: snapshot the pre-click counts of alert/toast/modal
       // selectors so we can detect NEW ones appearing after the click.
@@ -1153,7 +1244,17 @@ async function handleMcpMessage(msg: {
           const [currentTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
           const currentUrl = currentTab?.url ?? "";
 
-          if (untilUrlContains && currentUrl.includes(untilUrlContains)) {
+          if (untilUrlChanges && currentUrl && currentUrl !== before_url) {
+            untilResult = { ok: true, reason: `URL changed to ${currentUrl}` };
+            navigationResult = currentUrl;
+            break;
+          }
+
+          if (
+            untilUrlContains
+            && currentUrl.includes(untilUrlContains)
+            && (!urlContainsRequiresChange || currentUrl !== before_url)
+          ) {
             untilResult = { ok: true, reason: `URL now contains "${untilUrlContains}"` };
             navigationResult = currentUrl;
             break;
@@ -1193,6 +1294,7 @@ async function handleMcpMessage(msg: {
             untilSelector && `selector "${untilSelector}"`,
             untilUrlContains && `URL containing "${untilUrlContains}"`,
             untilTextContains && `text "${untilTextContains}"`,
+            untilUrlChanges && `URL change`,
           ].filter(Boolean).join(" or ");
           untilResult = { ok: false, reason: `Click fired but ${conditions} did not appear within ${untilTimeoutMs}ms — the click may not have registered. Try execute_script with a direct .click() on the matched element, or pass a different until_* value.` };
         }
@@ -1242,6 +1344,12 @@ async function handleMcpMessage(msg: {
           waitForNavigation(tab.id!, 4000),
           new Promise<null>((r) => setTimeout(() => r(null), 1500)),
         ]);
+        // pushState-only navigations: chrome.tabs URL can lag a few hundred ms
+        // behind the actual location after a synchronous history.pushState.
+        // Without this settle, navigated:false fires on legitimate SPA navs.
+        if (!navigationResult) {
+          await new Promise((r) => setTimeout(r, 300));
+        }
       }
 
       // Check if a JS alert/confirm/prompt fired during or after the click.

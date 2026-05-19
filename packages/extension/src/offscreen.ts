@@ -10,7 +10,7 @@
 const PORT_BASE = 7878;
 const PORT_MAX = 7888;
 const RECONNECT_BASE_MS = 1000;
-const RECONNECT_MAX_MS = 30000;
+const RECONNECT_MAX_MS = 5000;
 
 type Host = "claude" | "codex";
 

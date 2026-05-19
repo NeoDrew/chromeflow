@@ -7,11 +7,14 @@ export function registerFlowTools(server: McpServer, bridge: WsBridge) {
     "click_element",
     `Click an interactive element by its visible text or aria-label. Optionally pass an until_* clause to verify the click took effect:
 - until_selector — CSS selector that should appear after the click
-- until_url_contains — substring that should appear in the URL
+- until_url_contains — substring that should appear in the URL (requires an actual URL change if the substring was already in the pre-click URL)
 - until_text_contains — substring that should appear in page text
+- until_url_changes — ANY URL change (use for submits where the destination URL is unknown ahead of time)
 - expect_submit — broad anti-bot detector for form submissions (toast, alert, modal, URL change, form removal). See note below.
 
 Returns {success, message, before_url, after_url, navigated}. \`navigated\` is true when the post-click URL differs from the pre-click URL — surfaces silent redirects without a second list_tabs call. Refuses to click 0×0 elements and now ranks visible candidates above hidden when text/aria match; when forced to refuse a hidden element it surfaces the next visible candidate in the error message.
+
+Scope matching with \`within_selector\` or \`near_text\` restricts where matches are searched — useful for long forms with repeated labels per section (e.g. one "Minor Issue(s)" radio per evaluation axis). \`within_selector\` is a CSS selector; \`near_text\` finds the nearest container whose heading starts with the given text.
 
 Shadow DOM (open AND closed) is pierced by default via chrome.dom.openOrClosedShadowRoot — Reddit faceplate-* / r-post-form-submit-button / web-component-heavy SPAs no longer need manual deepFind recipes.
 
@@ -35,11 +38,15 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       until_url_contains: z
         .string()
         .optional()
-        .describe('Wait until the URL contains this substring after the click (e.g. "/checkout/complete"). Returns success=false if it does not.'),
+        .describe('Wait until the URL contains this substring after the click (e.g. "/checkout/complete"). If the substring was already in the pre-click URL, requires the URL to actually change before matching — prevents false positives on intra-prefix navigation like /tasks/OLD → /tasks/NEW with until_url_contains="tasks/".'),
       until_text_contains: z
         .string()
         .optional()
         .describe('Wait until the visible page text contains this substring after the click (e.g. "Listing published"). Returns success=false if it does not.'),
+      until_url_changes: z
+        .boolean()
+        .optional()
+        .describe('Wait until the URL changes after the click — for navigating submits whose destination URL is unknown ahead of time. Succeeds on any change away from the pre-click URL. Combine with until_url_contains for "must change AND must contain X".'),
       until_timeout_ms: z
         .number()
         .int()
@@ -50,24 +57,42 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         .boolean()
         .optional()
         .describe('Broad anti-bot detector. After the click, watch up to 4s for ANY of: URL change, [role=alert] / [data-sonner-toast] / .toast / .notification / aria-live appearance, [role=dialog] / [aria-modal=true] appearance. Returns success=false with "submit silently rejected (likely anti-bot)" when no signal fires. Use on form submits when the until_* destination isn\'t known. Ignored when any until_* is set (those are more specific).'),
+      within_selector: z
+        .string()
+        .optional()
+        .describe('Limit candidate matches to this CSS selector\'s subtree (mirrors find_text\'s scope_selector). Use to scope nth-counting to one section of a long form: click_element("Minor Issue(s)", nth=1, within_selector="#response-b-style"). Returns success=false with scope_missed=true if the selector does not match.'),
+      near_text: z
+        .string()
+        .optional()
+        .describe('Find the nearest container whose heading starts with this text, then scope candidates to that container\'s subtree. Ignored when within_selector is set. Useful when the target section has no stable CSS selector but the heading is unique.'),
     },
-    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms, expect_submit }) => {
+    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text }) => {
       // The WS request must outlive the until-poll, with a buffer for navigation.
       const wsTimeout = Math.max(30_000, (until_timeout_ms ?? 0) + 10_000);
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_timeout_ms, expect_submit },
+          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text },
           wsTimeout
         );
       } catch (err) {
         const errMsg = (err instanceof Error ? err.message : String(err));
         if (errMsg.includes("timed out")) {
+          // Best-effort: ask the extension where the active tab is now. The
+          // click handler may still be running, but a parallel list_tabs
+          // request usually returns. If we see a URL, surface it — the agent
+          // can decide whether the click actually landed.
+          let stateLine = "";
+          try {
+            const tabsResp = await bridge.request({ type: "list_tabs" }, 3_000);
+            const activeTab = (tabsResp as { tabs?: Array<{ url?: string; active?: boolean }> }).tabs?.find((t) => t.active);
+            if (activeTab?.url) stateLine = `\nCurrent URL: ${activeTab.url}`;
+          } catch { /* extension still busy or disconnected */ }
           return {
             content: [
               {
                 type: "text",
-                text: `Could not confirm click on "${textHint}": ${errMsg}. The click MAY have already fired — the page just took longer than ${wsTimeout}ms to respond. Verify with get_page_text or wait_for_selector before retrying. Re-clicking can toggle the wrong way on React-controlled radios.`,
+                text: `Could not confirm click on "${textHint}": ${errMsg}. The click MAY have already fired — the page just took longer than ${wsTimeout}ms to respond. Verify with get_page_text or wait_for_selector before retrying. Re-clicking can toggle the wrong way on React-controlled radios.${stateLine}`,
               },
             ],
           };
@@ -78,7 +103,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
           ],
         };
       }
-      const r = response as { success: boolean; message: string; before_url?: string; after_url?: string; navigated?: boolean };
+      const r = response as { success: boolean; message: string; before_url?: string; after_url?: string; navigated?: boolean; scope_missed?: boolean };
       // Surface silent redirects: a click whose post-URL differs from the
       // pre-URL is the canonical Canvas "Assessment link → course home" case.
       // Only emit the line when navigation actually happened so the

@@ -405,23 +405,35 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
 
   server.tool(
     "execute_script",
-    `Execute JavaScript in the active tab's MAIN world (the page's own context, not the extension's isolated world). Use for reading framework state or DOM properties not visible in text — prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
+    `Execute JavaScript in a tab's MAIN world (the page's own context, not the extension's isolated world). Use for reading framework state or DOM properties not visible in text — prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
 
 MAIN-world means the page's Content-Security-Policy applies: \`fetch()\` against authenticated APIs is often blocked by the page's connect-src directive. When that happens, switch to fetch_url — it runs in the extension's privileged context (full host_permissions, automatic cookie jar, no page CSP).
 
-CSP-strict pages that disallow eval (Stripe, GitHub) silently fall through to a CDP eval path. Page alerts (alert/confirm/prompt) fired since the last script appear as PAGE ALERT in the result.`,
+CSP-strict pages that disallow eval (Stripe, GitHub) silently fall through to a CDP eval path. Page alerts (alert/confirm/prompt) fired since the last script appear as PAGE ALERT in the result.
+
+Pass \`tab_query\` to run the script against a specific tab without focus-switching (helpful for self-rescheduling loops where the active tab may have drifted while AFK). Accepts the same syntax as switch_to_tab: numeric index, URL substring, or title substring.
+
+When the page navigates mid-script, the response carries \`navigated: true\` and result="[navigated]" instead of a thrown error — verify post-navigation state with get_page_text or wait_for. When host permission was lost (idle tab eviction), the handler reloads the tab once and retries; the response includes \`reauthorized: true\` so callers can see what happened.`,
     {
       code: z
         .string()
         .describe(
           "JavaScript expression or multi-statement script to evaluate in the page. Top-level `return` is supported."
         ),
+      tab_query: z
+        .string()
+        .optional()
+        .describe('Run against a specific tab without changing focus. Same syntax as switch_to_tab: numeric index, URL substring, or title substring. Omit to run against the active tab.'),
     },
-    async ({ code }) => {
-      const response = await bridge.request({ type: "execute_script", code });
+    async ({ code, tab_query }) => {
+      const response = await bridge.request({ type: "execute_script", code, tab_query });
       if (response.type !== "script_response") throw new Error("Unexpected response");
-      const { result, alert } = response as { result: string; alert?: string | null };
+      const { result, alert, navigated, reauthorized } = response as { result: string; alert?: string | null; navigated?: boolean; reauthorized?: boolean };
       let text = `Result: ${result}`;
+      const flags: string[] = ["context: main"];
+      if (navigated) flags.push("navigated");
+      if (reauthorized) flags.push("tab reauthorized (auto-reload)");
+      text = `[${flags.join(", ")}]\n${text}`;
       if (alert) {
         text += `\n\nPAGE ALERT: "${alert}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
       }

@@ -16,14 +16,31 @@ import { markerIds } from "../markers.js";
  */
 export function prepareClickTarget(
   textHint: string,
-  nth?: number
-): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean; nextCandidate?: string } {
+  nth?: number,
+  within_selector?: string,
+  near_text?: string,
+): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean; nextCandidate?: string; scope_missed?: boolean } {
   // Clear any stale tags from a previous click
   document.querySelectorAll(`[${markerIds.clickTargetAttr()}]`).forEach((el) => el.removeAttribute(markerIds.clickTargetAttr()));
   document.querySelectorAll(`[${markerIds.preCheckedAttr()}]`).forEach((el) => el.removeAttribute(markerIds.preCheckedAttr()));
 
+  let scope: Document | Element = document;
+  if (within_selector) {
+    const scoped = document.querySelector(within_selector);
+    if (!scoped) {
+      return { success: false, message: `within_selector "${within_selector}" did not match any element`, scope_missed: true };
+    }
+    scope = scoped;
+  } else if (near_text) {
+    const sectionScope = findSectionByHeading(near_text);
+    if (!sectionScope) {
+      return { success: false, message: `near_text "${near_text}" did not match any section heading`, scope_missed: true };
+    }
+    scope = sectionScope;
+  }
+
   const lower = textHint.toLowerCase().trim();
-  const matches = findClickableAll(lower);
+  const matches = findClickableAll(lower, scope);
   // Merged list: visible first, hidden last. nth=N picks the Nth across the
   // merged list — so if a flair-dropdown's hidden "Post this video as a GIF"
   // was previously match #1, the visible "Post" button now wins #1 instead.
@@ -311,11 +328,11 @@ function scrollSmartIntoView(el: Element) {
  * outranks a partial-text match on the actually-visible submit button on
  * Reddit's new submit page.
  */
-function findClickableAll(lower: string): { visible: Element[]; hidden: Element[] } {
+function findClickableAll(lower: string, scope: Document | Element = document): { visible: Element[]; hidden: Element[] } {
   const interactiveSelectors =
     'button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], input[type="submit"], input[type="button"], label, [onclick], [tabindex]';
 
-  const candidates = queryAllDeep(document, interactiveSelectors);
+  const candidates = queryAllDeep(scope, interactiveSelectors);
   const ranked: Element[] = [];
 
   function addIfNew(el: Element) {
@@ -334,17 +351,17 @@ function findClickableAll(lower: string): { visible: Element[]; hidden: Element[
   partials.forEach(addIfNew);
 
   // aria-label matches
-  queryAllDeep(document, "[aria-label]").forEach((el) => {
+  queryAllDeep(scope, "[aria-label]").forEach((el) => {
     if (el.getAttribute("aria-label")?.toLowerCase().includes(lower)) addIfNew(el);
   });
 
   // value attribute (input[type=submit], input[type=button])
-  queryAllDeep<HTMLInputElement>(document, "input[type=submit], input[type=button]").forEach((el) => {
+  queryAllDeep<HTMLInputElement>(scope, "input[type=submit], input[type=button]").forEach((el) => {
     if (el.value.toLowerCase().includes(lower)) addIfNew(el);
   });
 
   // title / data-testid
-  queryAllDeep(document, "[title], [data-testid]").forEach((el) => {
+  queryAllDeep(scope, "[title], [data-testid]").forEach((el) => {
     const v = el.getAttribute("title") ?? el.getAttribute("data-testid") ?? "";
     if (v.toLowerCase().includes(lower)) addIfNew(el);
   });
@@ -406,6 +423,23 @@ function isVisibleAndUsable(el: Element): boolean {
     return false;
   }
   return true;
+}
+
+/**
+ * Find the smallest section-like container whose heading text starts with
+ * `needle`. Used by `near_text` to scope click candidates without needing a
+ * stable CSS selector. Pierces shadow roots.
+ */
+function findSectionByHeading(needle: string): Element | null {
+  const lower = needle.toLowerCase().trim();
+  const headings = queryAllDeep(document, "h1, h2, h3, h4, h5, h6, [role='heading'], legend");
+  for (const h of headings) {
+    const text = (h.textContent ?? "").trim().toLowerCase();
+    if (!text.startsWith(lower)) continue;
+    const container = h.closest("section, fieldset, article, form, div, main, aside") ?? h.parentElement;
+    if (container) return container;
+  }
+  return null;
 }
 
 /**
