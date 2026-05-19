@@ -874,6 +874,29 @@ async function handleMcpMessage(msg: {
       const code = msg.code as string;
       let tabId = tab.id!;
       let reauthorized = false;
+      const beforeUrl = tab.url ?? "";
+
+      // Race a chrome.scripting / chrome.debugger call against a tab-navigation
+      // listener. If the page navigates away mid-script, the chrome APIs can
+      // hang indefinitely (sync `location.href` = ... followed by `await` is
+      // the canonical case). The listener rejects with a Frame-removed-shaped
+      // error so the existing catch routes it to the [navigated] response.
+      const raceWithNavigation = async <T>(p: Promise<T>): Promise<T> => {
+        let listener: ((id: number, info: chrome.tabs.TabChangeInfo) => void) | null = null;
+        const navPromise = new Promise<never>((_, reject) => {
+          listener = (id, info) => {
+            if (id === tabId && info.url && info.url !== beforeUrl) {
+              reject(new Error("Frame removed — page navigated during script execution"));
+            }
+          };
+          chrome.tabs.onUpdated.addListener(listener);
+        });
+        try {
+          return await Promise.race([p, navPromise]);
+        } finally {
+          if (listener) chrome.tabs.onUpdated.removeListener(listener);
+        }
+      };
 
       // Detect top-level `await` so the script can use it directly. The
       // word-boundary check excludes false positives like `myawaitable`. With
@@ -926,7 +949,7 @@ async function handleMcpMessage(msg: {
       try {
         let results;
         try {
-          results = await runInjection();
+          results = await raceWithNavigation(runInjection());
         } catch (e) {
           const errStr = String(e);
           if (errStr.includes("Cannot access contents of the page") || errStr.includes("Extension manifest must request permission")) {
@@ -951,7 +974,7 @@ async function handleMcpMessage(msg: {
               }, 15_000);
             });
             reauthorized = true;
-            results = await runInjection();
+            results = await raceWithNavigation(runInjection());
           } else {
             throw e;
           }
@@ -971,7 +994,11 @@ async function handleMcpMessage(msg: {
         const errStr = String(e);
         if (errStr.includes("EvalError") || errStr.includes("Content Security Policy") || errStr.includes("unsafe-eval")) {
           cspBlocked = true;
-        } else if (/Frame with ID \d+ was removed/i.test(errStr) || errStr.includes("No frame with id")) {
+        } else if (
+          /Frame with ID \d+ was removed/i.test(errStr)
+          || errStr.includes("No frame with id")
+          || errStr.includes("page navigated during script execution")
+        ) {
           // Page navigated during script execution. The script's effects may
           // or may not have completed; surface as a non-error signal so the
           // caller can verify post-navigation state rather than treating
@@ -992,46 +1019,68 @@ async function handleMcpMessage(msg: {
 
       // CSP blocked eval — fall back to CDP Runtime.evaluate which bypasses CSP
       if (cspBlocked) {
-        await withDebugger(tabId, async () => {
-          // CDP Runtime.evaluate can await a returned promise directly via
-          // awaitPromise: true. So in the await-detected path we just have the
-          // expression be the async IIFE; awaitPromise resolves it for us.
-          const wrappedCode = usesAwait
-            ? `(async () => {
-                var __result;
-                try { __result = await (async () => { ${code} })(); }
-                catch(e) { __result = "Error: " + e; }
-                var __alert = window._alertCapture || null;
-                if (__alert) window._alertCapture = null;
-                return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
-              })()`
-            : `(function() {
-                var __result;
-                try { __result = (0, eval)(${JSON.stringify(code)}); }
-                catch(e) {
-                  if (String(e).includes("Illegal return")) {
-                    try { __result = (0, eval)("(function() { " + ${JSON.stringify(code)} + " })()"); }
-                    catch(e2) { __result = "Error: " + e2; }
-                  } else { __result = "Error: " + e; }
-                }
-                var __alert = window._alertCapture || null;
-                if (__alert) window._alertCapture = null;
-                return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
-              })()`;
-          const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
-            expression: wrappedCode,
-            returnByValue: true,
-            allowUnsafeEvalBlockedByCSP: true,
-            awaitPromise: usesAwait,
-          }) as { result: { value?: string }; exceptionDetails?: unknown };
-          try {
-            const parsed = JSON.parse(evalResult.result.value ?? "{}");
-            result = parsed.result ?? "undefined";
-            alertMsg = parsed.alert ?? null;
-          } catch {
-            result = String(evalResult.result.value ?? "undefined");
+        try {
+          await raceWithNavigation(withDebugger(tabId, async () => {
+            // CDP Runtime.evaluate can await a returned promise directly via
+            // awaitPromise: true. So in the await-detected path we just have the
+            // expression be the async IIFE; awaitPromise resolves it for us.
+            const wrappedCode = usesAwait
+              ? `(async () => {
+                  var __result;
+                  try { __result = await (async () => { ${code} })(); }
+                  catch(e) { __result = "Error: " + e; }
+                  var __alert = window._alertCapture || null;
+                  if (__alert) window._alertCapture = null;
+                  return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
+                })()`
+              : `(function() {
+                  var __result;
+                  try { __result = (0, eval)(${JSON.stringify(code)}); }
+                  catch(e) {
+                    if (String(e).includes("Illegal return")) {
+                      try { __result = (0, eval)("(function() { " + ${JSON.stringify(code)} + " })()"); }
+                      catch(e2) { __result = "Error: " + e2; }
+                    } else { __result = "Error: " + e; }
+                  }
+                  var __alert = window._alertCapture || null;
+                  if (__alert) window._alertCapture = null;
+                  return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
+                })()`;
+            const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
+              expression: wrappedCode,
+              returnByValue: true,
+              allowUnsafeEvalBlockedByCSP: true,
+              awaitPromise: usesAwait,
+            }) as { result: { value?: string }; exceptionDetails?: unknown };
+            try {
+              const parsed = JSON.parse(evalResult.result.value ?? "{}");
+              result = parsed.result ?? "undefined";
+              alertMsg = parsed.alert ?? null;
+            } catch {
+              result = String(evalResult.result.value ?? "undefined");
+            }
+          }));
+        } catch (e) {
+          const errStr = String((e as { message?: string })?.message ?? e);
+          if (
+            /Frame with ID \d+ was removed/i.test(errStr)
+            || errStr.includes("No frame with id")
+            || errStr.includes("Inspected target navigated or closed")
+            || errStr.includes("target closed")
+            || errStr.includes("page navigated during script execution")
+          ) {
+            return {
+              type: "script_response",
+              requestId: msg.requestId,
+              result: "[navigated]",
+              alert: null,
+              context: "main" as const,
+              navigated: true,
+              reauthorized: reauthorized || undefined,
+            };
           }
-        });
+          throw e;
+        }
       }
 
       return {
