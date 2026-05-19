@@ -4,7 +4,7 @@ This file is the canonical full-text ingest for AI assistants and retrieval syst
 It contains the README, the agent usage skill, and the tool catalogue concatenated.
 Mirror at https://chromeflow.run/llms-full.txt.
 
-Repository: https://github.com/NeoDrew/chromeflow
+Repository: https://github.com/NeoDrewX/chromeflow
 License: MIT
 Latest version: 0.9.5 (2026-05-13)
 Battle-tested by 400+ hours of real agentic browser work before public release.
@@ -23,14 +23,14 @@ SECTION 1 — README (what chromeflow is, how to install, what it does)
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime"><img src="https://img.shields.io/chrome-web-store/v/lkdchdgkbkodliefobkkhiegjdiidime?label=Chrome%20Web%20Store&color=4285F4" alt="Chrome Web Store" /></a>
-  <a href="https://github.com/NeoDrew/chromeflow/releases"><img src="https://img.shields.io/github/v/release/NeoDrew/chromeflow?label=release&color=e85d2c" alt="Latest release" /></a>
-  <a href="https://github.com/NeoDrew/chromeflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/NeoDrew/chromeflow?color=d97706" alt="MIT License" /></a>
-  <a href="https://github.com/NeoDrew/chromeflow/stargazers"><img src="https://img.shields.io/github/stars/NeoDrew/chromeflow?style=social" alt="GitHub stars" /></a>
+  <a href="https://github.com/NeoDrewX/chromeflow/releases"><img src="https://img.shields.io/github/v/release/NeoDrewX/chromeflow?label=release&color=e85d2c" alt="Latest release" /></a>
+  <a href="https://github.com/NeoDrewX/chromeflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/NeoDrewX/chromeflow?color=d97706" alt="MIT License" /></a>
+  <a href="https://github.com/NeoDrewX/chromeflow/stargazers"><img src="https://img.shields.io/github/stars/NeoDrewX/chromeflow?style=social" alt="GitHub stars" /></a>
   <a href="https://chromeflow.run"><img src="https://img.shields.io/badge/website-chromeflow.run-1c1a16" alt="Website" /></a>
 </p>
 
 <p align="center">
-  <a href="#setup">Install</a> · <a href="#what-claude-can-do">Tools</a> · <a href="https://chromeflow.run">Website</a> · <a href="https://github.com/NeoDrew/chromeflow/blob/main/SECURITY.md">Security</a>
+  <a href="#setup">Install</a> · <a href="#what-claude-can-do">Tools</a> · <a href="https://chromeflow.run">Website</a> · <a href="https://github.com/NeoDrewX/chromeflow/blob/main/SECURITY.md">Security</a>
 </p>
 
 ---
@@ -72,7 +72,7 @@ Claude drives the flow. You only touch the browser for things that genuinely nee
 **1. Install the plugin** (one-time, machine-wide):
 
 ```
-/plugin marketplace add NeoDrew/chromeflow
+/plugin marketplace add NeoDrewX/chromeflow
 /plugin install chromeflow
 ```
 
@@ -93,7 +93,7 @@ That's it. Claude will automatically reach for Chromeflow whenever a task needs 
 **1. Install the plugin** (one-time, machine-wide):
 
 ```
-codex plugin marketplace add NeoDrew/chromeflow
+codex plugin marketplace add NeoDrewX/chromeflow
 ```
 
 Then inside Codex:
@@ -213,7 +213,7 @@ Per-project `CLAUDE.md` files and `.claude/settings.local.json` allowlists are l
 ## Development
 
 ```bash
-git clone https://github.com/NeoDrew/chromeflow
+git clone https://github.com/NeoDrewX/chromeflow
 cd chromeflow
 npm install
 packages/plugin/scripts/build-server.sh   # bundle the MCP server into the plugin

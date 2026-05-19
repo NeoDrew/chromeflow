@@ -30,7 +30,7 @@
   "description": "Side-by-side comparison of Chromeflow and Playwright for AI coding agents driving a browser — real session vs fresh sandbox, 2FA, MCP integration, credential capture.",
   "url": "https://chromeflow.run/compare/playwright",
   "datePublished": "2026-05-13",
-  "author": {"@type": "Person", "name": "Andrew Robertson", "url": "https://github.com/NeoDrew"},
+  "author": {"@type": "Person", "name": "Andrew Robertson", "url": "https://github.com/NeoDrewX"},
   "publisher": {"@type": "Organization", "name": "Chromeflow", "url": "https://chromeflow.run"},
   "image": "https://chromeflow.run/og-image.png",
   "about": [
@@ -114,7 +114,7 @@
       <a href="/">Home</a>
       <a href="/faq">FAQ</a>
       <a href="/compare">Compare</a>
-      <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+      <a href="https://github.com/NeoDrewX/chromeflow">GitHub</a>
     </nav>
   </div>
 </header>
@@ -165,7 +165,7 @@
 
 <h3 class="tool">Where Chromeflow wins</h3>
 <p><strong>Agentic workflows behind a login.</strong> The moment an AI agent's task starts with "open Stripe and grab the secret key" or "download the assignment file from Canvas", Playwright fails — the agent hits a login screen with no credentials and no way past 2FA. Chromeflow runs in <em>your</em> Chrome where those sessions already exist. The agent automates the boring parts (clicks, fills, captures); you handle the parts that need a human (passwords, 2FA, payment).</p>
-<p><strong>Native MCP integration for Claude Code and Codex CLI.</strong> Chromeflow ships as a plugin. <code>/plugin marketplace add NeoDrew/chromeflow</code> followed by <code>/plugin install chromeflow</code> is the entire install. With Playwright you'd build your own MCP server, wire the tools, write the schemas, deal with WebSocket plumbing — a week of work that's already done in Chromeflow.</p>
+<p><strong>Native MCP integration for Claude Code and Codex CLI.</strong> Chromeflow ships as a plugin. <code>/plugin marketplace add NeoDrewX/chromeflow</code> followed by <code>/plugin install chromeflow</code> is the entire install. With Playwright you'd build your own MCP server, wire the tools, write the schemas, deal with WebSocket plumbing — a week of work that's already done in Chromeflow.</p>
 <p><strong>Credential capture to <code>.env</code>.</strong> When the agent surfaces an API key (Stripe secret, Supabase service role, OpenAI key), <code>write_to_env</code> writes it to the project's <code>.env</code> file in one call. With Playwright the agent would have to <code>page.textContent()</code> the value, then ship a tool call back to your editor, then write the file separately.</p>
 <p><strong>Privileged fetch that respects auth.</strong> Chromeflow's <code>fetch_url</code>, <code>download_file</code>, and <code>read_attachment</code> run in the extension's background service worker with full host permissions — they include your Chrome cookies and bypass page CSP. Pulling an authenticated PDF from Canvas, an invoice PDF from Stripe, or a private GitHub release tarball is a single tool call. Playwright has CDP access but no built-in equivalent — you'd assemble it yourself.</p>
 
@@ -202,7 +202,7 @@
 <footer>
   <div>© 2026 Andrew Robertson · MIT licensed</div>
   <div>
-    <a href="/">Home</a> · <a href="/faq">FAQ</a> · <a href="/compare">Compare</a> · <a href="https://github.com/NeoDrew/chromeflow">GitHub</a> · <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime">Chrome Web Store</a>
+    <a href="/">Home</a> · <a href="/faq">FAQ</a> · <a href="/compare">Compare</a> · <a href="https://github.com/NeoDrewX/chromeflow">GitHub</a> · <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime">Chrome Web Store</a>
     </div>
 </footer>
 

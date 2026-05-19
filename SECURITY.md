@@ -28,7 +28,7 @@ Out of scope:
 
 ## Past advisories
 
-- **2026-05-12 (v0.9.4)**: `inspect_request_headers` previously returned the raw `cookie:` header — including `user_session` and other bearer tokens — to the agent context. Fixed by redacting cookie values by default. ([release](https://github.com/NeoDrew/chromeflow/releases))
+- **2026-05-12 (v0.9.4)**: `inspect_request_headers` previously returned the raw `cookie:` header — including `user_session` and other bearer tokens — to the agent context. Fixed by redacting cookie values by default. ([release](https://github.com/NeoDrewX/chromeflow/releases))
 
 ## Acknowledgements
 

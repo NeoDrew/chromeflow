@@ -30,8 +30,8 @@
     {"@type":"Question","name":"What is Chromeflow?","acceptedAnswer":{"@type":"Answer","text":"Chromeflow is a Model Context Protocol (MCP) server and Chrome extension that lets an AI coding agent — either Claude Code or OpenAI's Codex CLI — drive your real Chrome browser. The agent clicks buttons, fills forms, uploads files, and captures API keys directly to your .env file. Unlike Playwright or Browser Use, which launch a fresh empty browser, Chromeflow runs in your existing Chrome where you're already signed in everywhere."}},
     {"@type":"Question","name":"Is Chromeflow reliable? Has it been tested in real workflows?","acceptedAnswer":{"@type":"Answer","text":"Yes. Chromeflow was shaped by 400+ hours of real agentic browser work before its public v0.9 release. The skill content and error-handling recipes in every tool came from patching rough edges as they surfaced — Canvas attachment downloads, Stripe product setups, eBay listings, DataAnnotation forms, Notion edits, OAuth handoffs, multi-tab transitions, React Select widgets, shadow-DOM click-through, and more. The tool is battle-tested in a way most agent-browser libraries aren't."}},
     {"@type":"Question","name":"How is Chromeflow different from Playwright or Browser Use?","acceptedAnswer":{"@type":"Answer","text":"Playwright and Browser Use spawn a clean browser process with empty cookie jars, no extensions, no saved sessions. Every run, your agent has to log in from scratch and can't handle 2FA. Chromeflow runs inside your real Chrome — you're already logged into Stripe, GitHub, AWS, Canvas, and every other service. The agent uses your sessions; 2FA stays in your hands."}},
-    {"@type":"Question","name":"Does Chromeflow work with both Claude Code and Codex CLI?","acceptedAnswer":{"@type":"Answer","text":"Yes. Same MCP server, same Chrome extension. Install with /plugin marketplace add NeoDrew/chromeflow in Claude Code, or codex plugin marketplace add NeoDrew/chromeflow followed by /plugins in Codex CLI. The popup shows a host badge (Claude octo or Codex logo) on each session card so you can run both agents in parallel windows."}},
-    {"@type":"Question","name":"What does Chromeflow cost?","acceptedAnswer":{"@type":"Answer","text":"Free. MIT-licensed. The Chrome extension is on the Chrome Web Store at no charge, the MCP server is bundled into the open-source plugin, and the source is on GitHub at github.com/NeoDrew/chromeflow."}},
+    {"@type":"Question","name":"Does Chromeflow work with both Claude Code and Codex CLI?","acceptedAnswer":{"@type":"Answer","text":"Yes. Same MCP server, same Chrome extension. Install with /plugin marketplace add NeoDrewX/chromeflow in Claude Code, or codex plugin marketplace add NeoDrewX/chromeflow followed by /plugins in Codex CLI. The popup shows a host badge (Claude octo or Codex logo) on each session card so you can run both agents in parallel windows."}},
+    {"@type":"Question","name":"What does Chromeflow cost?","acceptedAnswer":{"@type":"Answer","text":"Free. MIT-licensed. The Chrome extension is on the Chrome Web Store at no charge, the MCP server is bundled into the open-source plugin, and the source is on GitHub at github.com/NeoDrewX/chromeflow."}},
     {"@type":"Question","name":"How does Chromeflow bypass page Content-Security-Policy when fetching authenticated URLs?","acceptedAnswer":{"@type":"Answer","text":"Chromeflow ships three privileged-context tools — fetch_url, download_file, and read_attachment — that run inside the extension's background service worker. The service worker has full host_permissions, uses Chrome's cookie jar automatically, and is not subject to the page's connect-src CSP. That's how Chromeflow can grab Canvas attachments, Stripe document downloads, or other authenticated assets that an execute_script fetch can't reach."}},
     {"@type":"Question","name":"Can Chromeflow handle 2FA and password-protected logins?","acceptedAnswer":{"@type":"Answer","text":"You handle 2FA and passwords. Chromeflow pauses on sensitive input and uses highlight_region to show you what to enter. The agent fills everything else — names, descriptions, prices, URLs, webhook endpoints, billing periods, currencies. This human-in-the-loop split is the core design principle: agents automate the boring parts, you handle the parts that need real authentication."}},
     {"@type":"Question","name":"Is my data used to train AI models?","acceptedAnswer":{"@type":"Answer","text":"No data flows from your browser to Chromeflow's authors. The Chrome extension talks only to a local WebSocket on 127.0.0.1 (port range 7878-7888) that the MCP server on your machine listens on. Your agent — Claude Code or Codex — handles its own LLM API calls per its own policies. Chromeflow itself collects nothing."}},
@@ -41,7 +41,7 @@
     {"@type":"Question","name":"How do I report a security vulnerability?","acceptedAnswer":{"@type":"Answer","text":"Email security reports to AndrewMaxwellRobertson@gmail.com with the subject 'chromeflow security'. The full SECURITY.md is in the GitHub repository. The most recent disclosed advisory was the inspect_request_headers cookie-redaction fix in v0.9.4 — that tool now redacts session-bearing cookies by default."}},
     {"@type":"Question","name":"Where can I see the full list of tools Chromeflow exposes?","acceptedAnswer":{"@type":"Answer","text":"The full tool catalogue lives in CLAUDE.md in the GitHub repository — 28 tools as of v0.9.5. Categories: navigation (open_page, switch_to_tab, list_tabs, list_frames, close_tab, close_other_tabs), reading (get_page_text, find_text, get_console_logs), interaction (click_element, fill_input, fill_form, type_text, scroll_to_element), waiting (wait_for, wait_for_click), privileged network (fetch_url, download_file, read_attachment), highlight + handoff (highlight_region, clear_overlays), and utility (execute_script, take_screenshot, capture_terminal, write_to_env, set_file_input, inspect_request_headers, get_form_fields)."}},
     {"@type":"Question","name":"How do I uninstall Chromeflow?","acceptedAnswer":{"@type":"Answer","text":"In Claude Code: /plugin uninstall chromeflow. In Codex CLI: open the /plugins picker, find chromeflow, choose Uninstall. To fully remove: also remove the Chrome extension from chrome://extensions. The MCP server stops automatically when the agent exits — there are no leftover background processes after 0.9.2 (which added stdin-close and PPID-change watchdogs)."}},
-    {"@type":"Question","name":"Can I contribute or submit fixes?","acceptedAnswer":{"@type":"Answer","text":"Yes — the repo is at github.com/NeoDrew/chromeflow and PRs are welcome. The codebase is a Turborepo-style monorepo with packages/mcp-server (TypeScript), packages/extension (TypeScript + Manifest V3), packages/plugin (the host packaging), and apps/website. Run npm install at the root, then packages/plugin/scripts/build-server.sh to bundle the MCP server. The Chrome extension is built with node packages/extension/build.mjs."}}
+    {"@type":"Question","name":"Can I contribute or submit fixes?","acceptedAnswer":{"@type":"Answer","text":"Yes — the repo is at github.com/NeoDrewX/chromeflow and PRs are welcome. The codebase is a Turborepo-style monorepo with packages/mcp-server (TypeScript), packages/extension (TypeScript + Manifest V3), packages/plugin (the host packaging), and apps/website. Run npm install at the root, then packages/plugin/scripts/build-server.sh to bundle the MCP server. The Chrome extension is built with node packages/extension/build.mjs."}}
   ]
 }
 </script>
@@ -123,7 +123,7 @@
     <nav class="nav">
       <a href="/">Home</a>
       <a href="/compare">Compare</a>
-      <a href="https://github.com/NeoDrew/chromeflow">GitHub</a>
+      <a href="https://github.com/NeoDrewX/chromeflow">GitHub</a>
     </nav>
   </div>
 </header>
@@ -131,7 +131,7 @@
 <main>
 
 <h2>Frequently asked questions</h2>
-<p class="lead">Answers to the questions people ask before installing Chromeflow. If yours isn't here, open an issue at <a href="https://github.com/NeoDrew/chromeflow/issues">github.com/NeoDrew/chromeflow</a>.</p>
+<p class="lead">Answers to the questions people ask before installing Chromeflow. If yours isn't here, open an issue at <a href="https://github.com/NeoDrewX/chromeflow/issues">github.com/NeoDrewX/chromeflow</a>.</p>
 
 <section class="qa">
 <h3>What is Chromeflow?</h3>
@@ -150,12 +150,12 @@
 
 <section class="qa">
 <h3>Does Chromeflow work with both Claude Code and Codex CLI?</h3>
-<p>Yes. Same MCP server, same Chrome extension. Install with <code>/plugin marketplace add NeoDrew/chromeflow</code> in Claude Code, or <code>codex plugin marketplace add NeoDrew/chromeflow</code> followed by <code>/plugins</code> in Codex CLI. The popup shows a host badge on each session card so you can run both agents in parallel windows.</p>
+<p>Yes. Same MCP server, same Chrome extension. Install with <code>/plugin marketplace add NeoDrewX/chromeflow</code> in Claude Code, or <code>codex plugin marketplace add NeoDrewX/chromeflow</code> followed by <code>/plugins</code> in Codex CLI. The popup shows a host badge on each session card so you can run both agents in parallel windows.</p>
 </section>
 
 <section class="qa">
 <h3>What does Chromeflow cost?</h3>
-<p>Free. MIT-licensed. The Chrome extension is on the Chrome Web Store at no charge, the MCP server is bundled into the open-source plugin, and the source is on GitHub at <a href="https://github.com/NeoDrew/chromeflow">github.com/NeoDrew/chromeflow</a>.</p>
+<p>Free. MIT-licensed. The Chrome extension is on the Chrome Web Store at no charge, the MCP server is bundled into the open-source plugin, and the source is on GitHub at <a href="https://github.com/NeoDrewX/chromeflow">github.com/NeoDrewX/chromeflow</a>.</p>
 </section>
 
 <section class="qa">
@@ -190,12 +190,12 @@
 
 <section class="qa">
 <h3>How do I report a security vulnerability?</h3>
-<p>Email security reports to <code>AndrewMaxwellRobertson@gmail.com</code> with the subject "chromeflow security". The full <a href="https://github.com/NeoDrew/chromeflow/blob/main/SECURITY.md">SECURITY.md</a> is in the GitHub repository. The most recent disclosed advisory was the <code>inspect_request_headers</code> cookie-redaction fix in v0.9.4 — that tool now redacts session-bearing cookies by default.</p>
+<p>Email security reports to <code>AndrewMaxwellRobertson@gmail.com</code> with the subject "chromeflow security". The full <a href="https://github.com/NeoDrewX/chromeflow/blob/main/SECURITY.md">SECURITY.md</a> is in the GitHub repository. The most recent disclosed advisory was the <code>inspect_request_headers</code> cookie-redaction fix in v0.9.4 — that tool now redacts session-bearing cookies by default.</p>
 </section>
 
 <section class="qa">
 <h3>Where can I see the full list of tools Chromeflow exposes?</h3>
-<p>The full tool catalogue lives in <a href="https://github.com/NeoDrew/chromeflow/blob/main/CLAUDE.md">CLAUDE.md</a> in the GitHub repository — 28 tools as of v0.9.5. Categories: navigation (<code>open_page</code>, <code>switch_to_tab</code>, <code>list_tabs</code>, <code>list_frames</code>, <code>close_tab</code>, <code>close_other_tabs</code>), reading (<code>get_page_text</code>, <code>find_text</code>, <code>get_console_logs</code>), interaction (<code>click_element</code>, <code>fill_input</code>, <code>fill_form</code>, <code>type_text</code>, <code>scroll_to_element</code>), waiting (<code>wait_for</code>, <code>wait_for_click</code>), privileged network (<code>fetch_url</code>, <code>download_file</code>, <code>read_attachment</code>), highlight and handoff (<code>highlight_region</code>, <code>clear_overlays</code>), and utility (<code>execute_script</code>, <code>take_screenshot</code>, <code>capture_terminal</code>, <code>write_to_env</code>, <code>set_file_input</code>, <code>inspect_request_headers</code>, <code>get_form_fields</code>).</p>
+<p>The full tool catalogue lives in <a href="https://github.com/NeoDrewX/chromeflow/blob/main/CLAUDE.md">CLAUDE.md</a> in the GitHub repository — 28 tools as of v0.9.5. Categories: navigation (<code>open_page</code>, <code>switch_to_tab</code>, <code>list_tabs</code>, <code>list_frames</code>, <code>close_tab</code>, <code>close_other_tabs</code>), reading (<code>get_page_text</code>, <code>find_text</code>, <code>get_console_logs</code>), interaction (<code>click_element</code>, <code>fill_input</code>, <code>fill_form</code>, <code>type_text</code>, <code>scroll_to_element</code>), waiting (<code>wait_for</code>, <code>wait_for_click</code>), privileged network (<code>fetch_url</code>, <code>download_file</code>, <code>read_attachment</code>), highlight and handoff (<code>highlight_region</code>, <code>clear_overlays</code>), and utility (<code>execute_script</code>, <code>take_screenshot</code>, <code>capture_terminal</code>, <code>write_to_env</code>, <code>set_file_input</code>, <code>inspect_request_headers</code>, <code>get_form_fields</code>).</p>
 </section>
 
 <section class="qa">
@@ -205,7 +205,7 @@
 
 <section class="qa">
 <h3>Can I contribute or submit fixes?</h3>
-<p>Yes — the repo is at <a href="https://github.com/NeoDrew/chromeflow">github.com/NeoDrew/chromeflow</a> and PRs are welcome. Codebase: <code>packages/mcp-server</code> (TypeScript), <code>packages/extension</code> (TypeScript + Manifest V3), <code>packages/plugin</code> (host packaging), <code>apps/website</code>. Run <code>npm install</code> at the root, then <code>packages/plugin/scripts/build-server.sh</code> to bundle the MCP server. Build the extension with <code>node packages/extension/build.mjs</code>.</p>
+<p>Yes — the repo is at <a href="https://github.com/NeoDrewX/chromeflow">github.com/NeoDrewX/chromeflow</a> and PRs are welcome. Codebase: <code>packages/mcp-server</code> (TypeScript), <code>packages/extension</code> (TypeScript + Manifest V3), <code>packages/plugin</code> (host packaging), <code>apps/website</code>. Run <code>npm install</code> at the root, then <code>packages/plugin/scripts/build-server.sh</code> to bundle the MCP server. Build the extension with <code>node packages/extension/build.mjs</code>.</p>
 </section>
 
 </main>
@@ -213,7 +213,7 @@
 <footer>
   <div>© 2026 Andrew Robertson · MIT licensed</div>
   <div>
-    <a href="/">Home</a> · <a href="/compare">Compare</a> · <a href="https://github.com/NeoDrew/chromeflow">GitHub</a> · <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime">Chrome Web Store</a>
+    <a href="/">Home</a> · <a href="/compare">Compare</a> · <a href="https://github.com/NeoDrewX/chromeflow">GitHub</a> · <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime">Chrome Web Store</a>
   </div>
 </footer>
 
