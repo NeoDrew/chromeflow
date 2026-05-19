@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 :root {
+  --nav-h:        63px;
   --bg:           #f9f8f4;
   --surface:      #ffffff;
   --surface-2:    #f2f0ea;
@@ -193,7 +194,7 @@ code {
 .section-hero {
   padding: 4rem 0;
   text-align: center;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--nav-h));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -212,7 +213,7 @@ code {
   }
 
   body { -webkit-text-size-adjust: 100%; }
-  .section-hero { min-height: 100vh; }
+  .section-hero { min-height: calc(100vh - var(--nav-h)); }
 
   .section-hero {
     padding: 3.5rem 0 2.5rem;
