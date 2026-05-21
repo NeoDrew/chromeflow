@@ -27,19 +27,14 @@ publish:
     # `npm rebuild` re-runs the platform-resolution for esbuild — without it the
     # `.bin/esbuild` shim ends up pointing at whatever-arch binary the lockfile
     # last linked (Linux runner died on the arm64 macOS binary).
-    - echo "=== pre-install state ==="
-    - ls node_modules 2>&1 | head -5 || echo "no node_modules"
-    - npm install --workspaces --include-workspace-root --foreground-scripts
+    # GitLab runners share an npm cache that's been observed extracting only
+    # root-level files of tarballs (SDK and ws lost their dist/ and lib/
+    # subdirs). Clean cache + --prefer-online avoids that.
+    - npm cache clean --force
+    - rm -rf node_modules
+    - npm install --prefer-online --no-audit --no-fund
     - ln -sf "$PWD/node_modules/@esbuild/linux-x64/bin/esbuild" node_modules/.bin/esbuild
-    - echo "=== post-install summary ==="
-    - ls node_modules | wc -l
-    - ls node_modules/@modelcontextprotocol 2>&1 || echo "no @modelcontextprotocol"
-    - echo "=== full SDK package contents ==="
-    - find node_modules/@modelcontextprotocol/sdk -maxdepth 3 | head -30 || true
-    - echo "=== full ws package contents ==="
-    - find node_modules/ws -maxdepth 3 | head -30 || true
-    - echo "=== SDK package.json files field ==="
-    - python3 -c "import json; print(json.load(open('node_modules/@modelcontextprotocol/sdk/package.json')).get('files'))" || true
+    - test -f node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js || (echo "SDK dist/ STILL missing — npm extraction is broken at a deeper level"; ls node_modules/@modelcontextprotocol/sdk/; exit 1)
 
     # Bundle the MCP server and copy it into packages/mcp-server/bin/.
     - packages/plugin/scripts/build-server.sh
