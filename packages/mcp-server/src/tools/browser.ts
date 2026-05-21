@@ -12,7 +12,9 @@ export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
     "open_page",
     `Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it. After navigating, call get_page_text to read the page — do NOT take a screenshot.
 
-Set background=true (only with new_tab=true) to open the new tab WITHOUT switching focus to it. Use this when the current tab has a partially-filled form whose page auto-saves on focus loss (e.g. eBay seller listings) — switching away would trigger the auto-save and corrupt the in-progress draft.`,
+Set background=true (only with new_tab=true) to open the new tab WITHOUT switching focus to it. Use this when the current tab has a partially-filled form whose page auto-saves on focus loss (e.g. eBay seller listings) — switching away would trigger the auto-save and corrupt the in-progress draft.
+
+After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle check (document.readyState=complete, no visible spinner element, 250ms of mutation quiet). If a spinner is still visible at the end of the window, the response carries \`stuck_spinner: true\` with the matching selector — the canonical case is an SPA route that left a permanent .spinner-wrapper because the API request died. Set expect_selector to wait for a known-good element to appear before considering the page settled — the response carries \`expect_selector_appeared: false\` if it never showed up.`,
     {
       url: z.string().url().describe("The URL to navigate to"),
       new_tab: z.boolean().optional().describe("Open in a new tab instead of replacing the current one (default false)"),
@@ -20,16 +22,38 @@ Set background=true (only with new_tab=true) to open the new tab WITHOUT switchi
         .boolean()
         .optional()
         .describe("If new_tab=true, do not switch focus to the new tab. Default false. Ignored when new_tab is false."),
+      expect_selector: z
+        .string()
+        .optional()
+        .describe("CSS selector for an element that must be present before the page is considered settled. The settle check waits up to 6s for it; if it never appears, the response carries expect_selector_appeared:false so you can detect dead-spinner routes (e.g. Outlier /en/expert/tasks)."),
     },
-    async ({ url, new_tab, background }) => {
+    async ({ url, new_tab, background, expect_selector }) => {
       const block = isBlockedUrl(url);
       if (block.blocked) {
         return { content: [{ type: "text", text: `open_page refused: ${block.reason}` }] };
       }
-      await bridge.request({ type: "navigate", url, newTab: new_tab ?? false, background: background ?? false });
-      return {
-        content: [{ type: "text", text: `Navigated to ${url}${new_tab ? (background ? " (new background tab)" : " (new tab)") : ""}` }],
+      const response = await bridge.request({
+        type: "navigate",
+        url,
+        newTab: new_tab ?? false,
+        background: background ?? false,
+        expect_selector,
+      });
+      const r = response as {
+        stuck_spinner?: boolean;
+        spinner_selector?: string | null;
+        expect_selector_appeared?: boolean | null;
+        current_url?: string;
       };
+      const newTabBit = new_tab ? (background ? " (new background tab)" : " (new tab)") : "";
+      let text = `Navigated to ${url}${newTabBit}`;
+      if (r.stuck_spinner) {
+        text += `\n\n⚠ stuck_spinner: true — page settled with a visible spinner (${r.spinner_selector ?? "unknown selector"}) still on screen after 6s. Current URL: ${r.current_url ?? url}. The route may be dead (Outlier /en/expert/tasks pattern) — navigate elsewhere instead of reloading, or wait and try get_page_text to see if it ever recovers.`;
+      }
+      if (expect_selector && r.expect_selector_appeared === false) {
+        text += `\n\n⚠ expect_selector "${expect_selector}" never appeared within the 6s settle window. The page may be partially loaded or stuck.`;
+      }
+      return { content: [{ type: "text", text }] };
     }
   );
 
@@ -350,9 +374,21 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
 
   server.tool(
     "type_text",
-    `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). The caller is responsible for focusing the target first (via click_element or execute_script). Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.`,
+    `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). Pass \`into_selector\` to focus the target before typing (shadow-piercing CSS) — combined with \`clear_first: true\`, this collapses the old "wait_for_click → execute_script selectAll → type_text" pattern into a single call. Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.`,
     {
       text: z.string().describe("The text to type into the focused element"),
+      into_selector: z
+        .string()
+        .optional()
+        .describe(
+          'CSS selector for the element to focus before typing (shadow-piercing — resolves selectors that find_text returns for closed-shadow-root content, e.g. Outlier-style Radix portals). When omitted, types into whatever is currently focused (the caller is responsible for focusing first via click_element).'
+        ),
+      clear_first: z
+        .boolean()
+        .optional()
+        .describe(
+          "Only with into_selector: run document.execCommand('selectAll') + 'delete' on the focused element before typing. Use to overwrite tiptap / ProseMirror editors and similar contenteditable surfaces in one call."
+        ),
       frame: z
         .string()
         .optional()
@@ -360,11 +396,14 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
           "CSS selector for an iframe whose contents you want to type into (e.g. 'iframe.se-rte-frame__summary'). Same-origin only. Before typing, the first contenteditable/input inside the iframe is focused; after typing, input/change events are dispatched in the iframe's context."
         ),
     },
-    async ({ text, frame }) => {
+    async ({ text, frame, into_selector, clear_first }) => {
       // Average ~90ms per char (60ms avg delay + overhead) + 15s buffer for
       // debugger attach/detach and the post-typing input event dispatch.
       const timeoutMs = Math.max(30_000, text.length * 90 + 15_000);
-      const response = await bridge.request({ type: "type_text", text, frame }, timeoutMs);
+      const response = await bridge.request(
+        { type: "type_text", text, frame, into_selector, clear_first },
+        timeoutMs
+      );
       const r = response as { success?: boolean; message?: string };
       return {
         content: [{ type: "text", text: r.message ?? (r.success ? "Text typed successfully" : "Failed to type text") }],

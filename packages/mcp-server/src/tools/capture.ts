@@ -87,7 +87,25 @@ Never use take_screenshot just to read page content — paginate with startIndex
     async ({ selector, startIndex }) => {
       const response = await bridge.request({ type: "get_page_text", selector, startIndex });
       if (response.type !== "page_text_response") throw new Error("Unexpected response");
-      const text = (response as { text: string }).text;
+      const r = response as {
+        text: string;
+        selector_missed?: boolean;
+        selector_in_shadow?: boolean;
+        shadow_hosts_seen?: number;
+      };
+      let text = r.text;
+      // Surface selector_in_shadow as a structured prefix — the in-text warning
+      // was easy to miss in a 10K char chunk. selector_missed (true selector
+      // miss) already carries an inline warning from the content script.
+      if (r.selector_in_shadow) {
+        text = `[note: selector "${selector}" matched inside a closed shadow root — chromeflow tools that pierce (get_page_text, find_text, click_element, fill_input) see it, but execute_script cannot. Don't drop to screenshots.]\n\n` + text;
+      }
+      // Shadow-host signal — surface ONLY when no selector was passed (so the
+      // agent thinking "what's on this page?" gets the diagnostic) AND we
+      // detected shadow hosts. Keeps the message terse on the common case.
+      if (!selector && r.shadow_hosts_seen && r.shadow_hosts_seen > 0) {
+        text = `[note: ${r.shadow_hosts_seen} shadow host${r.shadow_hosts_seen === 1 ? "" : "s"} detected on this page — call list_frames to see them. If execute_script returns an empty document, switch to find_text / get_page_text / click_element / fill_input — those pierce closed shadow roots.]\n\n` + text;
+      }
       return {
         content: [{ type: "text", text: text || "(no text found on page)" }],
       };

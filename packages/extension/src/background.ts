@@ -355,6 +355,169 @@ async function getSubmitSignalCounts(tabId: number): Promise<{ alert: number; to
 }
 
 /**
+ * Per-click activity probe. Watches the page for a short window after a
+ * click dispatch and reports whether ANY observable side-effect happened —
+ * DOM mutation, focus change, URL change, value/checked change on the
+ * clicked element, or alert/toast/modal appearance.
+ *
+ * Returns early (before the full `windowMs` elapses) as soon as activity is
+ * detected, so the common case adds only ~100ms of latency. When 0 activity
+ * is detected at the end of the window, the caller can fail fast with a
+ * "silently rejected by anti-bot" message instead of sitting in a long
+ * until_* poll waiting for a condition that will never resolve.
+ *
+ * Also returns the focused element after the window — used by click_element
+ * to populate the `focused_after` response field so callers can chain
+ * type_text/fill_input without guessing whether focus landed.
+ */
+type ActivityProbeResult = {
+  activity: boolean;
+  reason: string;
+  mutation_count: number;
+  url_changed: boolean;
+  after_url: string;
+  focused_after: {
+    tag: string;
+    id: string;
+    name: string;
+    type: string;
+    aria_label: string;
+    value_preview: string;
+  } | null;
+};
+
+async function runActivityProbe(
+  tabId: number,
+  beforeUrl: string,
+  windowMs: number = 1500
+): Promise<ActivityProbeResult> {
+  const empty: ActivityProbeResult = {
+    activity: true,
+    reason: "(probe skipped or failed; assuming activity)",
+    mutation_count: 0,
+    url_changed: false,
+    after_url: beforeUrl,
+    focused_after: null,
+  };
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (windowMs: number, beforeUrl: string) => {
+        return new Promise<ActivityProbeResult>((resolve) => {
+          function getShadowRoot(el: Element): ShadowRoot | null {
+            const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+            if (chromeDom?.openOrClosedShadowRoot) {
+              try {
+                const sr = chromeDom.openOrClosedShadowRoot(el);
+                if (sr) return sr;
+              } catch { /* fall through */ }
+            }
+            return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+          }
+          function getFocused(): ActivityProbeResult["focused_after"] {
+            let el: Element | null = document.activeElement;
+            while (el) {
+              const sr = getShadowRoot(el);
+              if (!sr || !sr.activeElement) break;
+              el = sr.activeElement;
+            }
+            if (!el || el === document.body) return null;
+            const anyEl = el as Element & { name?: string; type?: string; value?: string };
+            const innerText = (el as HTMLElement).innerText ?? "";
+            return {
+              tag: el.tagName.toLowerCase(),
+              id: el.id || "",
+              name: anyEl.name ?? "",
+              type: anyEl.type ?? "",
+              aria_label: el.getAttribute("aria-label") || "",
+              value_preview: (anyEl.value ?? innerText ?? "").slice(0, 60),
+            };
+          }
+          function getSignalCounts() {
+            const c = (sel: string) => {
+              try { return document.querySelectorAll(sel).length; }
+              catch { return 0; }
+            };
+            return {
+              alert:
+                c('[role="alert"]:not([aria-hidden="true"])') +
+                c('[aria-live="polite"]:not(:empty):not([aria-hidden="true"])') +
+                c('[aria-live="assertive"]:not(:empty):not([aria-hidden="true"])'),
+              toast:
+                c('[data-sonner-toast]') +
+                c('.toast:not(.hidden):not([aria-hidden="true"])') +
+                c('.notification:not(.hidden):not([aria-hidden="true"])'),
+              modal:
+                c('[role="dialog"]:not([aria-hidden="true"])') +
+                c('[aria-modal="true"]'),
+            };
+          }
+          const focusedBefore = getFocused();
+          const focusedKeyBefore = focusedBefore ? JSON.stringify(focusedBefore) : "";
+          const signalsBefore = getSignalCounts();
+          let mutationCount = 0;
+          const observer = new MutationObserver((records) => {
+            mutationCount += records.length;
+          });
+          observer.observe(document, {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            characterData: true,
+          });
+          function check(): { activity: boolean; reason: string; url_changed: boolean } {
+            const after_url = location.href;
+            if (after_url !== beforeUrl) {
+              return { activity: true, reason: `URL changed to ${after_url}`, url_changed: true };
+            }
+            if (mutationCount > 0) {
+              return { activity: true, reason: `${mutationCount} DOM mutation${mutationCount === 1 ? "" : "s"}`, url_changed: false };
+            }
+            const focusedNow = getFocused();
+            const focusedKeyNow = focusedNow ? JSON.stringify(focusedNow) : "";
+            if (focusedKeyNow !== focusedKeyBefore) {
+              return { activity: true, reason: "focused element changed", url_changed: false };
+            }
+            const c = getSignalCounts();
+            if (c.alert > signalsBefore.alert) return { activity: true, reason: "alert/aria-live element appeared", url_changed: false };
+            if (c.toast > signalsBefore.toast) return { activity: true, reason: "toast / notification appeared", url_changed: false };
+            if (c.modal > signalsBefore.modal) return { activity: true, reason: "modal / [role=dialog] appeared", url_changed: false };
+            return { activity: false, reason: "", url_changed: false };
+          }
+          const start = Date.now();
+          function tick() {
+            const r = check();
+            if (r.activity || Date.now() - start >= windowMs) {
+              observer.disconnect();
+              resolve({
+                activity: r.activity,
+                reason: r.reason,
+                mutation_count: mutationCount,
+                url_changed: r.url_changed,
+                after_url: location.href,
+                focused_after: getFocused(),
+              });
+              return;
+            }
+            setTimeout(tick, 100);
+          }
+          tick();
+        });
+      },
+      args: [windowMs, beforeUrl],
+      // Default ISOLATED world — chrome.dom.openOrClosedShadowRoot is only
+      // available in extension content-script contexts, not in the page's
+      // MAIN world. ISOLATED still shares the live DOM so MutationObserver
+      // / activeElement / location.href all reflect the page accurately.
+    });
+    const result = r[0]?.result as ActivityProbeResult | undefined;
+    return result ?? empty;
+  } catch {
+    return empty;
+  }
+}
+
+/**
  * Hard-coded URL refusal — mirrors `packages/mcp-server/src/policy.ts`. The
  * MCP-server layer already refuses these calls before the WS hop; this is
  * defence in depth so a direct WS caller (or a future bypass) sees the same
@@ -523,7 +686,118 @@ async function handleMcpMessage(msg: {
         chrome.tabs.onUpdated.addListener(listener);
         setTimeout(resolve, 15000);
       });
-      return { type: "action_done" };
+
+      // Settle check — beyond chrome.tabs status=complete, verify the page
+      // is interactive (readyState=complete) AND no spinner/loading-state UI
+      // is blocking the content (Outlier /en/expert/tasks served a permanent
+      // .spinner-wrapper that the user couldn't recover from). If a
+      // expect_selector was passed, wait for it to appear.
+      //
+      // Time-bounded at 6s so a genuinely-slow page doesn't hang the agent.
+      // The probe returns whatever it observed; the caller decides whether
+      // stuck_spinner is fatal.
+      const expectSelector = msg.expect_selector as string | undefined;
+      let stuckSpinner = false;
+      let spinnerSelector: string | null = null;
+      let currentUrl = targetUrl;
+      let expectSelectorAppeared: boolean | null = expectSelector ? false : null;
+      if (targetTab.id && isScriptableUrl(targetTab.url ?? targetUrl)) {
+        try {
+          const r = await chrome.scripting.executeScript({
+            target: { tabId: targetTab.id },
+            func: (expectSelector: string | undefined, timeoutMs: number) => {
+              return new Promise<{
+                stuck_spinner: boolean;
+                spinner_selector: string | null;
+                expect_selector_appeared: boolean | null;
+                current_url: string;
+              }>((resolve) => {
+                const SPINNER_SELECTORS = [
+                  '[aria-busy="true"]',
+                  '.spinner-wrapper',
+                  '[data-loading="true"]',
+                  '[role="progressbar"]',
+                  '.loading-spinner',
+                  '.loader:not(.hidden)',
+                ];
+                function isVisible(el: Element): boolean {
+                  const rect = (el as HTMLElement).getBoundingClientRect?.();
+                  if (!rect || rect.width === 0 || rect.height === 0) return false;
+                  const s = getComputedStyle(el);
+                  return s.display !== "none" && s.visibility !== "hidden" && s.opacity !== "0";
+                }
+                function findSpinner(): string | null {
+                  for (const sel of SPINNER_SELECTORS) {
+                    const el = document.querySelector(sel);
+                    if (el && isVisible(el)) return sel;
+                  }
+                  return null;
+                }
+                function expectSelectorPresent(): boolean {
+                  if (!expectSelector) return true;
+                  try { return !!document.querySelector(expectSelector); }
+                  catch { return false; }
+                }
+                const start = Date.now();
+                let lastMutationAt = Date.now();
+                const observer = new MutationObserver(() => {
+                  lastMutationAt = Date.now();
+                });
+                observer.observe(document, { subtree: true, childList: true, attributes: true });
+                function tick() {
+                  const ready = document.readyState === "complete";
+                  const spinner = findSpinner();
+                  const expectOk = expectSelectorPresent();
+                  const quietEnough = Date.now() - lastMutationAt >= 250;
+                  if (ready && !spinner && expectOk && quietEnough) {
+                    observer.disconnect();
+                    resolve({
+                      stuck_spinner: false,
+                      spinner_selector: null,
+                      expect_selector_appeared: expectSelector ? true : null,
+                      current_url: location.href,
+                    });
+                    return;
+                  }
+                  if (Date.now() - start >= timeoutMs) {
+                    observer.disconnect();
+                    resolve({
+                      stuck_spinner: !!spinner,
+                      spinner_selector: spinner,
+                      expect_selector_appeared: expectSelector ? expectOk : null,
+                      current_url: location.href,
+                    });
+                    return;
+                  }
+                  setTimeout(tick, 200);
+                }
+                tick();
+              });
+            },
+            args: [expectSelector, 6000],
+          });
+          const res = r[0]?.result as { stuck_spinner: boolean; spinner_selector: string | null; expect_selector_appeared: boolean | null; current_url: string } | undefined;
+          if (res) {
+            stuckSpinner = res.stuck_spinner;
+            spinnerSelector = res.spinner_selector;
+            expectSelectorAppeared = res.expect_selector_appeared;
+            currentUrl = res.current_url;
+          }
+        } catch { /* non-scriptable or unloaded — skip settle check */ }
+      }
+
+      if (stuckSpinner || (expectSelector && expectSelectorAppeared === false)) {
+        // Caller decides whether to navigate elsewhere — we don't auto-reload
+        // because the same page might just need a few more seconds.
+        return {
+          type: "action_done",
+          stuck_spinner: stuckSpinner,
+          spinner_selector: spinnerSelector,
+          expect_selector_appeared: expectSelectorAppeared,
+          current_url: currentUrl,
+        };
+      }
+      return { type: "action_done", current_url: currentUrl };
     }
 
     case "switch_to_tab": {
@@ -652,15 +926,93 @@ async function handleMcpMessage(msg: {
           if (r[0]?.result) [cssWidth, cssHeight] = r[0].result;
         } catch { /* fall back to tab.width/height */ }
       }
-      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId!, { format: "png" });
 
-      // captureVisibleTab returns an image at device resolution (DPR × CSS pixels).
-      // Downscale to CSS resolution so coordinate systems are always 1:1.
-      const imgBlob = await (await fetch(dataUrl)).blob();
-      const bitmap = await createImageBitmap(imgBlob);
+      // captureVisibleTab + bitmap readback both flake intermittently on
+      // heavy SPAs (the user reports "Request timed out" and "image readback
+      // failed" mid-session, sometimes recovering after minutes). Retry with
+      // exponential backoff before giving up; on terminal failure, attempt a
+      // CDP Page.captureScreenshot fallback if the debugger is already
+      // attached (no extra attach permission prompt).
+      async function captureOnce(): Promise<{ dataUrl: string; via: "visibleTab" | "cdp" }> {
+        return new Promise(async (resolve, reject) => {
+          const wsTimer = setTimeout(() => reject(new Error("captureVisibleTab timed out after 10000ms")), 10_000);
+          try {
+            const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId!, { format: "png" });
+            clearTimeout(wsTimer);
+            if (!dataUrl) {
+              reject(new Error("captureVisibleTab returned empty data URL"));
+              return;
+            }
+            resolve({ dataUrl, via: "visibleTab" });
+          } catch (err) {
+            clearTimeout(wsTimer);
+            reject(err);
+          }
+        });
+      }
+
+      async function captureViaCdp(): Promise<{ dataUrl: string; via: "cdp" } | null> {
+        try {
+          const targets = await new Promise<chrome.debugger.TargetInfo[]>((resolve) =>
+            chrome.debugger.getTargets((t) => resolve(t))
+          );
+          const attached = targets.some((t) => t.tabId === tab.id && t.attached);
+          if (!attached) return null;
+          const dbg = chrome.debugger as unknown as {
+            sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
+          };
+          const result = await dbg.sendCommand({ tabId: tab.id! }, "Page.captureScreenshot", { format: "png" });
+          const data = (result as { data?: string }).data;
+          if (!data) return null;
+          return { dataUrl: `data:image/png;base64,${data}`, via: "cdp" };
+        } catch {
+          return null;
+        }
+      }
+
+      let capture: { dataUrl: string; via: "visibleTab" | "cdp" } | null = null;
+      let lastErr: Error | null = null;
+      const backoffMs = [0, 500, 1500];
+      for (const wait of backoffMs) {
+        if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+        try {
+          capture = await captureOnce();
+          break;
+        } catch (e) {
+          lastErr = e instanceof Error ? e : new Error(String(e));
+        }
+      }
+
+      if (!capture) {
+        // Final attempt: CDP fallback. Only succeeds when the debugger is
+        // already attached (chromeflow's CDP click path attaches it on
+        // demand); a cold-start without prior CDP usage will return null and
+        // fall through to the error message.
+        capture = await captureViaCdp();
+      }
+
+      if (!capture) {
+        const reason = lastErr ? lastErr.message : "unknown capture error";
+        throw new Error(`take_screenshot failed: ${reason}. Tried captureVisibleTab 3× with backoff and CDP fallback. This is usually transient on heavy SPAs — retry after a few seconds, or use get_page_text to read content via DOM instead.`);
+      }
+
+      let imgBlob: Blob;
+      let bitmap: ImageBitmap;
+      try {
+        imgBlob = await (await fetch(capture.dataUrl)).blob();
+        bitmap = await createImageBitmap(imgBlob);
+      } catch (e) {
+        throw new Error(`take_screenshot bitmap readback failed: ${e instanceof Error ? e.message : String(e)}. The capture data was returned but couldn't be decoded — retry after a few seconds.`);
+      }
+
       const canvas = new OffscreenCanvas(cssWidth, cssHeight);
       const ctx = canvas.getContext("2d")!;
-      ctx.drawImage(bitmap, 0, 0, cssWidth, cssHeight);
+      try {
+        ctx.drawImage(bitmap, 0, 0, cssWidth, cssHeight);
+      } catch (e) {
+        bitmap.close();
+        throw new Error(`take_screenshot drawImage failed: ${e instanceof Error ? e.message : String(e)}. The bitmap decoded but canvas drawing failed — retry after a few seconds.`);
+      }
       bitmap.close();
 
       // Draw a coordinate grid so Claude can read off exact pixel positions
@@ -1147,19 +1499,56 @@ async function handleMcpMessage(msg: {
       // dispatch any useful event and any until_* clause is guaranteed to
       // time out (5s wasted per call). Better to fail fast with a clear
       // message so the caller can wait for visibility first.
+      //
+      // When the caller did NOT pin a specific nth and the matcher found a
+      // visible peer, auto-advance to it before refusing — the most common
+      // case is a duplicated label on a card grid where the hidden detail-
+      // panel copy outranks the visible card. Respect explicit nth: if the
+      // user pinned the 3rd "Confirmed" radio, we shouldn't silently
+      // re-resolve to the 2nd one.
       if (prep.width === 0 && prep.height === 0) {
         const label = prep.label ?? msg.textHint;
-        const nextSuggestion = prep.nextCandidate
-          ? ` Next visible candidate: ${prep.nextCandidate}. Retry without nth=, with a different nth, or with a more specific textHint.`
-          : ` No visible candidates matched "${msg.textHint}".`;
-        return {
-          type: "click_element_response",
-          success: false,
-          message: `Matched element "${label}" is 0×0 (hidden, display:none, or not yet rendered). Refusing to click — a click at this size would dispatch no useful event.${nextSuggestion}`,
-          before_url,
-          after_url: before_url,
-          navigated: false,
-        };
+        const nthExplicit = typeof msg.nth === "number" && (msg.nth as number) >= 1;
+        if (!nthExplicit && prep.nextCandidate) {
+          const reprep = await forwardToContentScript(tab, {
+            type: "prepare_click_target",
+            requestId: msg.requestId + "-advance",
+            textHint: msg.textHint,
+            // Skip the hidden first match by asking for nth=2 — findClickableAll
+            // ranks visible candidates before hidden ones, so nth=2 lands on
+            // the first visible peer (or a later visible candidate if there
+            // are multiple hidden ones in front).
+            nth: 2,
+            within_selector: msg.within_selector,
+            near_text: msg.near_text,
+          }) as PrepResult;
+          if (reprep.success && reprep.width !== 0 && reprep.height !== 0) {
+            // Replace prep so the rest of the flow uses the visible candidate.
+            prep = reprep;
+            prep.message = `Auto-advanced from hidden first match for "${msg.textHint}" → visible candidate "${prep.label ?? msg.textHint}". ${prep.message}`;
+          } else {
+            return {
+              type: "click_element_response",
+              success: false,
+              message: `Matched element "${label}" is 0×0 (hidden, display:none, or not yet rendered) and the next visible candidate (${prep.nextCandidate}) couldn't be re-resolved. Retry without nth=, with a different nth, or with a more specific textHint.`,
+              before_url,
+              after_url: before_url,
+              navigated: false,
+            };
+          }
+        } else {
+          const nextSuggestion = prep.nextCandidate
+            ? ` Next visible candidate: ${prep.nextCandidate}. Retry without nth=, with a different nth, or with a more specific textHint.`
+            : ` No visible candidates matched "${msg.textHint}".`;
+          return {
+            type: "click_element_response",
+            success: false,
+            message: `Matched element "${label}" is 0×0 (hidden, display:none, or not yet rendered). Refusing to click — a click at this size would dispatch no useful event.${nextSuggestion}`,
+            before_url,
+            after_url: before_url,
+            navigated: false,
+          };
+        }
       }
 
       // Phase 2: dispatch the click via CDP (isTrusted=true events) if possible.
@@ -1256,6 +1645,35 @@ async function handleMcpMessage(msg: {
           const after_url = postFailTab?.url ?? before_url;
           return { type: "click_element_response", success: false, message: result.message, before_url, after_url, navigated: after_url !== before_url };
         }
+      }
+
+      // Fast-fail probe: watch the page for ANY observable activity in the
+      // 1500ms after dispatch (DOM mutations, focus change, value/check
+      // change, URL change, alert/toast/modal). When 0 activity is detected,
+      // the click was almost certainly silently rejected by anti-bot
+      // detection (Outlier task UI, Reddit submit, X submit, GitHub device
+      // flow) and any until_* clause is guaranteed to time out. Failing
+      // fast here saves up to 25s per failed click and tells the agent to
+      // switch to highlight_region + wait_for_click for a human gesture.
+      //
+      // Returns early as soon as activity is detected, so most clicks (which
+      // do produce activity) add only ~100ms before continuing to the
+      // existing until-poll / expect_submit / SPA-nav-wait flow.
+      const probe = isScriptableUrl(tab.url) && tab.id
+        ? await runActivityProbe(tab.id, before_url, 1500)
+        : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
+
+      if (!probe.activity) {
+        return {
+          type: "click_element_response",
+          success: false,
+          message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection — Outlier task UI, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success. Switch to highlight_region + wait_for_click so the user's real gesture fires the action. Until_* clauses are skipped here since the click never registered.`,
+          before_url,
+          after_url: probe.after_url,
+          navigated: false,
+          focused_after: probe.focused_after,
+          silently_rejected: true,
+        };
       }
 
       // If the caller specified an until-clause, poll for it before returning.
@@ -1456,7 +1874,7 @@ async function handleMcpMessage(msg: {
         if (alertMessage) {
           message += `\n\nPAGE ALERT: "${alertMessage}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
         }
-        return { type: "click_element_response", success: untilResult.ok, message, before_url, after_url, navigated };
+        return { type: "click_element_response", success: untilResult.ok, message, before_url, after_url, navigated, focused_after: probe.focused_after };
       }
 
       message = navigationResult
@@ -1467,7 +1885,7 @@ async function handleMcpMessage(msg: {
         message += `\n\nPAGE ALERT: "${alertMessage}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
       }
 
-      return { type: "click_element_response", success: true, message, before_url, after_url, navigated };
+      return { type: "click_element_response", success: true, message, before_url, after_url, navigated, focused_after: probe.focused_after };
     }
 
     case "type_text": {
@@ -1475,6 +1893,78 @@ async function handleMcpMessage(msg: {
       const tabId = tab.id!;
       const text = msg.text as string;
       const frameSelector = msg.frame as string | undefined;
+      const intoSelector = msg.into_selector as string | undefined;
+      const clearFirst = msg.clear_first === true;
+
+      // If `into_selector` is given, focus that element FIRST. Resolves via
+      // shadow-piercing query so contenteditables inside Radix portals or
+      // other closed shadow roots are reachable. clear_first does
+      // selectAll+delete before typing — useful for replacing existing text
+      // in a tiptap / ProseMirror editor in one call rather than the old
+      // wait_for_click → execCommand → type_text pattern.
+      let intoSelectorOk: boolean | null = null;
+      if (intoSelector) {
+        try {
+          const r = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: (selector: string, clearFirst: boolean) => {
+              function getShadowRoot(el: Element): ShadowRoot | null {
+                const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+                if (chromeDom?.openOrClosedShadowRoot) {
+                  try {
+                    const sr = chromeDom.openOrClosedShadowRoot(el);
+                    if (sr) return sr;
+                  } catch { /* fall through */ }
+                }
+                return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+              }
+              function queryDeep(root: ParentNode, sel: string): Element | null {
+                const direct = root.querySelector(sel);
+                if (direct) return direct;
+                for (const el of Array.from(root.querySelectorAll<Element>("*"))) {
+                  const sr = getShadowRoot(el);
+                  if (sr) {
+                    const found = queryDeep(sr, sel);
+                    if (found) return found;
+                  }
+                }
+                return null;
+              }
+              const target = queryDeep(document, selector);
+              if (!target) return "not-found";
+              if (!(target instanceof HTMLElement)) return "not-html";
+              // If 0×0, scroll into view (best-effort) before focusing.
+              const rect = target.getBoundingClientRect();
+              if (rect.width === 0 && rect.height === 0) {
+                target.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "center" });
+              }
+              target.focus();
+              if (clearFirst) {
+                try { document.execCommand("selectAll"); } catch { /* ignore */ }
+                try { document.execCommand("delete"); } catch { /* ignore */ }
+              }
+              return "ok";
+            },
+            args: [intoSelector, clearFirst],
+          });
+          intoSelectorOk = r[0]?.result === "ok";
+          if (!intoSelectorOk) {
+            return {
+              type: "action_done",
+              requestId: msg.requestId,
+              success: false,
+              message: `into_selector "${intoSelector}" did not resolve to a focusable element (${r[0]?.result ?? "unknown"}). Either the selector is wrong, the element is detached, or it lives in a cross-origin iframe.`,
+            };
+          }
+        } catch (e) {
+          return {
+            type: "action_done",
+            requestId: msg.requestId,
+            success: false,
+            message: `Error focusing into_selector "${intoSelector}": ${(e as Error).message}`,
+          };
+        }
+      }
 
       // If `frame` is given, focus a contenteditable/input inside that iframe
       // BEFORE the CDP keys fire. eBay's "se-rte" description editor is an

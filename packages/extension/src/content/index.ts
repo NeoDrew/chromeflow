@@ -6,8 +6,8 @@ import {
 } from "./highlight.js";
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
-import { clickElement, prepareClickTarget, postClickInspect } from "./click.js";
-import { extractTextDeep, queryAllDeep } from "./shadow.js";
+import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView } from "./click.js";
+import { collectShadowHosts, countShadowHosts, extractTextDeep, queryAllDeep } from "./shadow.js";
 import { enumerateFormFields } from "./forms.js";
 import { findText, findInputs, waitForText } from "./find.js";
 import { markerIds } from "../markers.js";
@@ -245,8 +245,20 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       const chunkSize = 10000;
       let root: Element;
       let selectorMissed = false;
+      let selectorInShadow = false;
       if (selector) {
-        const el = document.querySelector(selector);
+        // Plain querySelector first (cheap, common case). If it misses, try
+        // shadow-piercing — Outlier-style Radix portals host content inside
+        // closed shadow roots that find_text reports selectors for, but
+        // document.querySelector can't reach.
+        let el = document.querySelector(selector);
+        if (!el) {
+          const deep = queryAllDeep(document, selector)[0];
+          if (deep) {
+            el = deep;
+            selectorInShadow = true;
+          }
+        }
         if (!el) selectorMissed = true;
         root = el ?? document.body;
       } else {
@@ -288,12 +300,29 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       if (selectorMissed) {
         text = `[Warning: selector "${selector}" not found — returning full page text]\n\n` + text;
       }
+      // Shadow-host census so the agent can recognise pages where
+      // execute_script returns an empty document (Outlier, Radix portals,
+      // Stencil/Lit). When this is > 0 and the agent is staring at "no
+      // buttons / no text" from execute_script, that's the signal to switch
+      // to find_text / get_page_text / click_element / fill_input — those
+      // pierce shadow DOM.
+      let shadowHostsSeen = 0;
+      try {
+        shadowHostsSeen = countShadowHosts(document);
+      } catch { /* best-effort */ }
       const totalLength = text.length;
       text = text.slice(startIndex, startIndex + chunkSize);
       if (startIndex + chunkSize < totalLength) {
         text += `\n\n... (${totalLength - startIndex - chunkSize} more characters — call get_page_text with startIndex=${startIndex + chunkSize} to continue)`;
       }
-      return { type: "page_text_response", requestId: msg.requestId, text };
+      return {
+        type: "page_text_response",
+        requestId: msg.requestId,
+        text,
+        selector_missed: selectorMissed,
+        selector_in_shadow: selectorInShadow,
+        shadow_hosts_seen: shadowHostsSeen,
+      };
     }
 
     case "get_elements": {
@@ -438,15 +467,17 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       let target: Element | null = null;
       let matchedText = "";
 
-      // Try as CSS selector first
+      // Try as CSS selector first — pierce shadow roots so selectors returned
+      // by find_text (which walks closed shadow trees) resolve correctly.
       try {
-        target = document.querySelector(msg.query as string);
+        target = queryAllDeep(document, msg.query as string)[0] ?? null;
         if (target) matchedText = msg.query as string;
       } catch { /* invalid selector */ }
 
-      // Otherwise search by label/text
+      // Otherwise search by label/text. Pierce shadow roots so labels and
+      // headings inside Outlier-style Radix portals are reachable.
       if (!target) {
-        for (const el of Array.from(document.querySelectorAll<HTMLElement>("input, textarea, select, button, [role=button], label, h1, h2, h3, h4, h5, h6"))) {
+        for (const el of queryAllDeep<HTMLElement>(document, "input, textarea, select, button, [role=button], label, h1, h2, h3, h4, h5, h6")) {
           const text = (el.textContent ?? el.getAttribute("aria-label") ?? el.getAttribute("placeholder") ?? "").toLowerCase();
           if (text.includes(query)) {
             target = el;
@@ -460,7 +491,12 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       // Capture stable document y BEFORE scrolling — getBoundingClientRect after smooth scroll
       // returns a mid-animation value which is inconsistent and confusing.
       const docY = Math.round(target.getBoundingClientRect().top + window.scrollY);
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
+      // scrollSmartIntoView walks overflow:auto/scroll ancestors so inner
+      // scroll panes (Outlier's tall task surface where the outer document
+      // is tiny but the inner pane scrolls 15000px) actually move. Plain
+      // scrollIntoView only moves whichever scroll container the browser
+      // happens to pick, which is often the outer document.
+      scrollSmartIntoView(target);
       return {
         type: "action_done",
         requestId: msg.requestId,
@@ -696,7 +732,19 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           height: Math.round(rect.height),
         };
       });
-      return { type: "list_frames_response", requestId: msg.requestId, frames };
+      // Augment with shadow-host inventory so the agent can spot pages whose
+      // visible content is rendered inside closed shadow roots (Outlier task
+      // surface, Radix portals, Stencil/Lit web components). When the agent
+      // calls execute_script and gets back an empty document but the shadow
+      // host list is non-empty, that's the signal to switch to find_text /
+      // get_page_text / click_element / fill_input — those pierce.
+      const shadowHosts = collectShadowHosts(document, 25);
+      return {
+        type: "list_frames_response",
+        requestId: msg.requestId,
+        frames,
+        shadow_hosts: shadowHosts,
+      };
     }
 
     default:

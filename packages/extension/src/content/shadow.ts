@@ -135,6 +135,78 @@ export function* walkTextNodesDeep(root: Node): Generator<Text> {
 }
 
 /**
+ * Describe the shadow-host elements attached to `root`'s subtree. Returns one
+ * entry per host whose shadowRoot is currently attached, with an `open` flag
+ * (true if `el.shadowRoot` is exposed via the standard property, false if it
+ * is only reachable via `chrome.dom.openOrClosedShadowRoot` — closed roots).
+ *
+ * Used as a diagnostic signal: when execute_script returns an empty document
+ * but `list_frames`/`get_page_text` report a non-empty `shadow_hosts` array,
+ * the page is using closed shadow DOM (Radix portals, Stencil, Lit) and the
+ * agent should switch to find_text/get_page_text/click_element/fill_input —
+ * those pierce.
+ *
+ * `max` caps the number of returned entries to avoid response bloat on pages
+ * with hundreds of web-component instances (a 25-host cap is plenty for the
+ * "is shadow DOM in play here?" signal).
+ */
+export function collectShadowHosts(
+  root: Document | Element = document,
+  max: number = 25
+): Array<{ selector: string; open: boolean; depth: number }> {
+  const out: Array<{ selector: string; open: boolean; depth: number }> = [];
+  function describeHost(el: Element, depth: number) {
+    const tag = el.tagName.toLowerCase();
+    let selector: string;
+    if (el.id) {
+      selector = `#${CSS.escape(el.id)}`;
+    } else if (el.className && typeof el.className === "string" && el.className.trim()) {
+      const cls = el.className.trim().split(/\s+/).slice(0, 2).map((c) => `.${CSS.escape(c)}`).join("");
+      selector = `${tag}${cls}`;
+    } else {
+      selector = tag;
+    }
+    const open = !!(el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+    out.push({ selector, open, depth });
+  }
+  function recurse(node: ParentNode, depth: number) {
+    if (out.length >= max) return;
+    for (const el of Array.from(node.querySelectorAll<Element>("*"))) {
+      if (out.length >= max) return;
+      const sr = getShadowRoot(el);
+      if (sr) {
+        describeHost(el, depth);
+        recurse(sr, depth + 1);
+      }
+    }
+  }
+  recurse(root, 0);
+  return out;
+}
+
+/**
+ * Cheap count of shadow hosts. Used by get_page_text to surface a numeric
+ * "this page uses shadow DOM" signal without enumerating selectors.
+ */
+export function countShadowHosts(root: Document | Element = document): number {
+  let n = 0;
+  for (const el of Array.from(root.querySelectorAll<Element>("*"))) {
+    if (getShadowRoot(el)) {
+      n++;
+      // Also recurse into the shadow tree to catch nested hosts (closed shadow
+      // roots can contain further shadow hosts; Radix portals nest a few deep).
+      const sr = getShadowRoot(el);
+      if (sr) {
+        for (const inner of Array.from(sr.querySelectorAll<Element>("*"))) {
+          if (getShadowRoot(inner)) n++;
+        }
+      }
+    }
+  }
+  return n;
+}
+
+/**
  * Get the actually-focused element, descending through any nested shadow roots.
  * `document.activeElement` returns the shadow host, not the focused element
  * inside the shadow tree — this drills down to find the real focus target.

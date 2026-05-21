@@ -24775,21 +24775,41 @@ function registerBrowserTools(server, bridge) {
     "open_page",
     `Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it. After navigating, call get_page_text to read the page \u2014 do NOT take a screenshot.
 
-Set background=true (only with new_tab=true) to open the new tab WITHOUT switching focus to it. Use this when the current tab has a partially-filled form whose page auto-saves on focus loss (e.g. eBay seller listings) \u2014 switching away would trigger the auto-save and corrupt the in-progress draft.`,
+Set background=true (only with new_tab=true) to open the new tab WITHOUT switching focus to it. Use this when the current tab has a partially-filled form whose page auto-saves on focus loss (e.g. eBay seller listings) \u2014 switching away would trigger the auto-save and corrupt the in-progress draft.
+
+After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle check (document.readyState=complete, no visible spinner element, 250ms of mutation quiet). If a spinner is still visible at the end of the window, the response carries \`stuck_spinner: true\` with the matching selector \u2014 the canonical case is an SPA route that left a permanent .spinner-wrapper because the API request died. Set expect_selector to wait for a known-good element to appear before considering the page settled \u2014 the response carries \`expect_selector_appeared: false\` if it never showed up.`,
     {
       url: external_exports.string().url().describe("The URL to navigate to"),
       new_tab: external_exports.boolean().optional().describe("Open in a new tab instead of replacing the current one (default false)"),
-      background: external_exports.boolean().optional().describe("If new_tab=true, do not switch focus to the new tab. Default false. Ignored when new_tab is false.")
+      background: external_exports.boolean().optional().describe("If new_tab=true, do not switch focus to the new tab. Default false. Ignored when new_tab is false."),
+      expect_selector: external_exports.string().optional().describe("CSS selector for an element that must be present before the page is considered settled. The settle check waits up to 6s for it; if it never appears, the response carries expect_selector_appeared:false so you can detect dead-spinner routes (e.g. Outlier /en/expert/tasks).")
     },
-    async ({ url, new_tab, background }) => {
+    async ({ url, new_tab, background, expect_selector }) => {
       const block = isBlockedUrl(url);
       if (block.blocked) {
         return { content: [{ type: "text", text: `open_page refused: ${block.reason}` }] };
       }
-      await bridge.request({ type: "navigate", url, newTab: new_tab ?? false, background: background ?? false });
-      return {
-        content: [{ type: "text", text: `Navigated to ${url}${new_tab ? background ? " (new background tab)" : " (new tab)" : ""}` }]
-      };
+      const response = await bridge.request({
+        type: "navigate",
+        url,
+        newTab: new_tab ?? false,
+        background: background ?? false,
+        expect_selector
+      });
+      const r = response;
+      const newTabBit = new_tab ? background ? " (new background tab)" : " (new tab)" : "";
+      let text = `Navigated to ${url}${newTabBit}`;
+      if (r.stuck_spinner) {
+        text += `
+
+\u26A0 stuck_spinner: true \u2014 page settled with a visible spinner (${r.spinner_selector ?? "unknown selector"}) still on screen after 6s. Current URL: ${r.current_url ?? url}. The route may be dead (Outlier /en/expert/tasks pattern) \u2014 navigate elsewhere instead of reloading, or wait and try get_page_text to see if it ever recovers.`;
+      }
+      if (expect_selector && r.expect_selector_appeared === false) {
+        text += `
+
+\u26A0 expect_selector "${expect_selector}" never appeared within the 6s settle window. The page may be partially loaded or stuck.`;
+      }
+      return { content: [{ type: "text", text }] };
     }
   );
   server.tool(
@@ -25052,16 +25072,25 @@ ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
   );
   server.tool(
     "type_text",
-    `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). The caller is responsible for focusing the target first (via click_element or execute_script). Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.`,
+    `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). Pass \`into_selector\` to focus the target before typing (shadow-piercing CSS) \u2014 combined with \`clear_first: true\`, this collapses the old "wait_for_click \u2192 execute_script selectAll \u2192 type_text" pattern into a single call. Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.`,
     {
       text: external_exports.string().describe("The text to type into the focused element"),
+      into_selector: external_exports.string().optional().describe(
+        "CSS selector for the element to focus before typing (shadow-piercing \u2014 resolves selectors that find_text returns for closed-shadow-root content, e.g. Outlier-style Radix portals). When omitted, types into whatever is currently focused (the caller is responsible for focusing first via click_element)."
+      ),
+      clear_first: external_exports.boolean().optional().describe(
+        "Only with into_selector: run document.execCommand('selectAll') + 'delete' on the focused element before typing. Use to overwrite tiptap / ProseMirror editors and similar contenteditable surfaces in one call."
+      ),
       frame: external_exports.string().optional().describe(
         "CSS selector for an iframe whose contents you want to type into (e.g. 'iframe.se-rte-frame__summary'). Same-origin only. Before typing, the first contenteditable/input inside the iframe is focused; after typing, input/change events are dispatched in the iframe's context."
       )
     },
-    async ({ text, frame }) => {
+    async ({ text, frame, into_selector, clear_first }) => {
       const timeoutMs = Math.max(3e4, text.length * 90 + 15e3);
-      const response = await bridge.request({ type: "type_text", text, frame }, timeoutMs);
+      const response = await bridge.request(
+        { type: "type_text", text, frame, into_selector, clear_first },
+        timeoutMs
+      );
       const r = response;
       return {
         content: [{ type: "text", text: r.message ?? (r.success ? "Text typed successfully" : "Failed to type text") }]
@@ -25275,7 +25304,18 @@ Never use take_screenshot just to read page content \u2014 paginate with startIn
     async ({ selector, startIndex }) => {
       const response = await bridge.request({ type: "get_page_text", selector, startIndex });
       if (response.type !== "page_text_response") throw new Error("Unexpected response");
-      const text = response.text;
+      const r = response;
+      let text = r.text;
+      if (r.selector_in_shadow) {
+        text = `[note: selector "${selector}" matched inside a closed shadow root \u2014 chromeflow tools that pierce (get_page_text, find_text, click_element, fill_input) see it, but execute_script cannot. Don't drop to screenshots.]
+
+` + text;
+      }
+      if (!selector && r.shadow_hosts_seen && r.shadow_hosts_seen > 0) {
+        text = `[note: ${r.shadow_hosts_seen} shadow host${r.shadow_hosts_seen === 1 ? "" : "s"} detected on this page \u2014 call list_frames to see them. If execute_script returns an empty document, switch to find_text / get_page_text / click_element / fill_input \u2014 those pierce closed shadow roots.]
+
+` + text;
+      }
       return {
         content: [{ type: "text", text: text || "(no text found on page)" }]
       };
@@ -25579,18 +25619,28 @@ Current URL: ${activeTab.url}`;
       const r = response;
       const navLine = r.navigated && r.after_url ? `
 \u2192 Navigated: ${r.after_url}` : "";
+      let focusLine = "";
+      const f = r.focused_after ?? null;
+      if (f && !["button", "a"].includes(f.tag)) {
+        const idBit = f.id ? `#${f.id}` : "";
+        const nameBit = f.name ? ` name="${f.name}"` : "";
+        const aria = f.aria_label ? ` aria-label="${f.aria_label.slice(0, 30)}"` : "";
+        const valueBit = f.value_preview ? ` value="${f.value_preview.slice(0, 30)}"` : "";
+        focusLine = `
+\u2192 Focused: <${f.tag}${idBit}${nameBit}${aria}${valueBit}>`;
+      }
       if (!r.success) {
         return {
           content: [
             {
               type: "text",
-              text: `Could not click "${textHint}": ${r.message}${navLine}`
+              text: `Could not click "${textHint}": ${r.message}${navLine}${focusLine}`
             }
           ]
         };
       }
       return {
-        content: [{ type: "text", text: `${r.message}${navLine}` }]
+        content: [{ type: "text", text: `${r.message}${navLine}${focusLine}` }]
       };
     }
   );
@@ -25791,9 +25841,11 @@ ${lines.join("\n")}`
   );
   server.tool(
     "list_frames",
-    `List every top-level iframe/frame on the active page, with its origin, whether its contentDocument is accessible (same-origin), and its on-screen position.
+    `List every top-level iframe/frame on the active page, with its origin, whether its contentDocument is accessible (same-origin), and its on-screen position. Also reports shadow-host inventory so you can spot pages whose visible content is rendered inside closed shadow roots (Radix portals, Stencil/Lit, custom web components).
 
 Use this BEFORE calling find_text({frame: "..."}) or other frame-targeted tools \u2014 it shows you which frames exist and which are reachable. Knowing a frame is cross-origin up front means you can route to read_attachment (for the frame's src URL) or take_screenshot instead of getting a "frame not accessible" error from another tool.
+
+Also use this as a quick diagnostic when execute_script returns an empty document on a page you can clearly see \u2014 non-zero \`shadow_hosts\` (especially closed roots) means switch to find_text / get_page_text / click_element / fill_input, which pierce shadow DOM via the extension's privileged API.
 
 Per-frame fields:
 - selector: CSS selector you can pass to other tools' \`frame\` parameter
@@ -25803,14 +25855,34 @@ Per-frame fields:
 - title: the iframe's title attribute, often the most human-readable identifier
 - x, y, width, height: bounding-box position in viewport CSS pixels
 
-Note: this returns top-level frames only. Nested cross-origin frame trees are not enumerated.`,
+Per-shadow-host fields:
+- selector: short CSS hint for the host element (tag, id, or .class)
+- open: true if the shadow root is exposed via \`el.shadowRoot\` (most web components), false if it is closed (Radix portals, Stencil/Lit defaults) \u2014 closed roots are invisible to execute_script but pierced by chromeflow's other tools.
+- depth: nesting depth (0 = top-level host attached directly to the document)
+
+Note: this returns top-level frames only. Nested cross-origin frame trees are not enumerated. Shadow hosts are capped at 25 to keep the response compact.`,
     {},
     async () => {
       const response = await bridge.request({ type: "list_frames" });
       if (response.type !== "list_frames_response") throw new Error(`Unexpected response: ${response.type}`);
       const r = response;
+      const hosts = r.shadow_hosts ?? [];
+      const closedCount = hosts.filter((h) => !h.open).length;
+      const openCount = hosts.length - closedCount;
+      let shadowSection = "";
+      if (hosts.length > 0) {
+        const hostLines = hosts.map((h) => {
+          const kind = h.open ? "open" : "closed";
+          const indent = "  ".repeat(h.depth);
+          return `  ${indent}${h.selector} [${kind}]`;
+        });
+        shadowSection = `
+
+Shadow hosts (${hosts.length}: ${openCount} open, ${closedCount} closed):` + (closedCount > 0 ? "\n  (Closed roots are invisible to execute_script. Use find_text / get_page_text / click_element / fill_input \u2014 they pierce.)" : "") + "\n" + hostLines.join("\n");
+      }
       if (r.frames.length === 0) {
-        return { content: [{ type: "text", text: "No iframes or frames on this page." }] };
+        const noFrames = "No iframes or frames on this page.";
+        return { content: [{ type: "text", text: hosts.length > 0 ? `${noFrames}${shadowSection}` : noFrames }] };
       }
       const lines = r.frames.map((f) => {
         const access = f.accessible ? "accessible" : "cross-origin";
@@ -25820,13 +25892,13 @@ Note: this returns top-level frames only. Nested cross-origin frame trees are no
    src: ${f.src}` : ""}`;
       });
       return { content: [{ type: "text", text: `Found ${r.frames.length} frame${r.frames.length === 1 ? "" : "s"}:
-${lines.join("\n")}` }] };
+${lines.join("\n")}${shadowSection}` }] };
     }
   );
 }
 
 // src/index.ts
-var PACKAGE_VERSION = true ? "0.9.8" : "dev";
+var PACKAGE_VERSION = true ? "0.9.9" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

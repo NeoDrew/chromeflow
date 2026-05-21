@@ -103,24 +103,53 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
           ],
         };
       }
-      const r = response as { success: boolean; message: string; before_url?: string; after_url?: string; navigated?: boolean; scope_missed?: boolean };
+      const r = response as {
+        success: boolean;
+        message: string;
+        before_url?: string;
+        after_url?: string;
+        navigated?: boolean;
+        scope_missed?: boolean;
+        silently_rejected?: boolean;
+        focused_after?: {
+          tag: string;
+          id: string;
+          name: string;
+          type: string;
+          aria_label: string;
+          value_preview: string;
+        } | null;
+      };
       // Surface silent redirects: a click whose post-URL differs from the
       // pre-URL is the canonical Canvas "Assessment link → course home" case.
       // Only emit the line when navigation actually happened so the
       // common-case output stays one line.
       const navLine = r.navigated && r.after_url ? `\n→ Navigated: ${r.after_url}` : "";
+      // Surface focus landed after the click, so the agent knows whether to
+      // chain type_text/fill_input on the same element. Omitted for radio /
+      // checkbox / button targets where focus rarely lands on the focused
+      // element of interest (and the line would be noise).
+      let focusLine = "";
+      const f = r.focused_after ?? null;
+      if (f && !["button", "a"].includes(f.tag)) {
+        const idBit = f.id ? `#${f.id}` : "";
+        const nameBit = f.name ? ` name="${f.name}"` : "";
+        const aria = f.aria_label ? ` aria-label="${f.aria_label.slice(0, 30)}"` : "";
+        const valueBit = f.value_preview ? ` value="${f.value_preview.slice(0, 30)}"` : "";
+        focusLine = `\n→ Focused: <${f.tag}${idBit}${nameBit}${aria}${valueBit}>`;
+      }
       if (!r.success) {
         return {
           content: [
             {
               type: "text",
-              text: `Could not click "${textHint}": ${r.message}${navLine}`,
+              text: `Could not click "${textHint}": ${r.message}${navLine}${focusLine}`,
             },
           ],
         };
       }
       return {
-        content: [{ type: "text", text: `${r.message}${navLine}` }],
+        content: [{ type: "text", text: `${r.message}${navLine}${focusLine}` }],
       };
     }
   );
@@ -355,9 +384,11 @@ Pass \`exact: true\` for forms with short generic labels (like "Rate" or "Amount
 
   server.tool(
     "list_frames",
-    `List every top-level iframe/frame on the active page, with its origin, whether its contentDocument is accessible (same-origin), and its on-screen position.
+    `List every top-level iframe/frame on the active page, with its origin, whether its contentDocument is accessible (same-origin), and its on-screen position. Also reports shadow-host inventory so you can spot pages whose visible content is rendered inside closed shadow roots (Radix portals, Stencil/Lit, custom web components).
 
 Use this BEFORE calling find_text({frame: "..."}) or other frame-targeted tools — it shows you which frames exist and which are reachable. Knowing a frame is cross-origin up front means you can route to read_attachment (for the frame's src URL) or take_screenshot instead of getting a "frame not accessible" error from another tool.
+
+Also use this as a quick diagnostic when execute_script returns an empty document on a page you can clearly see — non-zero \`shadow_hosts\` (especially closed roots) means switch to find_text / get_page_text / click_element / fill_input, which pierce shadow DOM via the extension's privileged API.
 
 Per-frame fields:
 - selector: CSS selector you can pass to other tools' \`frame\` parameter
@@ -367,14 +398,44 @@ Per-frame fields:
 - title: the iframe's title attribute, often the most human-readable identifier
 - x, y, width, height: bounding-box position in viewport CSS pixels
 
-Note: this returns top-level frames only. Nested cross-origin frame trees are not enumerated.`,
+Per-shadow-host fields:
+- selector: short CSS hint for the host element (tag, id, or .class)
+- open: true if the shadow root is exposed via \`el.shadowRoot\` (most web components), false if it is closed (Radix portals, Stencil/Lit defaults) — closed roots are invisible to execute_script but pierced by chromeflow's other tools.
+- depth: nesting depth (0 = top-level host attached directly to the document)
+
+Note: this returns top-level frames only. Nested cross-origin frame trees are not enumerated. Shadow hosts are capped at 25 to keep the response compact.`,
     {},
     async () => {
       const response = await bridge.request({ type: "list_frames" });
       if (response.type !== "list_frames_response") throw new Error(`Unexpected response: ${response.type}`);
-      const r = response as { frames: Array<{ index: number; selector: string; src: string; origin: string; title: string; accessible: boolean; x: number; y: number; width: number; height: number }> };
+      const r = response as {
+        frames: Array<{ index: number; selector: string; src: string; origin: string; title: string; accessible: boolean; x: number; y: number; width: number; height: number }>;
+        shadow_hosts?: Array<{ selector: string; open: boolean; depth: number }>;
+      };
+      // Build a shadow-host section. Surfacing this here means the agent gets
+      // the full "is this page using shadow DOM?" picture in one call —
+      // matches the user's expectation that list_frames is the
+      // discoverability tool for frame-like boundaries.
+      const hosts = r.shadow_hosts ?? [];
+      const closedCount = hosts.filter((h) => !h.open).length;
+      const openCount = hosts.length - closedCount;
+      let shadowSection = "";
+      if (hosts.length > 0) {
+        const hostLines = hosts.map((h) => {
+          const kind = h.open ? "open" : "closed";
+          const indent = "  ".repeat(h.depth);
+          return `  ${indent}${h.selector} [${kind}]`;
+        });
+        shadowSection =
+          `\n\nShadow hosts (${hosts.length}: ${openCount} open, ${closedCount} closed):` +
+          (closedCount > 0
+            ? "\n  (Closed roots are invisible to execute_script. Use find_text / get_page_text / click_element / fill_input — they pierce.)"
+            : "") +
+          "\n" + hostLines.join("\n");
+      }
       if (r.frames.length === 0) {
-        return { content: [{ type: "text", text: "No iframes or frames on this page." }] };
+        const noFrames = "No iframes or frames on this page.";
+        return { content: [{ type: "text", text: hosts.length > 0 ? `${noFrames}${shadowSection}` : noFrames }] };
       }
       const lines = r.frames.map((f) => {
         const access = f.accessible ? "accessible" : "cross-origin";
@@ -382,7 +443,7 @@ Note: this returns top-level frames only. Nested cross-origin frame trees are no
         const originBit = f.origin || "(no origin)";
         return `${f.index}. ${f.selector}${titleBit} — ${originBit} [${access}] — ${f.width}×${f.height} @ (${f.x},${f.y})${f.src ? `\n   src: ${f.src}` : ""}`;
       });
-      return { content: [{ type: "text", text: `Found ${r.frames.length} frame${r.frames.length === 1 ? "" : "s"}:\n${lines.join("\n")}` }] };
+      return { content: [{ type: "text", text: `Found ${r.frames.length} frame${r.frames.length === 1 ? "" : "s"}:\n${lines.join("\n")}${shadowSection}` }] };
     }
   );
 
