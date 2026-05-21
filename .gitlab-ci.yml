@@ -27,16 +27,15 @@ publish:
     # `npm rebuild` re-runs the platform-resolution for esbuild — without it the
     # `.bin/esbuild` shim ends up pointing at whatever-arch binary the lockfile
     # last linked (Linux runner died on the arm64 macOS binary).
-    - npm install
-    - npm rebuild esbuild
+    - echo "=== pre-install state ==="
+    - ls node_modules 2>&1 | head -5 || echo "no node_modules"
+    - npm install --workspaces --include-workspace-root --foreground-scripts
     - ln -sf "$PWD/node_modules/@esbuild/linux-x64/bin/esbuild" node_modules/.bin/esbuild
-    - file node_modules/.bin/esbuild
-    - echo "=== SDK dist/esm/server contents ==="
-    - ls -la node_modules/@modelcontextprotocol/sdk/dist/esm/server/ 2>&1 | head -20 || true
-    - echo "=== SDK dist/esm contents ==="
-    - ls -la node_modules/@modelcontextprotocol/sdk/dist/esm/ 2>&1 | head -10 || true
-    - echo "=== ws/lib contents ==="
-    - ls -la node_modules/ws/lib/ 2>&1 | head -10 || true
+    - echo "=== post-install summary ==="
+    - ls node_modules | wc -l
+    - ls node_modules/@modelcontextprotocol 2>&1 || echo "no @modelcontextprotocol"
+    - ls node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js 2>&1 || echo "MISSING SDK FILES"
+    - ls node_modules/ws/lib/stream.js 2>&1 || echo "MISSING WS FILES"
 
     # Bundle the MCP server and copy it into packages/mcp-server/bin/.
     - packages/plugin/scripts/build-server.sh
