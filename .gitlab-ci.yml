@@ -1,0 +1,48 @@
+# GitLab CI: publish chromeflow to npm on push to main, when the publishable
+# surface changes. Mirrors the prior GitHub Actions workflow.
+#
+# Provenance is supplied via GitLab's OIDC ID token (aud=sigstore). Auth to
+# npm uses the NPM_TOKEN CI/CD variable (masked + protected). Trusted
+# Publishing on npmjs.com is a fast-follow that would let us drop NPM_TOKEN
+# entirely.
+
+stages:
+  - publish
+
+publish:
+  stage: publish
+  image: node:20
+  id_tokens:
+    SIGSTORE_ID_TOKEN:
+      aud: sigstore
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+      changes:
+        - packages/mcp-server/**/*
+        - packages/plugin/scripts/build-server.sh
+        - CLAUDE.md
+  script:
+    # Install deps at repo root so the plugin's build-server.sh finds esbuild.
+    # Use `npm install` (not `npm ci`) because nested package-lock files drift.
+    - npm install --ignore-scripts
+
+    # Bundle the MCP server and copy it into packages/mcp-server/bin/.
+    - packages/plugin/scripts/build-server.sh
+    - mkdir -p packages/mcp-server/bin
+    - cp packages/plugin/server/chromeflow.mjs packages/mcp-server/bin/chromeflow.mjs
+    - ls -lh packages/mcp-server/bin/chromeflow.mjs
+
+    # Compare local version to what's on npm; only publish if newer.
+    - cd packages/mcp-server
+    - CURRENT=$(node -p "require('./package.json').version")
+    - PUBLISHED=$(npm view chromeflow version 2>/dev/null || echo "0.0.0")
+    - echo "current=$CURRENT"
+    - echo "published=$PUBLISHED"
+    - |
+      if [ "$CURRENT" = "$PUBLISHED" ]; then
+        echo "Version $CURRENT already published. Bump packages/mcp-server/package.json to release."
+        exit 0
+      fi
+      echo "Will publish chromeflow@$CURRENT (npm has $PUBLISHED)"
+      echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
+      npm publish --access public --provenance

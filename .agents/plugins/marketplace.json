@@ -14,7 +14,7 @@
       "description": "Let Codex drive your real browser — clicks, fills forms, grabs API keys, writes them to .env.",
       "version": "0.9.5",
       "homepage": "https://chromeflow.run",
-      "repository": "https://github.com/NeoDrewX/chromeflow",
+      "repository": "https://gitlab.com/NeoDrew/chromeflow",
       "license": "MIT"
     }
   ]

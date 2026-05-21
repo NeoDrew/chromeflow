@@ -8,14 +8,14 @@
 
 <p align="center">
   <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime"><img src="https://img.shields.io/chrome-web-store/v/lkdchdgkbkodliefobkkhiegjdiidime?label=Chrome%20Web%20Store&color=4285F4" alt="Chrome Web Store" /></a>
-  <a href="https://github.com/NeoDrewX/chromeflow/releases"><img src="https://img.shields.io/github/v/release/NeoDrewX/chromeflow?label=release&color=e85d2c" alt="Latest release" /></a>
-  <a href="https://github.com/NeoDrewX/chromeflow/blob/main/LICENSE"><img src="https://img.shields.io/github/license/NeoDrewX/chromeflow?color=d97706" alt="MIT License" /></a>
-  <a href="https://github.com/NeoDrewX/chromeflow/stargazers"><img src="https://img.shields.io/github/stars/NeoDrewX/chromeflow?style=social" alt="GitHub stars" /></a>
+  <a href="https://gitlab.com/NeoDrew/chromeflow/-/releases"><img src="https://img.shields.io/gitlab/v/release/NeoDrew%2Fchromeflow?label=release&color=e85d2c" alt="Latest release" /></a>
+  <a href="https://gitlab.com/NeoDrew/chromeflow/-/blob/main/LICENSE"><img src="https://img.shields.io/gitlab/license/NeoDrew%2Fchromeflow?color=d97706" alt="MIT License" /></a>
+  <a href="https://gitlab.com/NeoDrew/chromeflow/-/starrers"><img src="https://img.shields.io/gitlab/stars/NeoDrew%2Fchromeflow?style=social" alt="GitLab stars" /></a>
   <a href="https://chromeflow.run"><img src="https://img.shields.io/badge/website-chromeflow.run-1c1a16" alt="Website" /></a>
 </p>
 
 <p align="center">
-  <a href="#setup">Install</a> · <a href="#what-claude-can-do">Tools</a> · <a href="https://chromeflow.run">Website</a> · <a href="https://github.com/NeoDrewX/chromeflow/blob/main/SECURITY.md">Security</a>
+  <a href="#setup">Install</a> · <a href="#what-claude-can-do">Tools</a> · <a href="https://chromeflow.run">Website</a> · <a href="https://gitlab.com/NeoDrew/chromeflow/-/blob/main/SECURITY.md">Security</a>
 </p>
 
 <p align="center">
@@ -61,7 +61,7 @@ Claude drives the flow. You only touch the browser for things that genuinely nee
 **1. Install the plugin** (one-time, machine-wide):
 
 ```
-/plugin marketplace add NeoDrewX/chromeflow
+/plugin marketplace add https://gitlab.com/NeoDrew/chromeflow.git
 /plugin install chromeflow
 ```
 
@@ -82,7 +82,7 @@ That's it. Claude will automatically reach for Chromeflow whenever a task needs 
 **1. Install the plugin** (one-time, machine-wide):
 
 ```
-codex plugin marketplace add NeoDrewX/chromeflow
+codex plugin marketplace add https://gitlab.com/NeoDrew/chromeflow.git
 ```
 
 Then inside Codex:
@@ -202,7 +202,7 @@ Per-project `CLAUDE.md` files and `.claude/settings.local.json` allowlists are l
 ## Development
 
 ```bash
-git clone https://github.com/NeoDrewX/chromeflow
+git clone https://gitlab.com/NeoDrew/chromeflow
 cd chromeflow
 npm install
 packages/plugin/scripts/build-server.sh   # bundle the MCP server into the plugin

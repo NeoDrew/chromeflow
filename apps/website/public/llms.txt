@@ -7,23 +7,23 @@ Chromeflow ships as two halves: a **Model Context Protocol (MCP) server** that e
 ## Install
 
 - [Chrome extension on the Web Store](https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime): the extension that receives commands from the MCP server and drives Chrome
-- [GitHub repository (NeoDrewX/chromeflow)](https://github.com/NeoDrewX/chromeflow): full source, MIT license, plugin packaging for both hosts
-- [Setup instructions in the README](https://github.com/NeoDrewX/chromeflow#setup): two-command install — `/plugin marketplace add NeoDrewX/chromeflow` then `/plugin install chromeflow` in Claude Code, or `codex plugin marketplace add NeoDrewX/chromeflow` in Codex CLI
+- [GitLab repository (NeoDrew/chromeflow)](https://gitlab.com/NeoDrew/chromeflow): full source, MIT license, plugin packaging for both hosts
+- [Setup instructions in the README](https://gitlab.com/NeoDrew/chromeflow#setup): two-command install — `/plugin marketplace add https://gitlab.com/NeoDrew/chromeflow.git` then `/plugin install chromeflow` in Claude Code, or `codex plugin marketplace add https://gitlab.com/NeoDrew/chromeflow.git` in Codex CLI
 
 ## Documentation
 
-- [Full README](https://github.com/NeoDrewX/chromeflow/blob/main/README.md): why-when-how, full feature list, tool catalogue, multi-session support, development setup
-- [Agent usage skill (CLAUDE.md)](https://github.com/NeoDrewX/chromeflow/blob/main/CLAUDE.md): the canonical guide for AI agents — covers every tool, every workflow pattern, every escape hatch. This is what agents load when they need to know how to drive Chromeflow.
-- [Tool catalogue (skill format)](https://github.com/NeoDrewX/chromeflow/blob/main/packages/plugin/skills/chromeflow/SKILL.md): same content as CLAUDE.md, packaged as a Claude Code skill
-- [Codex variant of the skill](https://github.com/NeoDrewX/chromeflow/blob/main/packages/plugin/skills-codex/chromeflow/SKILL.md): same patterns, Codex-flavored phrasing
+- [Full README](https://gitlab.com/NeoDrew/chromeflow/-/blob/main/README.md): why-when-how, full feature list, tool catalogue, multi-session support, development setup
+- [Agent usage skill (CLAUDE.md)](https://gitlab.com/NeoDrew/chromeflow/-/blob/main/CLAUDE.md): the canonical guide for AI agents — covers every tool, every workflow pattern, every escape hatch. This is what agents load when they need to know how to drive Chromeflow.
+- [Tool catalogue (skill format)](https://gitlab.com/NeoDrew/chromeflow/-/blob/main/packages/plugin/skills/chromeflow/SKILL.md): same content as CLAUDE.md, packaged as a Claude Code skill
+- [Codex variant of the skill](https://gitlab.com/NeoDrew/chromeflow/-/blob/main/packages/plugin/skills-codex/chromeflow/SKILL.md): same patterns, Codex-flavored phrasing
 
 ## Reference
 
 - [Comparison vs Playwright / Browser Use / Puppeteer](https://chromeflow.run/compare): why a real-Chrome approach matters
 - [FAQ](https://chromeflow.run/faq): common questions about installation, security, compatibility, and the privileged-context model
-- [Security policy](https://github.com/NeoDrewX/chromeflow/blob/main/SECURITY.md): vulnerability reporting + past advisories (e.g. the inspect_request_headers cookie-redaction fix in v0.9.4)
+- [Security policy](https://gitlab.com/NeoDrew/chromeflow/-/blob/main/SECURITY.md): vulnerability reporting + past advisories (e.g. the inspect_request_headers cookie-redaction fix in v0.9.4)
 
 ## Optional
 
-- [Latest releases](https://github.com/NeoDrewX/chromeflow/releases): every version since 0.9.0 with release notes
+- [Latest releases](https://gitlab.com/NeoDrew/chromeflow/-/releases): every version since 0.9.0 with release notes
 - [Full LLM-ingest file (llms-full.txt)](https://chromeflow.run/llms-full.txt): the README, the skill, and the tool catalogue concatenated into one file for full ingest

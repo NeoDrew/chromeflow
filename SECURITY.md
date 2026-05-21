@@ -9,7 +9,7 @@ Email security reports to **AndrewMaxwellRobertson@gmail.com** with the subject 
 - Your affected chromeflow version (run `chromeflow --version` or check the plugin manifest)
 - Whether you're willing to be credited in the fix announcement
 
-I'll acknowledge within 72 hours and aim to ship a fix within 14 days for confirmed high-severity issues. Please do **not** open a public GitHub issue for security reports.
+I'll acknowledge within 72 hours and aim to ship a fix within 14 days for confirmed high-severity issues. Please do **not** open a public GitLab issue for security reports.
 
 ## Scope
 
@@ -28,7 +28,7 @@ Out of scope:
 
 ## Past advisories
 
-- **2026-05-12 (v0.9.4)**: `inspect_request_headers` previously returned the raw `cookie:` header — including `user_session` and other bearer tokens — to the agent context. Fixed by redacting cookie values by default. ([release](https://github.com/NeoDrewX/chromeflow/releases))
+- **2026-05-12 (v0.9.4)**: `inspect_request_headers` previously returned the raw `cookie:` header — including `user_session` and other bearer tokens — to the agent context. Fixed by redacting cookie values by default. ([release](https://gitlab.com/NeoDrew/chromeflow/-/releases))
 
 ## Acknowledgements
 
