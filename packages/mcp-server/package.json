@@ -38,11 +38,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/NeoDrewX/chromeflow.git",
+    "url": "git+https://gitlab.com/NeoDrew/chromeflow.git",
     "directory": "packages/mcp-server"
   },
   "homepage": "https://chromeflow.run",
-  "bugs": "https://github.com/NeoDrewX/chromeflow/issues",
+  "bugs": "https://gitlab.com/NeoDrew/chromeflow/-/issues",
   "license": "MIT",
   "author": "Andrew Robertson (NeoDrewX)",
   "dependencies": {

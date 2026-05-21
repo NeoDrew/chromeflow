@@ -12,7 +12,7 @@ The Claude Code plugin for [Chromeflow](https://chromeflow.run) — let Claude d
 ## Install
 
 ```
-/plugin marketplace add NeoDrewX/chromeflow
+/plugin marketplace add https://gitlab.com/NeoDrew/chromeflow.git
 /plugin install chromeflow
 ```
 
@@ -58,4 +58,4 @@ packages/plugin/scripts/sync-skill.sh
 ## Related
 
 - Chrome extension: [Chrome Web Store](https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime)
-- Source: [github.com/NeoDrewX/chromeflow](https://github.com/NeoDrewX/chromeflow)
+- Source: [gitlab.com/NeoDrew/chromeflow](https://gitlab.com/NeoDrew/chromeflow)
