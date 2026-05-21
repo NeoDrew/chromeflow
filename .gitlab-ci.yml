@@ -31,6 +31,12 @@ publish:
     - npm rebuild esbuild
     - ln -sf "$PWD/node_modules/@esbuild/linux-x64/bin/esbuild" node_modules/.bin/esbuild
     - file node_modules/.bin/esbuild
+    - echo "=== SDK dist/esm/server contents ==="
+    - ls -la node_modules/@modelcontextprotocol/sdk/dist/esm/server/ 2>&1 | head -20 || true
+    - echo "=== SDK dist/esm contents ==="
+    - ls -la node_modules/@modelcontextprotocol/sdk/dist/esm/ 2>&1 | head -10 || true
+    - echo "=== ws/lib contents ==="
+    - ls -la node_modules/ws/lib/ 2>&1 | head -10 || true
 
     # Bundle the MCP server and copy it into packages/mcp-server/bin/.
     - packages/plugin/scripts/build-server.sh
