@@ -24,7 +24,10 @@ publish:
   script:
     # Install deps at repo root so the plugin's build-server.sh finds esbuild.
     # Use `npm install` (not `npm ci`) because nested package-lock files drift.
-    - npm install --ignore-scripts
+    # Postinstall scripts are allowed so esbuild can fetch the platform-correct
+    # native binary (Linux x64 here) — `--ignore-scripts` left the arm64 macOS
+    # binary in place and the runner died with "cannot execute binary file".
+    - npm install
 
     # Bundle the MCP server and copy it into packages/mcp-server/bin/.
     - packages/plugin/scripts/build-server.sh
