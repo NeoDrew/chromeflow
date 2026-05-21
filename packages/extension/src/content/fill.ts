@@ -55,6 +55,12 @@ export function fillInput(
   const cmResult = fillCodeMirror(lower, value);
   if (cmResult) return cmResult;
 
+  // Try tiptap / ProseMirror editors — these are contenteditable underneath,
+  // but their wrapper usually doesn't carry the label heuristic that
+  // findContentEditable relies on. Specific detection finds them first.
+  const pmResult = fillProseMirror(lower, value);
+  if (pmResult) return pmResult;
+
   // Try contenteditable elements (used by Stripe, Notion, etc.)
   const editable = findContentEditable(lower);
   if (editable) {
@@ -395,6 +401,65 @@ function fillCodeMirror(lower: string, value: string): { success: boolean; messa
   targetEditor.scrollIntoView({ behavior: "smooth", block: "center" });
 
   return { success: true, message: `Filled CodeMirror editor "${lower}" with value` };
+}
+
+/**
+ * Detect and fill a tiptap / ProseMirror editor. These render a contenteditable
+ * surface inside a labelled wrapper, but the contenteditable itself rarely
+ * carries aria-label or data-placeholder, so the generic findContentEditable
+ * heuristic misses them on dense forms. Match on a labelled wrapper, then
+ * fill via selectAll + insertText (the most React-compatible path).
+ *
+ * When only one ProseMirror editor exists and the hint doesn't match a label
+ * yet, fall through to it (the "fill the prompt at the top" case Outlier
+ * presents — only one tiptap editor on the page).
+ */
+function fillProseMirror(lower: string, value: string): { success: boolean; message: string; matched?: string } | null {
+  const editors = queryAllDeep<HTMLElement>(
+    document,
+    '.ProseMirror, .tiptap, [data-tiptap-editor]'
+  ).filter((el) => el.isContentEditable || el.querySelector('[contenteditable=true], .ProseMirror') !== null);
+  if (editors.length === 0) return null;
+
+  let target: HTMLElement | null = null;
+  for (const ed of editors) {
+    // Look for a matching label or heading anywhere in the labelled ancestor.
+    let scope: Element | null = ed;
+    for (let d = 0; d < 6 && scope && scope !== document.body; d++) {
+      const labelText = scope.getAttribute?.("aria-label")?.toLowerCase() ?? "";
+      if (labelText.includes(lower)) { target = ed; break; }
+      const heading = scope.querySelector("label, h1, h2, h3, h4, h5, h6, legend, [class*='label'], [class*='heading']");
+      const t = (heading?.textContent ?? "").toLowerCase().trim();
+      if (t && t.includes(lower) && !ed.contains(heading as Node)) { target = ed; break; }
+      scope = scope.parentElement;
+    }
+    if (target) break;
+  }
+  if (!target && editors.length === 1) target = editors[0];
+  if (!target) return null;
+
+  // Drill into the actual contenteditable surface (tiptap nests
+  // .ProseMirror inside its wrapper, or the wrapper itself is the editable).
+  const editable = (target.isContentEditable
+    ? target
+    : (target.querySelector<HTMLElement>('.ProseMirror[contenteditable=true], [contenteditable=true]') ?? target)) as HTMLElement;
+
+  editable.focus();
+  // selectAll then insertText is the path Outlier accepts; raw value-set
+  // doesn't fire ProseMirror's input transactions.
+  try { document.execCommand("selectAll"); } catch { /* ignore */ }
+  try { document.execCommand("insertText", false, value); } catch { /* ignore */ }
+  // Some hosts wrap the contenteditable in a React component that listens for
+  // change/input on the OUTER node; fire both so both layers update.
+  editable.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
+  editable.dispatchEvent(new Event("change", { bubbles: true }));
+  if (editable !== target) {
+    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  editable.scrollIntoView({ behavior: "smooth", block: "center" });
+  const matched = describeElement(editable);
+  return { success: true, message: `Filled "${lower}" → ${matched} (ProseMirror / tiptap)`, matched };
 }
 
 function findContentEditable(lower: string): HTMLElement | null {

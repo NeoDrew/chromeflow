@@ -68,6 +68,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         fill_input(textHint="Rate", value="5", exact=true) — exact-match mode for short generic labels that may collide with neighbouring fields
         fill_input(selector="input[name=email]", value="x@y") — selector-mode (replaces the old react_set_input). Bypasses fuzzy matching and uses the React-aware native value-setter so React's onChange picks up the change. Supports `frame` for same-origin iframe inputs.
         type_text("hello world")            — type via trusted keyboard events (use when fill_input fails isTrusted checks)
+        type_text("new value", into_selector=".ProseMirror", clear_first=true)  — focus a target (shadow-piercing) and overwrite in one call (tiptap / ProseMirror / dense rich-text)
         type_text("description", frame="iframe.se-rte")  — type into a same-origin iframe's contenteditable (eBay description editor pattern)
         set_file_input("Upload", "/abs/path/to/file.zip") — upload a file; returns success only after the upload is observably committed (no manual sleep needed between rapid uploads)
         clear_overlays()                    — call this immediately after fill_input/fill_form succeeds
@@ -80,12 +81,12 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         execute_script("return await fetch('/api/x').then(r => r.json())")  — top-level await is supported, no window.__variable + sleep dance needed
    c. When an element can't be found or clicked:
         scroll_to_element("label text") and retry — always try this first
-        get_elements()                      — get EXACT DOM coords when needed
+        find_text("label text", max:3)      — locate by text, returns selector + clickable flag
         highlight_region(selector,msg)      — highlight by CSS selector (preferred; scrolls element into view automatically)
         highlight_region(x,y,w,h,msg)       — highlight by coords only if no selector available (coords go stale on scroll)
         [absolute last resort] take_screenshot() — only if you genuinely can't identify the element from DOM
    d. Pause for the user when needed:
-        find_and_highlight(text, msg)        — show the user what to do
+        highlight_region(selector, msg)     — show the user what to do
         wait_for_click()                    — wait for user interaction
         [after fill_input] clear_overlays() — always clear after filling
 3. clear_overlays()                          — clean up when done
@@ -104,7 +105,7 @@ personal data or a human decision.
 - Selecting billing period, currency, or other known options
 - Dismissing cookie banners, cookie dialogs, "not now" prompts
 
-**Pause for the user** (`find_and_highlight` + `wait_for_click`):
+**Pause for the user** (`highlight_region(selector, msg)` + `wait_for_click()`):
 - Email address / username / login
 - Password or passphrase
 - Payment method / billing / card details
@@ -132,14 +133,32 @@ For authenticated network access, use the **privileged-context** tools — they 
 
 **Mental model**: page context for DOM manipulation, privileged context for network access. If `execute_script("...await fetch(...)...")` returns "Failed to fetch" or a `Content-Security-Policy` error, switch to `fetch_url` (or `read_attachment` if you just want the text). `execute_script` runs in MAIN world (page context) — fetch() there is subject to page CSP. `fetch_url` runs in the extension's privileged service worker and bypasses page CSP entirely.
 
-## Discoverability — `list_frames`
+## Discoverability — `list_frames` (iframes AND shadow hosts)
 
-Before reaching into an iframe with `find_text({frame: "selector"})` or other frame-targeted tools, call `list_frames()` to see what's actually on the page. Each result includes:
+Before reaching into an iframe with `find_text({frame: "selector"})` or other frame-targeted tools, call `list_frames()` to see what's actually on the page. Each iframe result includes:
 - `selector` — drop this directly into another tool's `frame` parameter
 - `origin` — the iframe's origin (parsed from `src`)
 - `accessible` — `true` for same-origin frames (`find_text` etc. work), `false` for cross-origin (use `read_attachment(src)` or `take_screenshot` instead)
 
-This is how you avoid "frame not accessible" errors after the fact. Top-level frames only — nested cross-origin trees aren't enumerated.
+`list_frames` also reports shadow hosts (capped at 25) — selector, open/closed flag, depth. Use this as the diagnostic for closed-shadow-DOM pages: when `execute_script` returns an empty document or `document.body.innerText.length === 0` on a page you can clearly see, look at the `Shadow hosts:` section of `list_frames`. Non-zero `closed` count means the page renders inside closed shadow roots (Radix portals, Stencil/Lit, custom web components) — switch to `find_text` / `get_page_text` / `get_form_fields` / `click_element` / `fill_input` / `scroll_to_element`. Those all pierce closed shadow roots via the extension's privileged `chrome.dom.openOrClosedShadowRoot` API.
+
+This is how you avoid "frame not accessible" errors after the fact, and how you avoid spending 15 minutes diagnosing closed shadow DOM as "anti-detection canvas rendering". Top-level iframes only — nested cross-origin trees aren't enumerated.
+
+## Working with closed shadow DOM
+
+Pages built on Radix UI portals, Stencil components, Lit web components, or any other modern shadow-DOM system render their visible content inside shadow roots. When the root is `mode: 'closed'`, page-context JavaScript (i.e. `execute_script`) cannot reach it — `document.querySelectorAll('button').length` returns 0, `document.body.innerText` returns 0 characters, even though the page renders fine.
+
+**The rule**: if `execute_script` returns an empty result on a page you can clearly see in a screenshot, **do not drop to screenshots**. Switch to chromeflow's shadow-piercing tools. All of these pierce closed shadow roots via `chrome.dom.openOrClosedShadowRoot` in the content-script context:
+
+- `find_text(query)` — locate by visible text
+- `get_page_text(selector?)` — read the page (its response also carries `shadow_hosts_seen: N` so you can confirm the diagnosis)
+- `get_form_fields()` — full form inventory, including fields inside shadow-rooted wrappers
+- `click_element(textHint)` — click; `within_selector` also pierces
+- `fill_input(label, value)` — fill (including tiptap / ProseMirror)
+- `scroll_to_element(query)` — scroll, walks `overflow:auto/scroll` ancestors so inner scroll panes move
+- `list_frames()` — diagnostic: surfaces the shadow-host inventory
+
+**Why**: `execute_script` runs in MAIN world (or the content-script isolated world) and is subject to the same shadow-root opacity that any page script sees. chromeflow's content-script handlers use the extension API that bypasses closed-shadow-root opacity entirely.
 
 To capture and share a screenshot (e.g. for uploading to a form or pasting into a chat),
 use `take_screenshot(copy_to_clipboard=true, save_to="downloads")` — saves a PNG to ~/Downloads
@@ -154,12 +173,12 @@ to the user" usually benefits from the path + `save_to`.
 
 ## Working with complex forms
 - Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory
-  of every field (type, label, current value, vertical position, and section heading). Use
-  `get_elements()` when you need pixel coordinates of visible elements; use `get_form_fields()`
-  when you need to understand the full structure of a form including fields below the fold.
-  If you only need one or two specific fields, use `find_input("hint")` instead — targeted
-  lookup is much cheaper than the full inventory and returns labels you can pipe straight
-  into `fill_input`.
+  of every field (type, label, current value, vertical position, and section heading). It also
+  reports captcha presence and OAuth provider buttons. If you only need one or two specific
+  fields, use `get_form_fields(query="hint")` to filter+rank by label/placeholder/aria-label/
+  name/id (match strength reported as `aria-eq` / `placeholder-eq` / `label-text-eq` /
+  `name-eq` / `id-eq` / `*-includes` / `fuzzy-text-walk`). Pass `exact:true` to refuse fuzzy
+  text-walk matches. All queries pierce open AND closed shadow roots.
 - `get_form_fields()` also surfaces **captcha presence** (reCAPTCHA / Cloudflare Turnstile /
   hCaptcha) and **OAuth provider buttons** ("Continue with Google", "Sign in with GitHub").
   When captcha is detected: synthetic submits will be silently rejected — pre-fill the form,
@@ -208,34 +227,43 @@ to the user" usually benefits from the path + `save_to`.
 - If a form has collapsible sections, expand them all before calling `get_form_fields()` so
   the field list is complete. Use the `[under: "section name"]` context in each field's entry
   to identify fields by section rather than by index — indices shift when sections expand.
-- Prefer `scroll_to_element("label text or #selector")` over `scroll_page` whenever you know
-  which field or section you need — it scrolls precisely and confirms the matched element.
+- Prefer `scroll_to_element("label text or #selector")` whenever you know which field or
+  section you need — it scrolls precisely, pierces closed shadow roots (Radix portals,
+  Stencil/Lit), and walks overflow:auto/scroll ancestors so inner scroll panes actually
+  move (the Outlier inner-pane case where document.body.scrollHeight is tiny but the
+  inner scroll container is 15000+px tall).
 - For multi-session tasks (long forms that may exceed context), call `save_page_state()` as a
   checkpoint. A future session can call `restore_page_state()` to reload all field values.
 
 ## Discovery — find without dumping the whole page
 
-Three lightweight tools save tokens vs `get_page_text` / `get_form_fields` when you don't need the full content:
+Three lightweight tools save tokens vs full-page reads when you don't need the full content:
 
 - `find_text("Saved successfully")` — grep the DOM. Returns surrounding context, a CSS selector, and a `clickable` flag for each match. Use this instead of `get_page_text` when you're checking whether a specific phrase is present, or to locate a button by its visible text. If `clickable=true`, pipe the matched text straight into `click_element`.
-- `find_input("Email")` — fuzzy form-field lookup, top-N. Returns labels you can pipe straight into `fill_input(label, value)` — both tools share the same match ranks (`aria-eq` → `placeholder-eq` → `label-text-eq` → `name-eq` → `id-eq` → `*-includes` → `fuzzy-text-walk`). Cheaper than `get_form_fields` when you just need a couple of specific fields. Pass `type_filter="email"` to restrict to a specific input type.
-- `wait_for_text("Saved")` — wait for text to appear without knowing the selector ahead of time. Complements `wait_for_selector` for the case where you only know the post-action message.
+- `get_form_fields(query="Email")` — fuzzy form-field lookup, top-N. Returns labels you can pipe straight into `fill_input(label, value)` (shared match ranks: `aria-eq` → `placeholder-eq` → `label-text-eq` → `name-eq` → `id-eq` → `*-includes` → `fuzzy-text-walk`). Pass `type_filter="email"` to restrict by input type. Pass `exact:true` to refuse fuzzy text-walk matches. Omit `query` for a full inventory ordered by vertical position.
+- `wait_for(text="Saved")` — wait for text to appear without knowing the selector ahead of time. Same tool also handles `wait_for(selector=...)` and `wait_for(change_in=...)`.
 
-All three pierce **open AND closed shadow roots** (via `chrome.dom.openOrClosedShadowRoot` in content scripts) and accept `frame="iframe.selector"` for same-origin iframes. Pass `regex=true` on `find_text` / `wait_for_text` for case-insensitive regex matching. Pass `exact=true` on `find_input` to refuse fuzzy text-walk matches. `find_text`'s `clickable` flag now walks ancestors for `[hidden]` / `display:none` / `visibility:hidden` — flair-dropdown items inside collapsed panels no longer report as clickable.
+All three pierce **open AND closed shadow roots** (via `chrome.dom.openOrClosedShadowRoot` in content scripts) and accept `frame="iframe.selector"` for same-origin iframes. Pass `regex=true` on `find_text` / `wait_for(text=...)` for case-insensitive regex matching. `find_text`'s `clickable` flag walks ancestors for `[hidden]` / `display:none` / `visibility:hidden` — flair-dropdown items inside collapsed panels no longer report as clickable.
 
 ```
-find_text("Build complete", scope_selector=".log-output")     — only check the build log section
-find_input("Card number", type_filter="text")                  — find Stripe's card-number field
-wait_for_text("Deploy successful", timeout_ms=30000)           — wait up to 30s after clicking Deploy
+find_text("Build complete", scope_selector=".log-output")        — only check the build log section
+get_form_fields(query="Card number", type_filter="text")          — find Stripe's card-number field
+wait_for(text="Deploy successful", timeout_ms=30000)              — wait up to 30s after clicking Deploy
 ```
 
-Reach for these BEFORE `get_page_text` / `get_form_fields` when the goal is "is X here?" or "where is X?". Reserve `get_page_text` for reading actual content, and `get_form_fields` for understanding a whole form's structure.
+Reach for these BEFORE `get_page_text` / a full `get_form_fields()` inventory when the goal is "is X here?" or "where is X?". Reserve `get_page_text` for reading actual content, and an unscoped `get_form_fields()` for understanding a whole form's structure.
 
 ## Working with multiple tabs
 - Before opening a new tab, call `list_tabs()` to check if the target URL is already open —
   use `switch_to_tab` to return to it instead of opening a duplicate.
 - `open_page(url, new_tab=true)` opens a URL without losing the current tab. Use sparingly —
   prefer switching to an existing tab over opening a new one.
+- `open_page` runs a 6s settle check after `tabs.onUpdated` reports complete: confirms
+  `document.readyState === "complete"`, no visible spinner element, and 250ms of mutation
+  quiet. If a spinner is still on screen at the end of the window, the response carries
+  `stuck_spinner: true` — that's the signal to navigate elsewhere instead of retrying the
+  same dead route (Outlier `/en/expert/tasks` pattern). Pass `expect_selector` to wait for
+  a known-good element before considering the page settled.
 - `switch_to_tab("1")` switches by tab number; `switch_to_tab("form")` matches by URL or title substring.
 - `close_tab(query)` closes a tab by number / URL substring / title substring; omit query to
   close the active tab. `close_other_tabs(keep_query?)` closes every tab except the active
@@ -260,9 +288,10 @@ Reach for these BEFORE `get_page_text` / `get_form_fields` when the goal is "is 
 screenshot to check what happened.
 
 **`click_element` not found:**
-1. `scroll_page("down")` then retry `click_element`
-2. `get_elements()` to get exact coords → `highlight_region(x,y,w,h,msg)`
-3. `take_screenshot()` only if you still can't identify the element from DOM queries
+1. `scroll_to_element("nearby label text")` then retry `click_element`
+2. `find_text("button label", max:3)` to locate by text — returns selector + clickable flag
+3. `highlight_region(selector, msg)` then `wait_for_click()` as a human-in-the-loop fallback
+4. `take_screenshot()` only if you still can't identify the element from DOM queries
 
 **Multiple elements with the same label** (e.g. many "Remove" buttons):
 `click_element("Remove", nth=3)` — use `nth` (1-based) to target the specific one by order top-to-bottom. Check `get_form_fields` or `get_page_text` first to determine which index corresponds to the right section.
@@ -276,16 +305,15 @@ screenshot to check what happened.
 1. `click_element(hint)` to focus the field, then retry `fill_input`
 2. `react_set_input("input[name=...]", value)` — uses the input's own prototype to set the value, dispatches input/change. Handles the "Illegal invocation" iframe gotcha and the prototype-from-instance ceremony for you.
 3. If the site rejects programmatic input (isTrusted check, shadow DOM, custom editors):
-   - `click_element(hint)` to focus the field
-   - `execute_script("document.execCommand('selectAll')")` to clear existing content
-   - `type_text("new value")` — uses CDP trusted keyboard events that pass isTrusted checks
-4. For iframe-hosted contenteditable rich-text editors (eBay's description, etc.):
+   - `type_text("new value", into_selector="textarea[name=…]", clear_first=true)` — focuses the element (shadow-piercing) and types via CDP trusted keyboard events in one call. Replaces the old `click_element` → `execute_script selectAll` → `type_text` sequence.
+4. For tiptap / ProseMirror editors (Outlier task prompts, dense rich-text fields):
+   - `fill_input("editor label", "new value")` first — tiptap/ProseMirror is auto-detected and filled via focus → selectAll → insertText with input/change dispatch.
+   - If that fails, `type_text("new value", into_selector=".ProseMirror", clear_first=true)`.
+5. For iframe-hosted contenteditable rich-text editors (eBay's description, etc.):
    - `type_text("body content", frame="iframe.selector")` — same-origin only. Focuses the iframe's contenteditable, types via CDP, dispatches input/change in the iframe's context so React reads the new value.
-5. `find_and_highlight(hint, "Click here — I'll fill it in")` (no `valueToType`) then
-   `wait_for_click()` — the user's click focuses the field and `fill_input`'s active-element
-   fallback fills it automatically
-6. Call `clear_overlays()` after `fill_input` succeeds
-7. Only use `valueToType` when the user must personally type the value (password, personal data)
+6. `highlight_region(selector, "Click here — I'll fill it in")` then `wait_for_click()` — the user's click focuses the field and `fill_input`'s active-element fallback fills it automatically
+7. Call `clear_overlays()` after `fill_input` succeeds
+8. Only use `valueToType` when the user must personally type the value (password, personal data)
 
 **`click_element` returned success but the page didn't change** (common on React-heavy sites where synthetic clicks no-op):
 Pass an `until_*` clause to require an observable post-click condition. `click_element` returns success=false if the condition isn't met within `until_timeout_ms` (default 5000):
@@ -308,11 +336,22 @@ Mirror of `find_text`'s `scope_selector`. When the scope doesn't match anything,
 
 **Spotting silent redirects**: every `click_element` response now includes `before_url`, `after_url`, and `navigated`. The agent-facing text appends a `→ Navigated: <url>` line whenever `before_url !== after_url`. This catches the "I clicked Assessment but the page bounced me to course home" case without needing a separate `list_tabs` round-trip. If the URL didn't change but the click is supposed to navigate, that's a sign the click never registered.
 
-**0×0 hidden elements are refused immediately**: if the matched element has `width: 0; height: 0` (display:none, off-DOM, or a render-time race), `click_element` returns success=false with a clear "refusing to click" message instead of attempting the click and waiting for an `until_*` clause to time out. Use `wait_for_selector` with a state-specific selector that only matches the visible state, or `scroll_to_element` to bring it into view first.
+**0×0 hidden elements are auto-advanced to the next visible candidate**: if the matched element has `width: 0; height: 0` (display:none, off-DOM, or a render-time race) AND the caller did not pin a specific `nth`, `click_element` automatically advances to the next visible peer (the matcher already ranks visible candidates ahead of hidden ones, so `nth=2` lands on the first visible). The success message starts with `Auto-advanced from hidden first match for "X" → visible candidate "Y"`. When the caller pinned `nth=`, the click is refused with the candidate list so a manual retry can be made — re-targeting after the fact is too risky on dense forms.
 
 **`switch_to_tab` accepts `tab` as a synonym for `query`**: `switch_to_tab({tab: 1})`, `switch_to_tab({tab: "github"})`, and `switch_to_tab({query: "github"})` all work. Use whichever reads more naturally — `tab` for indices, `query` for substring matches.
 
-**`click_element` timed out (the WS request, not until-polling)**: the message will say "the click MAY have already fired". On a busy React reconciliation, the click does land but the response read can outrun the 30s WS timeout. Don't blindly retry — re-clicking can toggle React radios OFF or fire a duplicate submit. Verify with `get_page_text`, `wait_for_selector`, or `wait_for_text` first; only retry if the page state confirms the click never took effect.
+**`click_element` returned silently_rejected (anti-bot fast-fail)**: after dispatch, chromeflow runs a 1500ms activity probe (DOM mutations, focus change, URL change, value/checked change, alert/toast/modal appearance). When the probe sees 0 activity, the click was silently rejected by anti-bot detection (Outlier task UI, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success). The response carries `silently_rejected: true` and the message ends with "Switch to highlight_region + wait_for_click so the user's real gesture fires the action." Do NOT retry the same `click_element` — re-targeting won't help. Pre-fill any related fields, then `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
+
+**`click_element` timed out (the WS request, not the fast-fail)**: rare since the fast-fail kicks in at 1500ms. If it still happens (a CDP attach hung or a content-script reload during dispatch), the message will say "the click MAY have already fired". Don't blindly retry — re-clicking can toggle React radios OFF or fire a duplicate submit. Verify with `get_page_text`, `wait_for(selector=…)`, or `wait_for(text=…)` first; only retry if the page state confirms the click never took effect.
+
+**`click_element` response carries `focused_after`**: after every click, the response includes `focused_after: {tag, id, name, type, aria_label, value_preview}` (or null when focus stayed on body). The agent-facing text appends a `→ Focused: <tag …>` line when focus landed on a non-button/link element — useful to know whether to chain `type_text` on the now-focused field.
+
+**Anti-bot silent-click rejection (Outlier task UI, Reddit, X, and similar handlers, captcha forms)**: these platforms silently reject synthetic clicks on action buttons. Don't attempt automation here. The pattern:
+1. `get_form_fields()` to inventory and pre-fill anything Claude can fill (descriptions, prompts, dropdowns).
+2. `highlight_region(selector, "Click to submit")` on the action button.
+3. `wait_for_click()` — the user's real gesture fires the submit.
+
+The 1500ms fast-fail will catch and report this even on previously-unknown sites: success=false with `silently_rejected: true`.
 
 **Modal never opens / submit handler swallowed by stale validation state**: when a Submit button's onClick opens a modal that never renders (e.g. validation thinks the form is incomplete because the form-level React state is stale, but DOM inputs look filled), use `react_call_prop` to call the bypass handler directly:
 ```
@@ -405,7 +444,7 @@ document.body.style.zoom = '1';
 **Downloads via `execute_script`**: Creating a Blob URL and clicking an anchor via
 `execute_script` sometimes fails due to CSP or timing. If a download doesn't trigger:
 1. Retry the exact same `execute_script` call
-2. If still failing, use `find_and_highlight` to show the user a download button to click manually
+2. If still failing, use `highlight_region(selector, "Click to download")` + `wait_for_click()` to show the user a download button to click manually
 
 **`execute_script` lost host permission ("Cannot access contents of the page")**: idle tabs
 sometimes lose extension host access after a long idle (Chrome quietly evicts the content
@@ -494,6 +533,20 @@ execute_script("window.scrollBy(0, 400)")     // blind incremental scroll (rarel
 find_text("Save", max: 3)                     // finds the button, returns selector + coords
 ```
 `get_elements` was a 3K-char dump every call; `find_text` returns 200–500 chars for the same lookup.
+
+**`find_input` → `get_form_fields(query=…)` (filtered mode)**
+```
+get_form_fields(query="Card number", type_filter="text")     // top-N filtered, same match ranks as before
+get_form_fields(query="Email", exact=true)                    // refuse fuzzy text-walk matches
+```
+The query parameter on get_form_fields replicates find_input's behavior — same match strength reporting (`aria-eq` / `placeholder-eq` / `label-text-eq` / `name-eq` / `id-eq` / `*-includes` / `fuzzy-text-walk`), same shadow-piercing.
+
+**`find_and_highlight` → `highlight_region(selector, msg)` + `wait_for_click()`**
+```
+highlight_region("button[type=submit]", "Click to submit")
+wait_for_click()                                              // resolves when the user clicks
+```
+The old composite tool is replaced by the two underlying primitives. Use this exact pattern for "pause for the user" steps.
 
 **`react_call_prop` → `execute_script` walking React fibers directly**
 ```js

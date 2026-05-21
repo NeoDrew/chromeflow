@@ -26,7 +26,11 @@ export function prepareClickTarget(
 
   let scope: Document | Element = document;
   if (within_selector) {
-    const scoped = document.querySelector(within_selector);
+    // Pierce shadow roots so a selector returned by find_text (which walks
+    // closed shadow trees via chrome.dom.openOrClosedShadowRoot) is usable as
+    // a click scope. Plain document.querySelector misses elements inside
+    // Radix portals / Stencil components / Lit web components.
+    const scoped = queryAllDeep(document, within_selector)[0] ?? null;
     if (!scoped) {
       return { success: false, message: `within_selector "${within_selector}" did not match any element`, scope_missed: true };
     }
@@ -291,9 +295,11 @@ export function clickElement(
 
 /**
  * Scroll the element into view in both the window AND any nested scrollable
- * ancestor containers (e.g. Stripe's slide-over drawer panels).
+ * ancestor containers (e.g. Stripe's slide-over drawer panels, Outlier's
+ * inner-pane task surface where document.body.scrollHeight is dwarfed by the
+ * inner scroll container's scrollHeight).
  */
-function scrollSmartIntoView(el: Element) {
+export function scrollSmartIntoView(el: Element) {
   // Standard scroll for the main window
   el.scrollIntoView({ behavior: "smooth", block: "nearest" });
 

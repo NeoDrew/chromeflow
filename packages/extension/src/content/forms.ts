@@ -5,7 +5,14 @@
  *
  * Pass an iframe's contentDocument as `doc` to enumerate fields inside a
  * same-origin iframe — used by find_input's frame= parameter.
+ *
+ * All queries pierce open AND closed shadow roots via queryAllDeep so form
+ * fields rendered inside Radix UI portals, Stencil/Lit web components, or
+ * other shadow-host wrappers are reachable (Outlier task UI is the
+ * canonical case).
  */
+
+import { queryAllDeep } from "./shadow.js";
 
 export interface EnumeratedField {
   index: number;
@@ -44,11 +51,21 @@ export interface CaptchaInfo {
 function isAncestorHidden(el: Element, doc: Document): boolean {
   const view = doc.defaultView;
   if (!view) return false;
-  for (let cur: Element | null = el; cur && cur !== doc.documentElement; cur = cur.parentElement) {
+  let cur: Element | null = el;
+  while (cur && cur !== doc.documentElement) {
     if (cur.getAttribute("aria-hidden") === "true") return true;
     const s = view.getComputedStyle(cur);
     if (s.display === "none") return true;
     if (s.visibility === "hidden") return true;
+    // Climb past shadow boundaries — parentElement is null at the shadow root,
+    // so jump to the host via parentNode. Without this, an input inside a
+    // shadow-rooted hidden wrapper would be reported as visible.
+    if (cur.parentElement) {
+      cur = cur.parentElement;
+    } else {
+      const pn: Node | null = cur.parentNode;
+      cur = pn instanceof ShadowRoot ? pn.host : null;
+    }
   }
   return false;
 }
@@ -108,7 +125,7 @@ export function deriveInputLabel(el: HTMLElement, doc: Document): string {
   let label =
     inputEl.getAttribute("placeholder") || inputEl.getAttribute("aria-label") || "";
   if (!label && el.id) {
-    const lbl = doc.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(el.id)}"]`);
+    const lbl = queryAllDeep<HTMLLabelElement>(doc, `label[for="${CSS.escape(el.id)}"]`)[0];
     if (lbl) label = (lbl.textContent ?? "").trim();
   }
   if (!label) {
@@ -135,7 +152,9 @@ export function deriveInputLabel(el: HTMLElement, doc: Document): string {
 function deriveFileLabel(el: HTMLInputElement, doc: Document): string {
   let label = el.getAttribute("aria-label") || el.getAttribute("name") || "";
   if (!label && el.id) {
-    const lbl = doc.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(el.id)}"]`);
+    // Pierce shadow roots so a <label for=…> living in a separate shadow tree
+    // still associates with this input.
+    const lbl = queryAllDeep<HTMLLabelElement>(doc, `label[for="${CSS.escape(el.id)}"]`)[0];
     if (lbl) label = (lbl.textContent ?? "").trim();
   }
   if (!label) {
@@ -159,7 +178,10 @@ function deriveFileLabel(el: HTMLInputElement, doc: Document): string {
 function buildSelector(el: Element, doc: Document): string {
   if (el.id) return `#${CSS.escape(el.id)}`;
   const tag = el.tagName.toLowerCase();
-  const idx = Array.from(doc.querySelectorAll(el.tagName)).indexOf(el) + 1;
+  // Pierce shadow roots so the nth-of-type fallback is stable across
+  // light/shadow boundaries (otherwise the index re-counts after each shadow
+  // root, producing the same selector for multiple distinct elements).
+  const idx = queryAllDeep(doc, el.tagName).indexOf(el) + 1;
   return `${tag}:nth-of-type(${idx})`;
 }
 
@@ -175,7 +197,7 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
 
   // File inputs — always include even if visually hidden (often 0×0 behind
   // custom drag zones). Tagged label includes a usage hint for Claude.
-  for (const el of Array.from(doc.querySelectorAll<HTMLInputElement>("input[type=file]"))) {
+  for (const el of queryAllDeep<HTMLInputElement>(doc, "input[type=file]")) {
     const label = deriveFileLabel(el, doc);
     const context = getNearestHeading(el, doc);
     fields.push({
@@ -194,7 +216,7 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
   // Standard inputs (file handled above), textareas, selects
   const FIELD_SELECTORS =
     "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]):not([type=file]), textarea, select";
-  for (const el of Array.from(doc.querySelectorAll<HTMLElement>(FIELD_SELECTORS))) {
+  for (const el of queryAllDeep<HTMLElement>(doc, FIELD_SELECTORS)) {
     if (isAncestorHidden(el, doc)) continue;
 
     const label = deriveInputLabel(el, doc);
@@ -221,7 +243,7 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
   }
 
   // CodeMirror 6 editors
-  for (const editor of Array.from(doc.querySelectorAll<HTMLElement>(".cm-editor"))) {
+  for (const editor of queryAllDeep<HTMLElement>(doc, ".cm-editor")) {
     if (isAncestorHidden(editor, doc)) continue;
     const view = doc.defaultView;
     const rect = editor.getBoundingClientRect();
@@ -252,7 +274,7 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
   }
 
   // Monaco editors
-  for (const editor of Array.from(doc.querySelectorAll<HTMLElement>(".monaco-editor"))) {
+  for (const editor of queryAllDeep<HTMLElement>(doc, ".monaco-editor")) {
     if (isAncestorHidden(editor, doc)) continue;
 
     let label = editor.getAttribute("aria-label") ?? "";
@@ -293,11 +315,11 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
   // Count hidden fields for the warning that get_form_fields appends.
   // Walks the ancestor chain so inputs inside a `display:none` collapsible
   // parent (the most common pattern for conditional form sections) are
-  // counted, not just inputs hidden directly via their own style.
-  const hiddenFields = Array.from(
-    doc.querySelectorAll<HTMLElement>(
-      "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select"
-    )
+  // counted, not just inputs hidden directly via their own style. Pierces
+  // shadow roots so the count is accurate across web-component-heavy forms.
+  const hiddenFields = queryAllDeep<HTMLElement>(
+    doc,
+    "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select"
   ).filter((el) => isAncestorHidden(el, doc));
 
   return {
@@ -313,25 +335,28 @@ function detectCaptcha(doc: Document): CaptchaInfo | null {
     el?.getAttribute("data-sitekey") ?? null;
 
   // Google reCAPTCHA — covers v2 (visible/invisible), v3 (token-only), Enterprise.
-  const recaptchaEl = doc.querySelector(
+  const recaptchaEl = queryAllDeep(
+    doc,
     '[name="g-recaptcha-response"], .g-recaptcha, iframe[src*="recaptcha/api2"], iframe[src*="recaptcha/enterprise"]'
-  );
+  )[0];
   if (recaptchaEl) {
-    return { kind: "recaptcha", sitekey: getSitekey(doc.querySelector(".g-recaptcha")) };
+    return { kind: "recaptcha", sitekey: getSitekey(queryAllDeep(doc, ".g-recaptcha")[0] ?? null) };
   }
   // Cloudflare Turnstile
-  const turnstileEl = doc.querySelector(
+  const turnstileEl = queryAllDeep(
+    doc,
     '[name="cf-turnstile-response"], .cf-turnstile, iframe[src*="challenges.cloudflare.com/turnstile"]'
-  );
+  )[0];
   if (turnstileEl) {
-    return { kind: "turnstile", sitekey: getSitekey(doc.querySelector(".cf-turnstile")) };
+    return { kind: "turnstile", sitekey: getSitekey(queryAllDeep(doc, ".cf-turnstile")[0] ?? null) };
   }
   // hCaptcha
-  const hcaptchaEl = doc.querySelector(
+  const hcaptchaEl = queryAllDeep(
+    doc,
     '[name="h-captcha-response"], .h-captcha, iframe[src*="hcaptcha.com/captcha"]'
-  );
+  )[0];
   if (hcaptchaEl) {
-    return { kind: "hcaptcha", sitekey: getSitekey(doc.querySelector(".h-captcha")) };
+    return { kind: "hcaptcha", sitekey: getSitekey(queryAllDeep(doc, ".h-captcha")[0] ?? null) };
   }
   return null;
 }
@@ -342,7 +367,7 @@ function detectOAuthIndicators(doc: Document): string[] {
   // 6 matches to avoid noise from sites that list every conceivable provider.
   const out: string[] = [];
   const re = /^(continue|sign in|sign up|log in|log on)\s+with\s+(google|github|microsoft|apple|facebook|twitter|x|discord|slack|gitlab|linkedin|notion)$/i;
-  for (const el of Array.from(doc.querySelectorAll<HTMLElement>('button, a, [role="button"]'))) {
+  for (const el of queryAllDeep<HTMLElement>(doc, 'button, a, [role="button"]')) {
     const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
     if (!text || text.length > 60) continue;
     if (re.test(text)) {

@@ -5,7 +5,7 @@ export type DistributiveOmit<T, K extends keyof T> = T extends unknown
 
 // Messages sent from MCP server → Extension (via WebSocket)
 export type ServerMessage =
-  | { type: "navigate"; requestId: string; url: string; newTab?: boolean; background?: boolean }
+  | { type: "navigate"; requestId: string; url: string; newTab?: boolean; background?: boolean; expect_selector?: string }
   | { type: "switch_to_tab"; requestId: string; query: string }
   | { type: "close_tab"; requestId: string; query?: string }
   | { type: "close_other_tabs"; requestId: string; keep_query?: string }
@@ -56,7 +56,7 @@ export type ServerMessage =
   | { type: "list_tabs"; requestId: string }
   | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }>; exact?: boolean }
   | { type: "set_file_input"; requestId: string; hint: string; filePath: string; waitMs?: number; verifySelector?: string }
-  | { type: "type_text"; requestId: string; text: string; frame?: string }
+  | { type: "type_text"; requestId: string; text: string; frame?: string; into_selector?: string; clear_first?: boolean }
   | { type: "inspect_request_headers"; requestId: string; url: string; new_tab?: boolean }
   | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string }
   | {
