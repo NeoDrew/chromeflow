@@ -61,7 +61,7 @@ A single bundled file: `bin/chromeflow.mjs` (~890 KB ESM), built from `packages/
 - **FAQ**: https://chromeflow.run/faq
 - **GitLab**: https://gitlab.com/NeoDrew/chromeflow
 - **Chrome Web Store**: https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime
-- **MCP Registry**: `io.gitlab.NeoDrew/chromeflow`
+- **MCP Registry**: `run.chromeflow/chromeflow` (DNS-verified namespace via chromeflow.run)
 
 ## License
 
