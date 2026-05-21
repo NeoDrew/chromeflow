@@ -34,8 +34,12 @@ publish:
     - echo "=== post-install summary ==="
     - ls node_modules | wc -l
     - ls node_modules/@modelcontextprotocol 2>&1 || echo "no @modelcontextprotocol"
-    - ls node_modules/@modelcontextprotocol/sdk/dist/esm/server/mcp.js 2>&1 || echo "MISSING SDK FILES"
-    - ls node_modules/ws/lib/stream.js 2>&1 || echo "MISSING WS FILES"
+    - echo "=== full SDK package contents ==="
+    - find node_modules/@modelcontextprotocol/sdk -maxdepth 3 | head -30 || true
+    - echo "=== full ws package contents ==="
+    - find node_modules/ws -maxdepth 3 | head -30 || true
+    - echo "=== SDK package.json files field ==="
+    - python3 -c "import json; print(json.load(open('node_modules/@modelcontextprotocol/sdk/package.json')).get('files'))" || true
 
     # Bundle the MCP server and copy it into packages/mcp-server/bin/.
     - packages/plugin/scripts/build-server.sh
