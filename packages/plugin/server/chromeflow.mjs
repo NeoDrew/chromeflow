@@ -24782,7 +24782,7 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
       url: external_exports.string().url().describe("The URL to navigate to"),
       new_tab: external_exports.boolean().optional().describe("Open in a new tab instead of replacing the current one (default false)"),
       background: external_exports.boolean().optional().describe("If new_tab=true, do not switch focus to the new tab. Default false. Ignored when new_tab is false."),
-      expect_selector: external_exports.string().optional().describe("CSS selector for an element that must be present before the page is considered settled. The settle check waits up to 6s for it; if it never appears, the response carries expect_selector_appeared:false so you can detect dead-spinner routes (e.g. Outlier /en/expert/tasks).")
+      expect_selector: external_exports.string().optional().describe("CSS selector for an element that must be present before the page is considered settled. The settle check waits up to 6s for it; if it never appears, the response carries expect_selector_appeared:false so you can detect dead-spinner routes (SPAs that leave a permanent spinner when the underlying API request dies).")
     },
     async ({ url, new_tab, background, expect_selector }) => {
       const block = isBlockedUrl(url);
@@ -24802,7 +24802,7 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
       if (r.stuck_spinner) {
         text += `
 
-\u26A0 stuck_spinner: true \u2014 page settled with a visible spinner (${r.spinner_selector ?? "unknown selector"}) still on screen after 6s. Current URL: ${r.current_url ?? url}. The route may be dead (Outlier /en/expert/tasks pattern) \u2014 navigate elsewhere instead of reloading, or wait and try get_page_text to see if it ever recovers.`;
+\u26A0 stuck_spinner: true \u2014 page settled with a visible spinner (${r.spinner_selector ?? "unknown selector"}) still on screen after 6s. Current URL: ${r.current_url ?? url}. The route may be dead (some SPAs leave a permanent spinner when the underlying API request fails) \u2014 navigate elsewhere instead of reloading, or wait and try get_page_text to see if it ever recovers.`;
       }
       if (expect_selector && r.expect_selector_appeared === false) {
         text += `
@@ -25076,7 +25076,7 @@ ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
     {
       text: external_exports.string().describe("The text to type into the focused element"),
       into_selector: external_exports.string().optional().describe(
-        "CSS selector for the element to focus before typing (shadow-piercing \u2014 resolves selectors that find_text returns for closed-shadow-root content, e.g. Outlier-style Radix portals). When omitted, types into whatever is currently focused (the caller is responsible for focusing first via click_element)."
+        "CSS selector for the element to focus before typing (shadow-piercing \u2014 resolves selectors that find_text returns for closed-shadow-root content, e.g. Radix portals). When omitted, types into whatever is currently focused (the caller is responsible for focusing first via click_element)."
       ),
       clear_first: external_exports.boolean().optional().describe(
         "Only with into_selector: run document.execCommand('selectAll') + 'delete' on the focused element before typing. Use to overwrite tiptap / ProseMirror editors and similar contenteditable surfaces in one call."
@@ -25900,7 +25900,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // src/index.ts
-var PACKAGE_VERSION = true ? "0.9.10" : "dev";
+var PACKAGE_VERSION = true ? "0.9.11" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

@@ -7,7 +7,7 @@ Mirror at https://chromeflow.run/llms-full.txt.
 Repository: https://gitlab.com/NeoDrew/chromeflow
 License: MIT
 Latest version: 0.9.5 (2026-05-13)
-Battle-tested by 400+ hours of real agentic browser work before public release.
+Battle-tested by 500+ hours of real agentic browser work before public release.
 
 ================================================================================
 SECTION 1 — README (what chromeflow is, how to install, what it does)
@@ -176,7 +176,7 @@ Chromeflow supports up to 11 agent sessions (Claude Code, Codex, or a mix) runni
 4. In Chrome **window A**, open the popup and click **"Use this window"** next to Port 7878.
 5. Switch to **window B**, open the popup, and click **"Use this window"** next to Port 7879.
 
-That's it. Each session now drives its own Chrome window — you can run a DataAnnotation task in one window while the other session fills out a Stripe dashboard in another, with zero collision.
+That's it. Each session now drives its own Chrome window — you can run a research task in one window while the other session fills out a Stripe dashboard in another, with zero collision.
 
 Single-instance usage is unchanged and fully backwards compatible — the old per-window assignment is auto-migrated on first load.
 
@@ -397,7 +397,7 @@ the image to Claude only.
 - `fill_input` and `fill_form` work on React-controlled inputs, contenteditable (Stripe,
   Notion), and **CodeMirror 6 editors** — auto-detected. After filling, the value is read
   back and a warning is shown if React did not accept it.
-- **Monaco editors** (VS Code-style code editors on DataAnnotation, etc.) appear in
+- **Monaco editors** (VS Code-style in-browser code editors) appear in
   `get_form_fields()` as type "monaco". They cannot be filled via `fill_input` — use
   `execute_script` with the Monaco API instead:
   ```js
@@ -416,7 +416,7 @@ the image to Claude only.
   recycled and accepts the new file. Verify with `get_form_fields()` between the two
   steps so you're sure the input has reappeared.
 - **Forcing auto-save on idempotent text edits** (e.g. keep-alive loop on an
-  auto-saving DataAnnotation form): some auto-save logic diffs against the last-saved
+  auto-saving long-form review dashboard): some auto-save logic diffs against the last-saved
   value and skips no-op writes. To force a real save on each tick without changing
   visible content, toggle a trailing space — add when absent, remove when present.
   `fill_input` value comparison handles both directions transparently. **Caveat:**
@@ -532,7 +532,7 @@ set_file_input("Photos", "/path/2.jpg", verify_selector=".photo-thumbnail:nth-of
 ```
 The page-level file count is reported in the response — use it to spot uploaders that consume-and-reset the input vs uploaders that keep the file there.
 
-**Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots. `wait_for_selector` pierces open shadow roots, so a selector inside a web component (Outlier task UI, Lit/Stencil widget) matches without ceremony.
+**Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots. `wait_for_selector` pierces open shadow roots, so a selector inside a web component (Lit/Stencil/Radix widget) matches without ceremony.
 
 **Waiting for a shadow host's tree to attach** (e.g. SPA route flips where `<my-host>` appears 10s before its shadow content hydrates, and `wait_for_selector("my-host")` resolves while `host.shadowRoot` is still null): pass `shadow_root=true`. The wait then requires the matched element's `.shadowRoot` to be non-null, not just for the host element to exist.
 ```
@@ -549,7 +549,7 @@ set_dialog_response(type="confirm", value="true")          — next confirm() re
 ```
 Then trigger the action (e.g. `click_element("Save As")`). The response is consumed once.
 
-**React Select / custom styled dropdowns** (e.g. "Select..." components on DataAnnotation):
+**React Select / custom styled dropdowns** (the "Select..." pattern):
 `click_element` and `fill_input` do NOT work on these — they intercept native events. The cleanest path is `react_set_input` (which handles the prototype-from-instance setter for you) followed by a click on the filtered option:
 
 ```
@@ -621,8 +621,9 @@ auto-handles this for native `<input type=radio>` and `<input type=checkbox>` in
 
 You only need to drop into `execute_script` for the no-native-input case below.
 
-**Shadow DOM `[role=radio]` / role-only custom radios silently no-op**: On sites like
-Outlier where the radio is a `[role=radio]` div with no underlying `<input>`,
+**Shadow DOM `[role=radio]` / role-only custom radios silently no-op**: on sites
+where the radio is a `[role=radio]` div with no underlying `<input>` (Radix UI
+without the native-input adapter, custom React role-only widgets),
 `click_element`'s native-input fallback can't help — the click target has no `.checked`
 property to verify. Two things must be true: (a) the element must be scrolled into view
 FIRST (`scrollIntoView({block:'center'})`), and (b) the full pointer-event chain must

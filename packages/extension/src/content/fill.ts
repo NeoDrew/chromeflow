@@ -294,7 +294,7 @@ function findInput(
     // We keep it for forms with no proper labels, but rank it lowest so
     // exact-match modes never see it, and it loses to every other strategy.
     // walkTextNodesDeep traverses open shadow roots so labels-near-textareas
-    // inside web components (Outlier's task UI) are reachable.
+    // inside web components (Stencil/Lit/Radix portals) are reachable.
     for (const textNode of walkTextNodesDeep(document.body)) {
       if (!textNode.textContent?.toLowerCase().includes(lower)) continue;
       const anchor = textNode.parentElement;
@@ -411,8 +411,8 @@ function fillCodeMirror(lower: string, value: string): { success: boolean; messa
  * fill via selectAll + insertText (the most React-compatible path).
  *
  * When only one ProseMirror editor exists and the hint doesn't match a label
- * yet, fall through to it (the "fill the prompt at the top" case Outlier
- * presents — only one tiptap editor on the page).
+ * yet, fall through to it (the "fill the prompt at the top" case — only one
+ * tiptap editor on the page).
  */
 function fillProseMirror(lower: string, value: string): { success: boolean; message: string; matched?: string } | null {
   const editors = queryAllDeep<HTMLElement>(
@@ -445,7 +445,7 @@ function fillProseMirror(lower: string, value: string): { success: boolean; mess
     : (target.querySelector<HTMLElement>('.ProseMirror[contenteditable=true], [contenteditable=true]') ?? target)) as HTMLElement;
 
   editable.focus();
-  // selectAll then insertText is the path Outlier accepts; raw value-set
+  // selectAll then insertText is the path ProseMirror accepts; raw value-set
   // doesn't fire ProseMirror's input transactions.
   try { document.execCommand("selectAll"); } catch { /* ignore */ }
   try { document.execCommand("insertText", false, value); } catch { /* ignore */ }

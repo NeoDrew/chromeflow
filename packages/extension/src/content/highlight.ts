@@ -88,8 +88,8 @@ export function getHighlightedViewportRect(): {
 }
 
 /** Find an element whose visible text contains the given string.
- *  Pierces open shadow roots so chat/form widgets (Outlier chat-lite,
- *  Radix UI, web components) are searchable too. */
+ *  Pierces open shadow roots so chat / form widgets (Radix UI, Stencil,
+ *  Lit, other web components) are searchable too. */
 export function findElementByText(text: string): Element | null {
   const lower = text.toLowerCase().trim();
 
