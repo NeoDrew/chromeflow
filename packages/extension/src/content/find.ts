@@ -72,7 +72,11 @@ export function findText(
 
   let scope: Element | null;
   if (opts.scope_selector) {
-    scope = doc.querySelector(opts.scope_selector);
+    // Pierce open + closed shadow roots so selectors emitted by find_text
+    // itself (which walks closed shadow trees) are valid as scopes. Plain
+    // doc.querySelector misses elements inside Radix portals / Stencil
+    // components / Lit web components.
+    scope = queryAllDeep(doc, opts.scope_selector)[0] ?? null;
     if (!scope) {
       return { matches: [], total_matches: 0, truncated: false, scope_missed: true };
     }
@@ -338,6 +342,13 @@ export interface WaitForTextOpts {
   timeout_ms?: number;
   scope_selector?: string;
   regex?: boolean;
+  /**
+   * "now" — only resolve after at least one MutationObserver record has fired.
+   * Use when the page keeps already-rendered copies of the wait-target text in
+   * the DOM (e.g. stacked step-instruction panels) so the default initial
+   * findText check short-circuits the wait.
+   */
+  since?: "now";
 }
 
 export interface WaitForTextResult {
@@ -377,22 +388,34 @@ export function waitForText(
     return r.matches[0] ?? null;
   };
 
+  const sinceNow = opts.since === "now";
+
   return new Promise<WaitForTextResult>((resolve) => {
-    const initial = check();
-    if (initial) {
-      resolve({
-        found: true,
-        selector: initial.selector,
-        text: initial.text,
-        context: initial.context,
-        elapsed_ms: Math.round(performance.now() - start),
-      });
-      return;
+    // When since="now" is set the initial-check short-circuit is skipped —
+    // callers explicitly want to wait for a NEW mutation, not match against
+    // already-present text. Used to defeat the "stacked instructions still
+    // in DOM after the route changed" footgun on pages like Outlier.
+    if (!sinceNow) {
+      const initial = check();
+      if (initial) {
+        resolve({
+          found: true,
+          selector: initial.selector,
+          text: initial.text,
+          context: initial.context,
+          elapsed_ms: Math.round(performance.now() - start),
+        });
+        return;
+      }
     }
 
     let scope: Element | Document | null = doc;
     if (opts.scope_selector) {
-      scope = doc.querySelector(opts.scope_selector);
+      // Pierce open + closed shadow roots so the wait can observe inside
+      // Radix portals / Stencil web components — matches findText's scope
+      // behavior so a caller can wait on a section previously located via
+      // find_text.
+      scope = queryAllDeep(doc, opts.scope_selector)[0] ?? null;
       if (!scope) {
         resolve({
           found: false,
@@ -403,7 +426,21 @@ export function waitForText(
     }
     const observeTarget: Element | Document = scope ?? doc;
 
-    const observer = new MutationObserver(() => {
+    let seenMutation = false;
+    const observer = new MutationObserver((records) => {
+      // since="now" gates resolution on at least one meaningful record. A
+      // pure attribute-only mutation isn't enough — we only want childList
+      // additions/removals or characterData changes that could actually
+      // bring new text into the DOM.
+      if (sinceNow && !seenMutation) {
+        for (const r of records) {
+          if (r.type === "childList" || r.type === "characterData") {
+            seenMutation = true;
+            break;
+          }
+        }
+        if (!seenMutation) return;
+      }
       const m = check();
       if (m) {
         observer.disconnect();

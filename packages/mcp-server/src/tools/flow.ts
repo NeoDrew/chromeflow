@@ -65,14 +65,18 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         .string()
         .optional()
         .describe('Find the nearest container whose heading starts with this text, then scope candidates to that container\'s subtree. Ignored when within_selector is set. Useful when the target section has no stable CSS selector but the heading is unique.'),
+      try_fiber: z
+        .boolean()
+        .optional()
+        .describe(`Opt-in last-resort fallback when silently_rejected fires. After the 1500ms activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest \`__reactProps$.onClick\` prop, and invokes it with a minimal synthetic event. Useful on React-heavy SPAs whose action buttons pass through isTrusted=true checks even on CDP events. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this — fiber-prop walking is undocumented and may misbehave on mangled production builds. Reserve for repeat silently_rejected on a known-safe React site.`),
     },
-    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text }) => {
+    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber }) => {
       // The WS request must outlive the until-poll, with a buffer for navigation.
       const wsTimeout = Math.max(30_000, (until_timeout_ms ?? 0) + 10_000);
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text },
+          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber },
           wsTimeout
         );
       } catch (err) {
@@ -111,6 +115,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         navigated?: boolean;
         scope_missed?: boolean;
         silently_rejected?: boolean;
+        fiber_attempted?: boolean;
         focused_after?: {
           tag: string;
           id: string;
@@ -205,7 +210,7 @@ If the click causes page navigation, this resolves when the new page finishes lo
 
   server.tool(
     "wait_for",
-    `Wait for one of: a CSS selector to appear, a text substring to appear, or an existing element's subtree to mutate. Pass exactly one of \`selector\`, \`text\`, or \`change_in\`. Pierces open shadow roots. Pass \`shadow_root: true\` when waiting for the host's shadowRoot to attach (post-SPA-navigation hydration). \`scope_selector\` limits text-mode search; \`regex: true\` interprets text as a case-insensitive regex; \`frame: "iframe.selector"\` waits inside a same-origin iframe (text mode).`,
+    `Wait for one of: a CSS selector to appear, a text substring to appear, or an existing element's subtree to mutate. Pass exactly one of \`selector\`, \`text\`, or \`change_in\`. Pierces open AND closed shadow roots (text \`scope_selector\` pierces too). Pass \`shadow_root: true\` when waiting for the host's shadowRoot to attach (post-SPA-navigation hydration). \`scope_selector\` limits text-mode search; \`regex: true\` interprets text as a case-insensitive regex; \`frame: "iframe.selector"\` waits inside a same-origin iframe (text mode). Pass \`since: "now"\` in text mode to skip the initial check and only resolve on text appearing in a NEW DOM mutation — defeats the "stale instruction panels still in DOM" false-positive.`,
     {
       selector: z.string().optional().describe("CSS selector to wait for."),
       text: z.string().optional().describe("Text substring (or regex with regex=true) to wait for."),
@@ -213,14 +218,15 @@ If the click causes page navigation, this resolves when the new page finishes lo
       timeout_ms: z.number().int().optional().describe("Max ms to wait (default 30000)."),
       poll_interval_ms: z.number().int().optional().describe("Selector-mode poll interval (default 500). Set to 15000 for slow server-side jobs."),
       shadow_root: z.boolean().optional().describe("Selector mode: require the matched host to have an attached shadowRoot. Default false."),
-      scope_selector: z.string().optional().describe("Text mode: limit search to this CSS selector's subtree."),
+      scope_selector: z.string().optional().describe("Text mode: limit search to this CSS selector's subtree. Pierces shadow roots."),
       regex: z.boolean().optional().describe("Text mode: interpret query as a case-insensitive regex."),
       frame: z.string().optional().describe("Same-origin iframe CSS selector to wait inside (text mode)."),
+      since: z.enum(["now"]).optional().describe(`Text mode: gate on a NEW mutation. Skips the initial check so already-present matches don't short-circuit. Use when the page keeps stale text in the DOM after a route change (e.g. stacked instruction panels) and you need to wait for the next render.`),
       settle_ms: z.number().int().optional().describe("change_in mode: ms to wait after the first mutation for batching (default 150)."),
       max_chars: z.number().int().min(50).optional().describe("change_in mode: cap the returned text content (default 1000). Chat-style mutations can dump huge text; agents that need more should opt in explicitly."),
     },
     async (args) => {
-      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, settle_ms, max_chars } = args;
+      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, since, settle_ms, max_chars } = args;
       const set = [selector, text, change_in].filter((v) => v !== undefined && v !== null && v !== "").length;
       if (set !== 1) {
         return { content: [{ type: "text", text: "wait_for: pass exactly one of selector, text, or change_in." }] };
@@ -236,7 +242,7 @@ If the click causes page navigation, this resolves when the new page finishes lo
       }
       if (text !== undefined) {
         const response = await bridge.request(
-          { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame },
+          { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame, since },
           timeoutMs + 5_000
         );
         const r = response as { found: boolean; selector?: string; text?: string; context?: string; elapsed_ms: number; frame_error?: string };

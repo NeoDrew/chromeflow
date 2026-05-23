@@ -518,6 +518,135 @@ async function runActivityProbe(
 }
 
 /**
+ * Inlined helpers for `set_file_input`'s pre/post snapshots. Each function is
+ * shipped via chrome.scripting.executeScript and runs in the page's ISOLATED
+ * world, where chrome.dom.openOrClosedShadowRoot is available. Inlining the
+ * shadow-piercing query here means file inputs nested inside Stencil/Lit/
+ * Radix web components are counted, not invisible.
+ */
+function pierceFileCount(): { totalFiles: number; inputCount: number } {
+  function getShadowRoot(el: Element): ShadowRoot | null {
+    const cdom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+    if (cdom?.openOrClosedShadowRoot) {
+      try {
+        const sr = cdom.openOrClosedShadowRoot(el);
+        if (sr) return sr;
+      } catch { /* fall through */ }
+    }
+    return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+  }
+  function deepInputs(root: Document | ShadowRoot): HTMLInputElement[] {
+    const out: HTMLInputElement[] = [];
+    const seen = new WeakSet<Element>();
+    function recurse(r: ParentNode) {
+      for (const m of Array.from(r.querySelectorAll<HTMLInputElement>("input[type=file]"))) {
+        if (!seen.has(m)) { seen.add(m); out.push(m); }
+      }
+      for (const el of Array.from(r.querySelectorAll<Element>("*"))) {
+        const sr = getShadowRoot(el);
+        if (sr) recurse(sr);
+      }
+    }
+    recurse(root);
+    return out;
+  }
+  const inputs = deepInputs(document);
+  let total = 0;
+  for (const el of inputs) total += el.files?.length ?? 0;
+  return { totalFiles: total, inputCount: inputs.length };
+}
+
+function pierceFilePoll(name: string, sel: string): { total: number; stillHasOurFile: boolean; verifyOk: boolean } {
+  function getShadowRoot(el: Element): ShadowRoot | null {
+    const cdom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+    if (cdom?.openOrClosedShadowRoot) {
+      try {
+        const sr = cdom.openOrClosedShadowRoot(el);
+        if (sr) return sr;
+      } catch { /* fall through */ }
+    }
+    return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+  }
+  function deepQuery<E extends Element = Element>(root: ParentNode, selector: string): E[] {
+    const out: E[] = [];
+    const seen = new WeakSet<Element>();
+    function recurse(r: ParentNode) {
+      for (const m of Array.from(r.querySelectorAll<E>(selector))) {
+        if (!seen.has(m)) { seen.add(m); out.push(m); }
+      }
+      for (const el of Array.from(r.querySelectorAll<Element>("*"))) {
+        const sr = getShadowRoot(el);
+        if (sr) recurse(sr);
+      }
+    }
+    recurse(root);
+    return out;
+  }
+  const inputs = deepQuery<HTMLInputElement>(document, "input[type=file]");
+  let total = 0;
+  let stillHasOurFile = false;
+  for (const el of inputs) {
+    const files = el.files;
+    if (!files) continue;
+    total += files.length;
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].name === name) stillHasOurFile = true;
+    }
+  }
+  const verifyOk = sel ? deepQuery(document, sel).length > 0 : false;
+  return { total, stillHasOurFile, verifyOk };
+}
+
+/**
+ * Walk a CDP DOM tree (from DOM.getDocument({pierce: true})) and return the
+ * backendNodeId of the first node carrying `attrName="true"`. Pierces shadow
+ * roots and same-origin iframes via the CDP-side `shadowRoots` and
+ * `contentDocument` fields.
+ *
+ * Used by set_file_input to locate the content-script-tagged file input from
+ * the background worker. The legacy path used Runtime.evaluate + document
+ * .querySelector, which is MAIN-world and can't see shadow-rooted elements.
+ */
+interface CDPNode {
+  backendNodeId: number;
+  attributes?: string[];
+  children?: CDPNode[];
+  shadowRoots?: CDPNode[];
+  contentDocument?: CDPNode;
+}
+
+async function findShadowMarkedBackendNodeId(tabId: number, attrName: string): Promise<number | null> {
+  const dbg = chrome.debugger as unknown as {
+    sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
+  };
+  const docResult = await dbg.sendCommand({ tabId }, "DOM.getDocument", { pierce: true, depth: -1 }) as { root: CDPNode };
+  return walkForMarker(docResult.root, attrName);
+}
+
+function walkForMarker(node: CDPNode, attrName: string): number | null {
+  if (node.attributes) {
+    for (let i = 0; i < node.attributes.length - 1; i += 2) {
+      if (node.attributes[i] === attrName && node.attributes[i + 1] === "true") {
+        return node.backendNodeId;
+      }
+    }
+  }
+  for (const child of node.children ?? []) {
+    const found = walkForMarker(child, attrName);
+    if (found) return found;
+  }
+  for (const sr of node.shadowRoots ?? []) {
+    const found = walkForMarker(sr, attrName);
+    if (found) return found;
+  }
+  if (node.contentDocument) {
+    const found = walkForMarker(node.contentDocument, attrName);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
  * Hard-coded URL refusal — mirrors `packages/mcp-server/src/policy.ts`. The
  * MCP-server layer already refuses these calls before the WS hop; this is
  * defence in depth so a direct WS caller (or a future bypass) sees the same
@@ -1664,16 +1793,62 @@ async function handleMcpMessage(msg: {
         : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
 
       if (!probe.activity) {
-        return {
-          type: "click_element_response",
-          success: false,
-          message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection — Outlier task UI, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success. Switch to highlight_region + wait_for_click so the user's real gesture fires the action. Until_* clauses are skipped here since the click never registered.`,
-          before_url,
-          after_url: probe.after_url,
-          navigated: false,
-          focused_after: probe.focused_after,
-          silently_rejected: true,
-        };
+        // Opt-in last resort: walk the React fiber tree from the matched
+        // element and invoke __reactProps$.onClick directly. Helps on React-
+        // heavy SPAs whose action buttons pass through isTrusted=true checks
+        // even on CDP-dispatched events. Auto-disabled (caller opts in via
+        // try_fiber=true) because the fiber-prop path is undocumented and
+        // could no-op or misbehave on non-React or mangled-prod builds.
+        if (msg.try_fiber === true) {
+          const fiberResult = await forwardToContentScript(tab, {
+            type: "react_fiber_click",
+            requestId: msg.requestId + "-fiber",
+            textHint: msg.textHint,
+            nth: msg.nth,
+            within_selector: msg.within_selector,
+            near_text: msg.near_text,
+          }).catch((e) => ({ success: false, message: String(e), fired: false })) as {
+            success: boolean; message: string; fired: boolean; component?: string; label?: string;
+          };
+
+          // Re-probe activity after the fiber invocation. If the onClick
+          // handler actually did something (state change, navigation, mutation),
+          // the second probe sees it and we fall through to the rest of the
+          // click flow (until_*, expect_submit, etc).
+          const probe2 = isScriptableUrl(tab.url) && tab.id
+            ? await runActivityProbe(tab.id, before_url, 1500)
+            : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
+
+          if (probe2.activity) {
+            // Fiber click succeeded. Continue with the existing flow (until_*
+            // poll lower down). Stash a note so the success message records
+            // that the fiber path was used.
+            postNote += ` (fired via React fiber after CDP silently_rejected)`;
+          } else {
+            return {
+              type: "click_element_response",
+              success: false,
+              message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms even after try_fiber=true (${fiberResult.fired ? "fiber onClick invoked, no DOM/URL/focus/alert change" : `no React fiber __reactProps$.onClick found: ${fiberResult.message}`}). Switch to highlight_region + wait_for_click so the user's real gesture fires the action.`,
+              before_url,
+              after_url: probe2.after_url,
+              navigated: false,
+              focused_after: probe2.focused_after,
+              silently_rejected: true,
+              fiber_attempted: true,
+            };
+          }
+        } else {
+          return {
+            type: "click_element_response",
+            success: false,
+            message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection — Outlier task UI, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success. Switch to highlight_region + wait_for_click so the user's real gesture fires the action, or retry with try_fiber=true to walk __reactProps$.onClick directly on React-heavy SPAs. Until_* clauses are skipped here since the click never registered.`,
+            before_url,
+            after_url: probe.after_url,
+            navigated: false,
+            focused_after: probe.focused_after,
+            silently_rejected: true,
+          };
+        }
       }
 
       // If the caller specified an until-clause, poll for it before returning.
@@ -2118,7 +2293,9 @@ async function handleMcpMessage(msg: {
     case "set_file_input": {
       const tab = await getActiveTab(port);
 
-      // Ask content script to find and tag the file input
+      // Ask content script to find and tag the file input. The content script
+      // uses queryAllDeep, which pierces open AND closed shadow roots — file
+      // inputs hidden behind Stencil/Lit/Radix drag-zones are reachable.
       const tagResult = await forwardToContentScript(tab, {
         type: "tag_file_input",
         requestId: msg.requestId,
@@ -2140,44 +2317,41 @@ async function handleMcpMessage(msg: {
       // 4 file inputs with 0 files total before, and 1 file after, the
       // upload committed. Inputs that are visually hidden (drag-and-drop
       // zones) count too.
+      //
+      // The inline queryAllDeep helper pierces open and closed shadow roots
+      // via chrome.dom.openOrClosedShadowRoot. Without it, file inputs nested
+      // inside web-component shadow DOM are invisible to the count.
       const pre = await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => {
-          const inputs = Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"));
-          let total = 0;
-          for (const el of inputs) total += el.files?.length ?? 0;
-          return { totalFiles: total, inputCount: inputs.length };
-        },
+        func: pierceFileCount,
       });
       const preTotal = (pre[0]?.result as { totalFiles: number; inputCount: number } | undefined)?.totalFiles ?? 0;
 
       // Use Chrome DevTools Protocol to set the file — the only way to bypass
-      // the browser's script restriction on file inputs.
+      // the browser's script restriction on file inputs. Lookup goes through
+      // DOM.getDocument({pierce: true}) so we can reach shadow-rooted inputs
+      // (Runtime.evaluate's document.querySelector is MAIN-world and doesn't
+      // pierce open OR closed shadow boundaries).
       try {
         await withDebugger(tabId, async () => {
-          const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
-            expression: `document.querySelector('[${fileAttr}="true"]')`,
-            returnByValue: false,
-          }) as { result: { objectId?: string } };
-
-          if (!evalResult.result?.objectId) throw new Error("Could not locate tagged file input via CDP");
+          const backendNodeId = await findShadowMarkedBackendNodeId(tabId, fileAttr);
+          if (!backendNodeId) throw new Error("Could not locate tagged file input via CDP");
 
           await (chrome.debugger as any).sendCommand({ tabId }, "DOM.setFileInputFiles", {
-            objectId: evalResult.result.objectId,
+            backendNodeId,
             files: [msg.filePath],
           });
-
-          await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
-            expression: `(function() {
-              var el = document.querySelector('[${fileAttr}="true"]');
-              if (el) {
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-              }
-            })()`,
-            returnByValue: true,
-          });
         });
+
+        // Dispatch change + input events from the content script so the
+        // pierce-aware queryAllDeep can find the tagged input. Doing this from
+        // CDP Runtime.evaluate would silently no-op on closed-shadow-rooted
+        // inputs.
+        await forwardToContentScript(tab, {
+          type: "dispatch_file_change_events",
+          requestId: msg.requestId + "-dispatch",
+          attr: fileAttr,
+        }).catch(() => {});
       } finally {
         // Clean up the tag regardless of success/failure
         await forwardToContentScript(tab, {
@@ -2207,21 +2381,7 @@ async function handleMcpMessage(msg: {
 
         const post = await chrome.scripting.executeScript({
           target: { tabId },
-          func: (name: string, sel: string | undefined) => {
-            const inputs = Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"));
-            let total = 0;
-            let stillHasOurFile = false;
-            for (const el of inputs) {
-              const files = el.files;
-              if (!files) continue;
-              total += files.length;
-              for (let i = 0; i < files.length; i++) {
-                if (files[i].name === name) stillHasOurFile = true;
-              }
-            }
-            const verifyOk = sel ? !!document.querySelector(sel) : false;
-            return { total, stillHasOurFile, verifyOk };
-          },
+          func: pierceFilePoll,
           args: [filename, verifySelector ?? ""],
         });
         const result = post[0]?.result as { total: number; stillHasOurFile: boolean; verifyOk: boolean } | undefined;

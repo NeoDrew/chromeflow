@@ -6,7 +6,7 @@ import {
 } from "./highlight.js";
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
-import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView } from "./click.js";
+import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView, reactFiberClickByHint } from "./click.js";
 import { collectShadowHosts, countShadowHosts, extractTextDeep, queryAllDeep } from "./shadow.js";
 import { enumerateFormFields } from "./forms.js";
 import { findText, findInputs, waitForText } from "./find.js";
@@ -129,6 +129,19 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "post_click_inspect": {
       const result = postClickInspect();
+      return { type: "action_done", requestId: msg.requestId, ...result };
+    }
+
+    case "react_fiber_click": {
+      // Opt-in fallback used by background.click_element when the activity
+      // probe reports silently_rejected. Re-resolves the target with the same
+      // match logic and invokes __reactProps$.onClick directly.
+      const result = reactFiberClickByHint(
+        msg.textHint as string,
+        msg.nth as number | undefined,
+        msg.within_selector as string | undefined,
+        msg.near_text as string | undefined,
+      );
       return { type: "action_done", requestId: msg.requestId, ...result };
     }
 
@@ -456,6 +469,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           timeout_ms: msg.timeout_ms as number | undefined,
           scope_selector: msg.scope_selector as string | undefined,
           regex: msg.regex as boolean | undefined,
+          since: msg.since as "now" | undefined,
         },
         doc
       );
@@ -625,23 +639,28 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       // Try hint as a CSS selector first (e.g. "#import-problem-file", "input[name=upload]")
       if (hint && (hint.startsWith("#") || hint.startsWith(".") || hint.startsWith("input") || hint.startsWith("["))) {
         try {
-          const el = document.querySelector<HTMLInputElement>(hint);
+          const el = queryAllDeep<HTMLInputElement>(document, hint)[0] ?? null;
           if (el && el.type === "file") found = el;
         } catch { /* invalid selector, continue to label matching */ }
       }
 
-      // Try matching by ID directly (e.g. hint="import-problem-file" matches id="import-problem-file")
+      // Try matching by ID directly (e.g. hint="import-problem-file" matches id="import-problem-file").
+      // getElementById is light-DOM only; fall back to a piercing query for IDs inside shadow roots.
       if (!found && hint) {
-        const byId = document.getElementById(hint) as HTMLInputElement | null;
+        const byId = (document.getElementById(hint) as HTMLInputElement | null)
+          ?? (queryAllDeep<HTMLInputElement>(document, `#${CSS.escape(hint)}`)[0] ?? null);
         if (byId && byId.type === "file") found = byId;
       }
 
-      // Label/text matching
+      // Label/text matching — pierce shadow roots so file inputs inside Stencil/
+      // Radix/Lit web components are reachable.
       if (!found) {
-        for (const el of Array.from(document.querySelectorAll<HTMLInputElement>("input[type=file]"))) {
+        for (const el of queryAllDeep<HTMLInputElement>(document, "input[type=file]")) {
           let label = el.getAttribute("aria-label") || el.getAttribute("name") || el.id || "";
           if (!label && el.id) {
-            const lbl = document.querySelector<HTMLLabelElement>(`label[for="${el.id}"]`);
+            // Labels are scoped to their containing root (Document or ShadowRoot);
+            // queryAllDeep walks every root so we still find them.
+            const lbl = queryAllDeep<HTMLLabelElement>(document, `label[for="${CSS.escape(el.id)}"]`)[0];
             if (lbl) label = (lbl.textContent ?? "").trim();
           }
           if (!label) {
@@ -656,8 +675,8 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         }
       }
 
-      // Fallback: first file input on the page
-      if (!found) found = document.querySelector<HTMLInputElement>("input[type=file]");
+      // Fallback: first file input anywhere on the page (including shadow roots).
+      if (!found) found = queryAllDeep<HTMLInputElement>(document, "input[type=file]")[0] ?? null;
 
       if (!found) {
         return { type: "action_done", requestId: msg.requestId, found: false, message: `No file input found matching "${msg.hint}"` };
@@ -671,10 +690,27 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "untag_file_input": {
       const attr = markerIds.fileTargetAttr();
-      document.querySelectorAll(`[${attr}]`).forEach((el) => {
+      queryAllDeep(document, `[${attr}]`).forEach((el) => {
         el.removeAttribute(attr);
       });
       return { type: "action_done", requestId: msg.requestId };
+    }
+
+    case "dispatch_file_change_events": {
+      // Used by background.set_file_input after CDP DOM.setFileInputFiles
+      // commits the upload. We can't use Runtime.evaluate from CDP to dispatch
+      // events because document.querySelector in MAIN world doesn't pierce
+      // shadow roots — for closed-shadow-rooted file inputs the query returns
+      // null. queryAllDeep here (content-script ISOLATED world) pierces via
+      // chrome.dom.openOrClosedShadowRoot.
+      const attr = (msg.attr as string) ?? markerIds.fileTargetAttr();
+      const el = queryAllDeep<HTMLInputElement>(document, `[${attr}="true"]`)[0] ?? null;
+      if (el) {
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        return { type: "action_done", requestId: msg.requestId, found: true };
+      }
+      return { type: "action_done", requestId: msg.requestId, found: false };
     }
 
     case "clear": {

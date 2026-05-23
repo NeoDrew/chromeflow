@@ -40,6 +40,7 @@ export type ServerMessage =
       expect_submit?: boolean;
       within_selector?: string;
       near_text?: string;
+      try_fiber?: boolean;
     }
   | { type: "prepare_click_target"; requestId: string; textHint: string; nth?: number; within_selector?: string; near_text?: string }
   | { type: "post_click_inspect"; requestId: string }
@@ -96,6 +97,7 @@ export type ServerMessage =
       scope_selector?: string;
       regex?: boolean;
       frame?: string;
+      since?: "now";
     }
   | {
       type: "fetch_url";
@@ -165,6 +167,16 @@ export type ClientMessage =
       after_url?: string;
       navigated?: boolean;
       scope_missed?: boolean;
+      silently_rejected?: boolean;
+      fiber_attempted?: boolean;
+      focused_after?: {
+        tag: string;
+        id: string;
+        name: string;
+        type: string;
+        aria_label: string;
+        value_preview: string;
+      } | null;
     }
   | { type: "page_text_response"; requestId: string; text: string }
   | { type: "script_response"; requestId: string; result: string; alert?: string | null; context?: "main"; navigated?: boolean; reauthorized?: boolean }
