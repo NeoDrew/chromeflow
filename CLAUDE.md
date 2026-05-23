@@ -204,7 +204,11 @@ to the user" usually benefits from the path + `save_to`.
   ```
 - `set_file_input` accepts CSS selectors as the hint (e.g. `#import-problem-file`,
   `.upload-input`) in addition to label text. Use selectors when file inputs are hidden
-  behind custom UIs and have no visible label.
+  behind custom UIs and have no visible label. **Pierces open AND closed shadow roots**:
+  file inputs nested inside Stencil/Lit/Radix web components (Outlier's "End of Trajectories
+  Upload" pattern) are reachable. Discovery uses queryAllDeep on the content-script side,
+  and the CDP attach uses `DOM.getDocument({pierce: true})` to find the tagged input
+  across shadow boundaries.
 - **Replacing an already-uploaded file**: after `set_file_input` succeeds, the input
   becomes invisible and a "Remove" span/button typically appears near the upload area.
   To replace the file: `click_element("Remove", nth=N)` (the right `nth` if there are
@@ -243,12 +247,13 @@ Three lightweight tools save tokens vs full-page reads when you don't need the f
 - `get_form_fields(query="Email")` — fuzzy form-field lookup, top-N. Returns labels you can pipe straight into `fill_input(label, value)` (shared match ranks: `aria-eq` → `placeholder-eq` → `label-text-eq` → `name-eq` → `id-eq` → `*-includes` → `fuzzy-text-walk`). Pass `type_filter="email"` to restrict by input type. Pass `exact:true` to refuse fuzzy text-walk matches. Omit `query` for a full inventory ordered by vertical position.
 - `wait_for(text="Saved")` — wait for text to appear without knowing the selector ahead of time. Same tool also handles `wait_for(selector=...)` and `wait_for(change_in=...)`.
 
-All three pierce **open AND closed shadow roots** (via `chrome.dom.openOrClosedShadowRoot` in content scripts) and accept `frame="iframe.selector"` for same-origin iframes. Pass `regex=true` on `find_text` / `wait_for(text=...)` for case-insensitive regex matching. `find_text`'s `clickable` flag walks ancestors for `[hidden]` / `display:none` / `visibility:hidden` — flair-dropdown items inside collapsed panels no longer report as clickable.
+All three pierce **open AND closed shadow roots** (via `chrome.dom.openOrClosedShadowRoot` in content scripts) and accept `frame="iframe.selector"` for same-origin iframes. The `scope_selector` resolution itself also pierces, so a selector returned by `find_text` (which walks closed shadow trees) is valid as a scope for a follow-up `find_text` / `wait_for(text=...)`. Pass `regex=true` on `find_text` / `wait_for(text=...)` for case-insensitive regex matching. `find_text`'s `clickable` flag walks ancestors for `[hidden]` / `display:none` / `visibility:hidden` — flair-dropdown items inside collapsed panels no longer report as clickable.
 
 ```
 find_text("Build complete", scope_selector=".log-output")        — only check the build log section
 get_form_fields(query="Card number", type_filter="text")          — find Stripe's card-number field
 wait_for(text="Deploy successful", timeout_ms=30000)              — wait up to 30s after clicking Deploy
+wait_for(text="New message", since="now", timeout_ms=30000)       — only resolve on a NEW mutation (defeats stale instruction panels still in DOM)
 ```
 
 Reach for these BEFORE `get_page_text` / a full `get_form_fields()` inventory when the goal is "is X here?" or "where is X?". Reserve `get_page_text` for reading actual content, and an unscoped `get_form_fields()` for understanding a whole form's structure.
@@ -294,7 +299,7 @@ screenshot to check what happened.
 4. `take_screenshot()` only if you still can't identify the element from DOM queries
 
 **Multiple elements with the same label** (e.g. many "Remove" buttons):
-`click_element("Remove", nth=3)` — use `nth` (1-based) to target the specific one by order top-to-bottom. Check `get_form_fields` or `get_page_text` first to determine which index corresponds to the right section.
+`click_element("Remove", nth=3)` — use `nth` (1-based) to target the specific one by **visual reading order** (top-to-bottom, then left-to-right within the same row). Order is stable across shadow hosts: identical-label candidates inside separate Radix/Stencil/Lit shadow roots no longer pick by DOM-traversal order — they pick by `getBoundingClientRect()` position. Check `get_form_fields` or `get_page_text` first to determine which index corresponds to the right section.
 
 **`fill_input` matched the wrong field** (always read the response — it names the matched element):
 - If you wanted "Ad rate" and got back `<input name="title">`, the fuzzy text walker latched onto a neighbour. Retry with `exact=true` and a more specific hint, or use `fill_input(selector=...)` with a precise CSS selector.
@@ -341,6 +346,8 @@ Mirror of `find_text`'s `scope_selector`. When the scope doesn't match anything,
 **`switch_to_tab` accepts `tab` as a synonym for `query`**: `switch_to_tab({tab: 1})`, `switch_to_tab({tab: "github"})`, and `switch_to_tab({query: "github"})` all work. Use whichever reads more naturally — `tab` for indices, `query` for substring matches.
 
 **`click_element` returned silently_rejected (anti-bot fast-fail)**: after dispatch, chromeflow runs a 1500ms activity probe (DOM mutations, focus change, URL change, value/checked change, alert/toast/modal appearance). When the probe sees 0 activity, the click was silently rejected by anti-bot detection (Outlier task UI, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success). The response carries `silently_rejected: true` and the message ends with "Switch to highlight_region + wait_for_click so the user's real gesture fires the action." Do NOT retry the same `click_element` — re-targeting won't help. Pre-fill any related fields, then `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
+
+**`try_fiber: true` as a last resort on React-heavy SPAs**: when `silently_rejected: true` keeps recurring on a known React site and `highlight_region + wait_for_click` is not yet an option, pass `click_element(..., try_fiber: true)`. After the activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest `__reactProps$.onClick` prop, and invokes it directly with a minimal synthetic event. The response carries `fiber_attempted: true` so you can tell the path was taken. Do NOT default this on every click — fiber-prop walking is undocumented, may misbehave on mangled production builds, and a real `silently_rejected` is sometimes a captcha deliberately wanting a human gesture. Reserve for repeat rejections on a known-safe React site.
 
 **`click_element` timed out (the WS request, not the fast-fail)**: rare since the fast-fail kicks in at 1500ms. If it still happens (a CDP attach hung or a content-script reload during dispatch), the message will say "the click MAY have already fired". Don't blindly retry — re-clicking can toggle React radios OFF or fire a duplicate submit. Verify with `get_page_text`, `wait_for(selector=…)`, or `wait_for(text=…)` first; only retry if the page state confirms the click never took effect.
 

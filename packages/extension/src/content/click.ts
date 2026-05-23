@@ -214,6 +214,114 @@ function firePointerChain(el: Element) {
 }
 
 /**
+ * Walk up the React fiber tree from `el` looking for an `onClick` prop, and
+ * invoke it directly with a minimal synthetic event. Last-resort fallback for
+ * the case where CDP-dispatched and synthetic clicks both produce zero
+ * activity — typically a React-heavy SPA whose action button passes through
+ * an isTrusted=true check OR a one-off `onPointerDown` capture handler that
+ * the standard event chain skips. Returns true if a handler was found and
+ * called (page may still no-op the call), false if no handler exists.
+ *
+ * Caveat: this depends on React's __reactProps$<hash> private fiber-key
+ * convention, which has been stable across React 16/17/18 but is undocumented.
+ * Production builds with mangled property names will break this — that's why
+ * it's opt-in via `try_fiber=true` rather than an automatic post-rejection
+ * fallback.
+ */
+export function reactFiberClick(el: Element): { fired: boolean; component?: string } {
+  let node: any = el; // eslint-disable-line @typescript-eslint/no-explicit-any
+  for (let depth = 0; depth < 12 && node; depth++) {
+    const fk = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
+    const onClick = fk ? node[fk]?.onClick : null;
+    if (typeof onClick === "function") {
+      const ev = {
+        preventDefault() { /* noop */ },
+        stopPropagation() { /* noop */ },
+        stopImmediatePropagation() { /* noop */ },
+        nativeEvent: { isTrusted: true },
+        target: el,
+        currentTarget: el,
+        type: "click",
+        bubbles: true,
+        cancelable: true,
+        defaultPrevented: false,
+        isDefaultPrevented: () => false,
+        isPropagationStopped: () => false,
+      };
+      try {
+        onClick(ev);
+        const tag = node instanceof Element ? node.tagName.toLowerCase() : "(unknown)";
+        return { fired: true, component: tag };
+      } catch {
+        // Handler threw — still counts as "fired" so the caller doesn't keep
+        // walking. The page state will reveal whether the handler's exception
+        // was the real cause vs. an unrelated downstream failure.
+        return { fired: true };
+      }
+    }
+    node = node instanceof Element ? node.parentElement : null;
+  }
+  return { fired: false };
+}
+
+/**
+ * Resolve the click target using the same matching logic as prepareClickTarget
+ * (text + nth + within_selector + near_text), but skip tagging, scrolling, and
+ * pre-flight checks. Used by the `react_fiber_click` content-script handler
+ * after silently_rejected has fired — at that point the target was already
+ * found and clicked once, we just need to re-find it to invoke the fiber prop.
+ */
+export function reactFiberClickByHint(
+  textHint: string,
+  nth?: number,
+  within_selector?: string,
+  near_text?: string,
+): { success: boolean; message: string; fired: boolean; component?: string; label?: string } {
+  let scope: Document | Element = document;
+  if (within_selector) {
+    const scoped = queryAllDeep(document, within_selector)[0] ?? null;
+    if (!scoped) {
+      return { success: false, message: `within_selector "${within_selector}" did not match`, fired: false };
+    }
+    scope = scoped;
+  } else if (near_text) {
+    const sectionScope = findSectionByHeading(near_text);
+    if (!sectionScope) {
+      return { success: false, message: `near_text "${near_text}" did not match`, fired: false };
+    }
+    scope = sectionScope;
+  }
+  const lower = textHint.toLowerCase().trim();
+  const matches = findClickableAll(lower, scope);
+  const merged = [...matches.visible, ...matches.hidden];
+  const idx = (nth && nth >= 1 ? nth : 1) - 1;
+  const el = merged[idx];
+  if (!el) {
+    return { success: false, message: `No clickable element found for "${textHint}"`, fired: false };
+  }
+  const label =
+    (el as HTMLElement).innerText?.trim() ||
+    el.getAttribute("aria-label") ||
+    textHint;
+  const fiber = reactFiberClick(el);
+  if (!fiber.fired) {
+    return {
+      success: false,
+      message: `Found "${label}" but no React fiber __reactProps$.onClick exists on the element or its ancestors (up to 12 levels). The button is probably bound via addEventListener (not React), or React's prop key has been mangled by a production minifier. Fall back to highlight_region + wait_for_click for a real human gesture.`,
+      fired: false,
+      label,
+    };
+  }
+  return {
+    success: true,
+    message: `Invoked React fiber onClick on "${label}"${fiber.component ? ` (component: ${fiber.component})` : ""}`,
+    fired: true,
+    component: fiber.component,
+    label,
+  };
+}
+
+/**
  * Find a clickable element by text/aria-label and programmatically click it.
  * Handles elements that are off-screen inside nested scroll containers (e.g.
  * Stripe's drawer panels) and elements inside open shadow roots (Outlier chat,
@@ -340,36 +448,44 @@ function findClickableAll(lower: string, scope: Document | Element = document): 
 
   const candidates = queryAllDeep(scope, interactiveSelectors);
   const ranked: Element[] = [];
+  // Track which label-strength tier each candidate came from so the visual
+  // sort below preserves "exact match beats partial" while still ordering
+  // ties by reading position. Tier: 1=exact text, 2=partial text, 3=aria,
+  // 4=input value, 5=title/data-testid.
+  const tier: Map<Element, number> = new Map();
 
-  function addIfNew(el: Element) {
-    if (!ranked.includes(el)) ranked.push(el);
+  function addIfNew(el: Element, t: number) {
+    if (!ranked.includes(el)) {
+      ranked.push(el);
+      tier.set(el, t);
+    }
   }
 
   // Exact text matches
   candidates.forEach((el) => {
-    if (el.textContent?.toLowerCase().trim() === lower) addIfNew(el);
+    if (el.textContent?.toLowerCase().trim() === lower) addIfNew(el, 1);
   });
 
   // Partial text matches (sorted shortest first for specificity), deduplicated
   const partials = candidates
     .filter((el) => !ranked.includes(el) && el.textContent?.toLowerCase().includes(lower))
     .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0));
-  partials.forEach(addIfNew);
+  partials.forEach((el) => addIfNew(el, 2));
 
   // aria-label matches
   queryAllDeep(scope, "[aria-label]").forEach((el) => {
-    if (el.getAttribute("aria-label")?.toLowerCase().includes(lower)) addIfNew(el);
+    if (el.getAttribute("aria-label")?.toLowerCase().includes(lower)) addIfNew(el, 3);
   });
 
   // value attribute (input[type=submit], input[type=button])
   queryAllDeep<HTMLInputElement>(scope, "input[type=submit], input[type=button]").forEach((el) => {
-    if (el.value.toLowerCase().includes(lower)) addIfNew(el);
+    if (el.value.toLowerCase().includes(lower)) addIfNew(el, 4);
   });
 
   // title / data-testid
   queryAllDeep(scope, "[title], [data-testid]").forEach((el) => {
     const v = el.getAttribute("title") ?? el.getAttribute("data-testid") ?? "";
-    if (v.toLowerCase().includes(lower)) addIfNew(el);
+    if (v.toLowerCase().includes(lower)) addIfNew(el, 5);
   });
 
   const visible: Element[] = [];
@@ -378,6 +494,33 @@ function findClickableAll(lower: string, scope: Document | Element = document): 
     if (isVisibleAndUsable(el)) visible.push(el);
     else hidden.push(el);
   }
+
+  // Reorder visible candidates by visual reading order WITHIN the same
+  // label-strength tier (and, for partial matches, same textContent length).
+  // Without this, nth picks the next candidate in DOM-tree-traversal order —
+  // and across multiple shadow hosts, DOM order doesn't match visual top-to-
+  // bottom. The canonical failure mode is four "Confirmed" radios stacked in
+  // separate shadow-rooted cards: tier-1-exact all match, length is identical,
+  // and nth=2 winds up landing on the wrong card. Visual sort fixes that.
+  visible.sort((a, b) => {
+    const ta = tier.get(a) ?? 99;
+    const tb = tier.get(b) ?? 99;
+    if (ta !== tb) return ta - tb;
+    if (ta === 2) {
+      // Partial-text tier still tiebreaks on length (more specific wins).
+      const la = a.textContent?.length ?? 0;
+      const lb = b.textContent?.length ?? 0;
+      if (la !== lb) return la - lb;
+    }
+    const ra = a.getBoundingClientRect();
+    const rb = b.getBoundingClientRect();
+    // Round y to 10px buckets so sub-pixel wobble doesn't flip the order.
+    const ya = Math.round(ra.top / 10) * 10;
+    const yb = Math.round(rb.top / 10) * 10;
+    if (ya !== yb) return ya - yb;
+    return ra.left - rb.left;
+  });
+
   return { visible, hidden };
 }
 

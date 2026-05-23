@@ -25580,14 +25580,15 @@ ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit
       until_timeout_ms: external_exports.number().int().min(500).optional().describe("How long to wait for the until-condition, in milliseconds (default 5000). Only used if one of until_* is set."),
       expect_submit: external_exports.boolean().optional().describe(`Broad anti-bot detector. After the click, watch up to 4s for ANY of: URL change, [role=alert] / [data-sonner-toast] / .toast / .notification / aria-live appearance, [role=dialog] / [aria-modal=true] appearance. Returns success=false with "submit silently rejected (likely anti-bot)" when no signal fires. Use on form submits when the until_* destination isn't known. Ignored when any until_* is set (those are more specific).`),
       within_selector: external_exports.string().optional().describe(`Limit candidate matches to this CSS selector's subtree (mirrors find_text's scope_selector). Use to scope nth-counting to one section of a long form: click_element("Minor Issue(s)", nth=1, within_selector="#response-b-style"). Returns success=false with scope_missed=true if the selector does not match.`),
-      near_text: external_exports.string().optional().describe("Find the nearest container whose heading starts with this text, then scope candidates to that container's subtree. Ignored when within_selector is set. Useful when the target section has no stable CSS selector but the heading is unique.")
+      near_text: external_exports.string().optional().describe("Find the nearest container whose heading starts with this text, then scope candidates to that container's subtree. Ignored when within_selector is set. Useful when the target section has no stable CSS selector but the heading is unique."),
+      try_fiber: external_exports.boolean().optional().describe(`Opt-in last-resort fallback when silently_rejected fires. After the 1500ms activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest \`__reactProps$.onClick\` prop, and invokes it with a minimal synthetic event. Useful on React-heavy SPAs whose action buttons pass through isTrusted=true checks even on CDP events. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this \u2014 fiber-prop walking is undocumented and may misbehave on mangled production builds. Reserve for repeat silently_rejected on a known-safe React site.`)
     },
-    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text }) => {
+    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber }) => {
       const wsTimeout = Math.max(3e4, (until_timeout_ms ?? 0) + 1e4);
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text },
+          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber },
           wsTimeout
         );
       } catch (err) {
@@ -25682,7 +25683,7 @@ Clicked element: <${r.target.tag}>${r.target.text ? ` "${r.target.text}"` : ""} 
   );
   server.tool(
     "wait_for",
-    `Wait for one of: a CSS selector to appear, a text substring to appear, or an existing element's subtree to mutate. Pass exactly one of \`selector\`, \`text\`, or \`change_in\`. Pierces open shadow roots. Pass \`shadow_root: true\` when waiting for the host's shadowRoot to attach (post-SPA-navigation hydration). \`scope_selector\` limits text-mode search; \`regex: true\` interprets text as a case-insensitive regex; \`frame: "iframe.selector"\` waits inside a same-origin iframe (text mode).`,
+    `Wait for one of: a CSS selector to appear, a text substring to appear, or an existing element's subtree to mutate. Pass exactly one of \`selector\`, \`text\`, or \`change_in\`. Pierces open AND closed shadow roots (text \`scope_selector\` pierces too). Pass \`shadow_root: true\` when waiting for the host's shadowRoot to attach (post-SPA-navigation hydration). \`scope_selector\` limits text-mode search; \`regex: true\` interprets text as a case-insensitive regex; \`frame: "iframe.selector"\` waits inside a same-origin iframe (text mode). Pass \`since: "now"\` in text mode to skip the initial check and only resolve on text appearing in a NEW DOM mutation \u2014 defeats the "stale instruction panels still in DOM" false-positive.`,
     {
       selector: external_exports.string().optional().describe("CSS selector to wait for."),
       text: external_exports.string().optional().describe("Text substring (or regex with regex=true) to wait for."),
@@ -25690,14 +25691,15 @@ Clicked element: <${r.target.tag}>${r.target.text ? ` "${r.target.text}"` : ""} 
       timeout_ms: external_exports.number().int().optional().describe("Max ms to wait (default 30000)."),
       poll_interval_ms: external_exports.number().int().optional().describe("Selector-mode poll interval (default 500). Set to 15000 for slow server-side jobs."),
       shadow_root: external_exports.boolean().optional().describe("Selector mode: require the matched host to have an attached shadowRoot. Default false."),
-      scope_selector: external_exports.string().optional().describe("Text mode: limit search to this CSS selector's subtree."),
+      scope_selector: external_exports.string().optional().describe("Text mode: limit search to this CSS selector's subtree. Pierces shadow roots."),
       regex: external_exports.boolean().optional().describe("Text mode: interpret query as a case-insensitive regex."),
       frame: external_exports.string().optional().describe("Same-origin iframe CSS selector to wait inside (text mode)."),
+      since: external_exports.enum(["now"]).optional().describe(`Text mode: gate on a NEW mutation. Skips the initial check so already-present matches don't short-circuit. Use when the page keeps stale text in the DOM after a route change (e.g. stacked instruction panels) and you need to wait for the next render.`),
       settle_ms: external_exports.number().int().optional().describe("change_in mode: ms to wait after the first mutation for batching (default 150)."),
       max_chars: external_exports.number().int().min(50).optional().describe("change_in mode: cap the returned text content (default 1000). Chat-style mutations can dump huge text; agents that need more should opt in explicitly.")
     },
     async (args) => {
-      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, settle_ms, max_chars } = args;
+      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, since, settle_ms, max_chars } = args;
       const set = [selector, text, change_in].filter((v) => v !== void 0 && v !== null && v !== "").length;
       if (set !== 1) {
         return { content: [{ type: "text", text: "wait_for: pass exactly one of selector, text, or change_in." }] };
@@ -25713,7 +25715,7 @@ Clicked element: <${r.target.tag}>${r.target.text ? ` "${r.target.text}"` : ""} 
       }
       if (text !== void 0) {
         const response2 = await bridge.request(
-          { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame },
+          { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame, since },
           timeoutMs + 5e3
         );
         const r2 = response2;
@@ -25898,7 +25900,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // src/index.ts
-var PACKAGE_VERSION = true ? "0.9.9" : "dev";
+var PACKAGE_VERSION = true ? "0.9.10" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);
