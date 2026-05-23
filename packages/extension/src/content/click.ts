@@ -12,7 +12,7 @@ import { markerIds } from "../markers.js";
  * checked, returns `skipClick: true` and does NOT tag the element — the
  * caller should short-circuit without firing the click. Re-clicking an
  * already-checked radio toggles it OFF on React forms whose onChange handler
- * interprets the click as a deselect (DataAnnotation Raccoon submission, etc).
+ * interprets the click as a deselect (common on React-controlled form widgets).
  */
 export function prepareClickTarget(
   textHint: string,
@@ -324,8 +324,8 @@ export function reactFiberClickByHint(
 /**
  * Find a clickable element by text/aria-label and programmatically click it.
  * Handles elements that are off-screen inside nested scroll containers (e.g.
- * Stripe's drawer panels) and elements inside open shadow roots (Outlier chat,
- * Radix UI components, etc.).
+ * Stripe's drawer panels) and elements inside open shadow roots (Radix UI
+ * components, Stencil/Lit web components, etc.).
  *
  * This is the fallback path when CDP Input.dispatchMouseEvent isn't available
  * (chrome:// pages, debugger attach fails). The CDP path produces isTrusted=true
@@ -403,8 +403,8 @@ export function clickElement(
 
 /**
  * Scroll the element into view in both the window AND any nested scrollable
- * ancestor containers (e.g. Stripe's slide-over drawer panels, Outlier's
- * inner-pane task surface where document.body.scrollHeight is dwarfed by the
+ * ancestor containers (e.g. Stripe's slide-over drawer panels, or any
+ * inner-pane SPA where document.body.scrollHeight is dwarfed by the
  * inner scroll container's scrollHeight).
  */
 export function scrollSmartIntoView(el: Element) {

@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "build": "node build.mjs",
-    "dev": "node build.mjs --watch"
+    "dev": "node build.mjs --watch",
+    "package": "node build.mjs && node pack.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.297",

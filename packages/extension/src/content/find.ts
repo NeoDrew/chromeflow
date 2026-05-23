@@ -394,7 +394,8 @@ export function waitForText(
     // When since="now" is set the initial-check short-circuit is skipped —
     // callers explicitly want to wait for a NEW mutation, not match against
     // already-present text. Used to defeat the "stacked instructions still
-    // in DOM after the route changed" footgun on pages like Outlier.
+    // in DOM after the route changed" footgun on SPAs that keep all
+    // prior step content visible-but-stacked.
     if (!sinceNow) {
       const initial = check();
       if (initial) {

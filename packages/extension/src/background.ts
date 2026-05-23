@@ -780,8 +780,8 @@ async function handleMcpMessage(msg: {
       } else {
         // Reuse active tab. When the current page is already on the same origin,
         // navigate via in-page location.href so sec-fetch-site is "same-origin"
-        // instead of "cross-site" — some sites (e.g. Outlier) serve a mobile /
-        // blocked SSR response when hit with cross-site direct navigation.
+        // instead of "cross-site" — some sites serve a mobile / blocked SSR
+        // response when hit with cross-site direct navigation.
         const active = await getActiveTab(port);
         const sameOrigin = (() => {
           try {
@@ -818,9 +818,10 @@ async function handleMcpMessage(msg: {
 
       // Settle check — beyond chrome.tabs status=complete, verify the page
       // is interactive (readyState=complete) AND no spinner/loading-state UI
-      // is blocking the content (Outlier /en/expert/tasks served a permanent
-      // .spinner-wrapper that the user couldn't recover from). If a
-      // expect_selector was passed, wait for it to appear.
+      // is blocking the content (some SPA routes leave a permanent
+      // .spinner-wrapper that the user can't recover from when the underlying
+      // API request dies). If a expect_selector was passed, wait for it to
+      // appear.
       //
       // Time-bounded at 6s so a genuinely-slow page doesn't hang the agent.
       // The probe returns whatever it observed; the caller decides whether
@@ -1279,9 +1280,9 @@ async function handleMcpMessage(msg: {
                 // Shadow-piercing query: walks open AND closed shadow roots
                 // (via chrome.dom.openOrClosedShadowRoot when available in
                 // isolated-world content scripts) so selectors for elements
-                // inside web components (Outlier, Lit, Stencil, Reddit's
-                // faceplate-* web components) are found without needing a
-                // shadow-DOM-aware caller.
+                // inside web components (Lit, Stencil, Radix portals,
+                // Reddit's faceplate-* web components) are found without
+                // needing a shadow-DOM-aware caller.
                 const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
                 function getShadowRoot(el: Element): ShadowRoot | null {
                   if (chromeDom?.openOrClosedShadowRoot) {
@@ -1681,9 +1682,9 @@ async function handleMcpMessage(msg: {
       }
 
       // Phase 2: dispatch the click via CDP (isTrusted=true events) if possible.
-      // On sites with strict isTrusted checks (Outlier-tier), synthetic clicks
-      // are ignored but CDP-dispatched events pass. Falls back to the content
-      // script's synthetic-click path on chrome:// pages or debugger failure.
+      // On isTrusted-strict sites, synthetic clicks are ignored but
+      // CDP-dispatched events pass. Falls back to the content script's
+      // synthetic-click path on chrome:// pages or debugger failure.
       let result: { success: boolean; message: string };
       let usedCdp = false;
 
@@ -1780,10 +1781,11 @@ async function handleMcpMessage(msg: {
       // 1500ms after dispatch (DOM mutations, focus change, value/check
       // change, URL change, alert/toast/modal). When 0 activity is detected,
       // the click was almost certainly silently rejected by anti-bot
-      // detection (Outlier task UI, Reddit submit, X submit, GitHub device
-      // flow) and any until_* clause is guaranteed to time out. Failing
-      // fast here saves up to 25s per failed click and tells the agent to
-      // switch to highlight_region + wait_for_click for a human gesture.
+      // detection (isTrusted-strict React UIs, Reddit submit, X submit,
+      // and similar handlers) and any until_* clause is guaranteed to time
+      // out. Failing fast here saves up to 25s per failed click and tells
+      // the agent to switch to highlight_region + wait_for_click for a
+      // human gesture.
       //
       // Returns early as soon as activity is detected, so most clicks (which
       // do produce activity) add only ~100ms before continuing to the
@@ -1841,7 +1843,7 @@ async function handleMcpMessage(msg: {
           return {
             type: "click_element_response",
             success: false,
-            message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection — Outlier task UI, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success. Switch to highlight_region + wait_for_click so the user's real gesture fires the action, or retry with try_fiber=true to walk __reactProps$.onClick directly on React-heavy SPAs. Until_* clauses are skipped here since the click never registered.`,
+            message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection — isTrusted-strict React UIs, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success. Switch to highlight_region + wait_for_click so the user's real gesture fires the action, or retry with try_fiber=true to walk __reactProps$.onClick directly on React-heavy SPAs. Until_* clauses are skipped here since the click never registered.`,
             before_url,
             after_url: probe.after_url,
             navigated: false,

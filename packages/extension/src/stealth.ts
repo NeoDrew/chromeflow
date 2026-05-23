@@ -1,7 +1,7 @@
 /**
  * Stealth patches — runs at document_start in the MAIN world (page context),
  * BEFORE any page script. Hides JS-level fingerprints commonly used by
- * anti-automation systems (LinkedIn, Outlier, Cloudflare, Datadome, etc.).
+ * anti-automation systems (LinkedIn, Cloudflare, Datadome, etc.).
  *
  * What this fixes:
  *   - navigator.webdriver:                  forced to false (some env flips to true)

@@ -1,7 +1,7 @@
 /**
  * Shadow-DOM-piercing helpers.
  *
- * Many SPAs (Outlier's chat-lite, Radix UI components, Stencil-based widgets,
+ * Many SPAs (chat widgets, Radix UI components, Stencil-based widgets,
  * Lit components, web-component-heavy sites) render content inside shadow
  * roots. Standard `document.querySelectorAll` and `innerText` don't traverse
  * those boundaries, so chromeflow needs its own deep-walk helpers.

@@ -25,7 +25,7 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
       expect_selector: z
         .string()
         .optional()
-        .describe("CSS selector for an element that must be present before the page is considered settled. The settle check waits up to 6s for it; if it never appears, the response carries expect_selector_appeared:false so you can detect dead-spinner routes (e.g. Outlier /en/expert/tasks)."),
+        .describe("CSS selector for an element that must be present before the page is considered settled. The settle check waits up to 6s for it; if it never appears, the response carries expect_selector_appeared:false so you can detect dead-spinner routes (SPAs that leave a permanent spinner when the underlying API request dies)."),
     },
     async ({ url, new_tab, background, expect_selector }) => {
       const block = isBlockedUrl(url);
@@ -48,7 +48,7 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
       const newTabBit = new_tab ? (background ? " (new background tab)" : " (new tab)") : "";
       let text = `Navigated to ${url}${newTabBit}`;
       if (r.stuck_spinner) {
-        text += `\n\n⚠ stuck_spinner: true — page settled with a visible spinner (${r.spinner_selector ?? "unknown selector"}) still on screen after 6s. Current URL: ${r.current_url ?? url}. The route may be dead (Outlier /en/expert/tasks pattern) — navigate elsewhere instead of reloading, or wait and try get_page_text to see if it ever recovers.`;
+        text += `\n\n⚠ stuck_spinner: true — page settled with a visible spinner (${r.spinner_selector ?? "unknown selector"}) still on screen after 6s. Current URL: ${r.current_url ?? url}. The route may be dead (some SPAs leave a permanent spinner when the underlying API request fails) — navigate elsewhere instead of reloading, or wait and try get_page_text to see if it ever recovers.`;
       }
       if (expect_selector && r.expect_selector_appeared === false) {
         text += `\n\n⚠ expect_selector "${expect_selector}" never appeared within the 6s settle window. The page may be partially loaded or stuck.`;
@@ -381,7 +381,7 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
         .string()
         .optional()
         .describe(
-          'CSS selector for the element to focus before typing (shadow-piercing — resolves selectors that find_text returns for closed-shadow-root content, e.g. Outlier-style Radix portals). When omitted, types into whatever is currently focused (the caller is responsible for focusing first via click_element).'
+          'CSS selector for the element to focus before typing (shadow-piercing — resolves selectors that find_text returns for closed-shadow-root content, e.g. Radix portals). When omitted, types into whatever is currently focused (the caller is responsible for focusing first via click_element).'
         ),
       clear_first: z
         .boolean()

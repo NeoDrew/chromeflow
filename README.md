@@ -165,7 +165,7 @@ Chromeflow supports up to 11 agent sessions (Claude Code, Codex, or a mix) runni
 4. In Chrome **window A**, open the popup and click **"Use this window"** next to Port 7878.
 5. Switch to **window B**, open the popup, and click **"Use this window"** next to Port 7879.
 
-That's it. Each session now drives its own Chrome window — you can run a DataAnnotation task in one window while the other session fills out a Stripe dashboard in another, with zero collision.
+That's it. Each session now drives its own Chrome window — you can run a research task in one window while the other session fills out a Stripe dashboard in another, with zero collision.
 
 Single-instance usage is unchanged and fully backwards compatible — the old per-window assignment is auto-migrated on first load.
 

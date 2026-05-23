@@ -261,7 +261,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       let selectorInShadow = false;
       if (selector) {
         // Plain querySelector first (cheap, common case). If it misses, try
-        // shadow-piercing — Outlier-style Radix portals host content inside
+        // shadow-piercing — Radix portals and similar host content inside
         // closed shadow roots that find_text reports selectors for, but
         // document.querySelector can't reach.
         let el = document.querySelector(selector);
@@ -314,8 +314,8 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         text = `[Warning: selector "${selector}" not found — returning full page text]\n\n` + text;
       }
       // Shadow-host census so the agent can recognise pages where
-      // execute_script returns an empty document (Outlier, Radix portals,
-      // Stencil/Lit). When this is > 0 and the agent is staring at "no
+      // execute_script returns an empty document (Radix portals, Stencil/Lit
+      // web components). When this is > 0 and the agent is staring at "no
       // buttons / no text" from execute_script, that's the signal to switch
       // to find_text / get_page_text / click_element / fill_input — those
       // pierce shadow DOM.
@@ -489,7 +489,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       } catch { /* invalid selector */ }
 
       // Otherwise search by label/text. Pierce shadow roots so labels and
-      // headings inside Outlier-style Radix portals are reachable.
+      // headings inside Radix portals are reachable.
       if (!target) {
         for (const el of queryAllDeep<HTMLElement>(document, "input, textarea, select, button, [role=button], label, h1, h2, h3, h4, h5, h6")) {
           const text = (el.textContent ?? el.getAttribute("aria-label") ?? el.getAttribute("placeholder") ?? "").toLowerCase();
@@ -506,10 +506,10 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       // returns a mid-animation value which is inconsistent and confusing.
       const docY = Math.round(target.getBoundingClientRect().top + window.scrollY);
       // scrollSmartIntoView walks overflow:auto/scroll ancestors so inner
-      // scroll panes (Outlier's tall task surface where the outer document
-      // is tiny but the inner pane scrolls 15000px) actually move. Plain
-      // scrollIntoView only moves whichever scroll container the browser
-      // happens to pick, which is often the outer document.
+      // scroll panes (SPAs where the outer document is tiny but the inner
+      // pane scrolls 15000+px) actually move. Plain scrollIntoView only
+      // moves whichever scroll container the browser happens to pick,
+      // which is often the outer document.
       scrollSmartIntoView(target);
       return {
         type: "action_done",
@@ -769,8 +769,8 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         };
       });
       // Augment with shadow-host inventory so the agent can spot pages whose
-      // visible content is rendered inside closed shadow roots (Outlier task
-      // surface, Radix portals, Stencil/Lit web components). When the agent
+      // visible content is rendered inside closed shadow roots (Radix portals,
+      // Stencil/Lit web components). When the agent
       // calls execute_script and gets back an empty document but the shadow
       // host list is non-empty, that's the signal to switch to find_text /
       // get_page_text / click_element / fill_input — those pierce.

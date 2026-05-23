@@ -193,7 +193,7 @@ to the user" usually benefits from the path + `save_to`.
 - `fill_input` and `fill_form` work on React-controlled inputs, contenteditable (Stripe,
   Notion), and **CodeMirror 6 editors** — auto-detected. After filling, the value is read
   back and a warning is shown if React did not accept it.
-- **Monaco editors** (VS Code-style code editors on DataAnnotation, etc.) appear in
+- **Monaco editors** (VS Code-style in-browser code editors) appear in
   `get_form_fields()` as type "monaco". They cannot be filled via `fill_input` — use
   `execute_script` with the Monaco API instead:
   ```js
@@ -205,10 +205,10 @@ to the user" usually benefits from the path + `save_to`.
 - `set_file_input` accepts CSS selectors as the hint (e.g. `#import-problem-file`,
   `.upload-input`) in addition to label text. Use selectors when file inputs are hidden
   behind custom UIs and have no visible label. **Pierces open AND closed shadow roots**:
-  file inputs nested inside Stencil/Lit/Radix web components (Outlier's "End of Trajectories
-  Upload" pattern) are reachable. Discovery uses queryAllDeep on the content-script side,
-  and the CDP attach uses `DOM.getDocument({pierce: true})` to find the tagged input
-  across shadow boundaries.
+  file inputs nested inside Stencil/Lit/Radix web components (drag-zone uploaders that
+  hide the real `<input type=file>` behind a styled drop target) are reachable. Discovery
+  uses queryAllDeep on the content-script side, and the CDP attach uses
+  `DOM.getDocument({pierce: true})` to find the tagged input across shadow boundaries.
 - **Replacing an already-uploaded file**: after `set_file_input` succeeds, the input
   becomes invisible and a "Remove" span/button typically appears near the upload area.
   To replace the file: `click_element("Remove", nth=N)` (the right `nth` if there are
@@ -216,7 +216,7 @@ to the user" usually benefits from the path + `save_to`.
   recycled and accepts the new file. Verify with `get_form_fields()` between the two
   steps so you're sure the input has reappeared.
 - **Forcing auto-save on idempotent text edits** (e.g. keep-alive loop on an
-  auto-saving DataAnnotation form): some auto-save logic diffs against the last-saved
+  auto-saving long-form review dashboard): some auto-save logic diffs against the last-saved
   value and skips no-op writes. To force a real save on each tick without changing
   visible content, toggle a trailing space — add when absent, remove when present.
   `fill_input` value comparison handles both directions transparently. **Caveat:**
@@ -234,7 +234,7 @@ to the user" usually benefits from the path + `save_to`.
 - Prefer `scroll_to_element("label text or #selector")` whenever you know which field or
   section you need — it scrolls precisely, pierces closed shadow roots (Radix portals,
   Stencil/Lit), and walks overflow:auto/scroll ancestors so inner scroll panes actually
-  move (the Outlier inner-pane case where document.body.scrollHeight is tiny but the
+  move (the tall-inner-pane case where document.body.scrollHeight is tiny but the
   inner scroll container is 15000+px tall).
 - For multi-session tasks (long forms that may exceed context), call `save_page_state()` as a
   checkpoint. A future session can call `restore_page_state()` to reload all field values.
@@ -267,8 +267,9 @@ Reach for these BEFORE `get_page_text` / a full `get_form_fields()` inventory wh
   `document.readyState === "complete"`, no visible spinner element, and 250ms of mutation
   quiet. If a spinner is still on screen at the end of the window, the response carries
   `stuck_spinner: true` — that's the signal to navigate elsewhere instead of retrying the
-  same dead route (Outlier `/en/expert/tasks` pattern). Pass `expect_selector` to wait for
-  a known-good element before considering the page settled.
+  same dead route (SPAs that leave a permanent spinner when the underlying API request
+  dies). Pass `expect_selector` to wait for a known-good element before considering the
+  page settled.
 - `switch_to_tab("1")` switches by tab number; `switch_to_tab("form")` matches by URL or title substring.
 - `close_tab(query)` closes a tab by number / URL substring / title substring; omit query to
   close the active tab. `close_other_tabs(keep_query?)` closes every tab except the active
@@ -311,7 +312,7 @@ screenshot to check what happened.
 2. `react_set_input("input[name=...]", value)` — uses the input's own prototype to set the value, dispatches input/change. Handles the "Illegal invocation" iframe gotcha and the prototype-from-instance ceremony for you.
 3. If the site rejects programmatic input (isTrusted check, shadow DOM, custom editors):
    - `type_text("new value", into_selector="textarea[name=…]", clear_first=true)` — focuses the element (shadow-piercing) and types via CDP trusted keyboard events in one call. Replaces the old `click_element` → `execute_script selectAll` → `type_text` sequence.
-4. For tiptap / ProseMirror editors (Outlier task prompts, dense rich-text fields):
+4. For tiptap / ProseMirror editors (dense rich-text fields, knowledge-base style prompts):
    - `fill_input("editor label", "new value")` first — tiptap/ProseMirror is auto-detected and filled via focus → selectAll → insertText with input/change dispatch.
    - If that fails, `type_text("new value", into_selector=".ProseMirror", clear_first=true)`.
 5. For iframe-hosted contenteditable rich-text editors (eBay's description, etc.):
@@ -345,7 +346,7 @@ Mirror of `find_text`'s `scope_selector`. When the scope doesn't match anything,
 
 **`switch_to_tab` accepts `tab` as a synonym for `query`**: `switch_to_tab({tab: 1})`, `switch_to_tab({tab: "github"})`, and `switch_to_tab({query: "github"})` all work. Use whichever reads more naturally — `tab` for indices, `query` for substring matches.
 
-**`click_element` returned silently_rejected (anti-bot fast-fail)**: after dispatch, chromeflow runs a 1500ms activity probe (DOM mutations, focus change, URL change, value/checked change, alert/toast/modal appearance). When the probe sees 0 activity, the click was silently rejected by anti-bot detection (Outlier task UI, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success). The response carries `silently_rejected: true` and the message ends with "Switch to highlight_region + wait_for_click so the user's real gesture fires the action." Do NOT retry the same `click_element` — re-targeting won't help. Pre-fill any related fields, then `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
+**`click_element` returned silently_rejected (anti-bot fast-fail)**: after dispatch, chromeflow runs a 1500ms activity probe (DOM mutations, focus change, URL change, value/checked change, alert/toast/modal appearance). When the probe sees 0 activity, the click was silently rejected by anti-bot detection (isTrusted-strict React UIs, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success). The response carries `silently_rejected: true` and the message ends with "Switch to highlight_region + wait_for_click so the user's real gesture fires the action." Do NOT retry the same `click_element` — re-targeting won't help. Pre-fill any related fields, then `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
 
 **`try_fiber: true` as a last resort on React-heavy SPAs**: when `silently_rejected: true` keeps recurring on a known React site and `highlight_region + wait_for_click` is not yet an option, pass `click_element(..., try_fiber: true)`. After the activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest `__reactProps$.onClick` prop, and invokes it directly with a minimal synthetic event. The response carries `fiber_attempted: true` so you can tell the path was taken. Do NOT default this on every click — fiber-prop walking is undocumented, may misbehave on mangled production builds, and a real `silently_rejected` is sometimes a captcha deliberately wanting a human gesture. Reserve for repeat rejections on a known-safe React site.
 
@@ -353,7 +354,7 @@ Mirror of `find_text`'s `scope_selector`. When the scope doesn't match anything,
 
 **`click_element` response carries `focused_after`**: after every click, the response includes `focused_after: {tag, id, name, type, aria_label, value_preview}` (or null when focus stayed on body). The agent-facing text appends a `→ Focused: <tag …>` line when focus landed on a non-button/link element — useful to know whether to chain `type_text` on the now-focused field.
 
-**Anti-bot silent-click rejection (Outlier task UI, Reddit, X, and similar handlers, captcha forms)**: these platforms silently reject synthetic clicks on action buttons. Don't attempt automation here. The pattern:
+**Anti-bot silent-click rejection (isTrusted-strict React UIs, Reddit, X, and similar handlers, captcha forms)**: these platforms silently reject synthetic clicks on action buttons. Don't attempt automation here. The pattern:
 1. `get_form_fields()` to inventory and pre-fill anything Claude can fill (descriptions, prompts, dropdowns).
 2. `highlight_region(selector, "Click to submit")` on the action button.
 3. `wait_for_click()` — the user's real gesture fires the submit.
@@ -374,7 +375,7 @@ set_file_input("Photos", "/path/2.jpg", verify_selector=".photo-thumbnail:nth-of
 ```
 The page-level file count is reported in the response — use it to spot uploaders that consume-and-reset the input vs uploaders that keep the file there.
 
-**Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots. `wait_for_selector` pierces open shadow roots, so a selector inside a web component (Outlier task UI, Lit/Stencil widget) matches without ceremony.
+**Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots. `wait_for_selector` pierces open shadow roots, so a selector inside a web component (Lit/Stencil/Radix widget) matches without ceremony.
 
 **Waiting for a shadow host's tree to attach** (e.g. SPA route flips where `<my-host>` appears 10s before its shadow content hydrates, and `wait_for_selector("my-host")` resolves while `host.shadowRoot` is still null): pass `shadow_root=true`. The wait then requires the matched element's `.shadowRoot` to be non-null, not just for the host element to exist.
 ```
@@ -392,9 +393,9 @@ window.confirm = () => true;
 ```
 Then trigger the action (e.g. `click_element("Save As")`). Caveats:
 - The override is a property on `window`; content-script reload after a navigation wipes it. **Re-install after every navigation** that re-loads the page modules.
-- This only intercepts the browser-native `window.prompt()` / `window.confirm()` / `window.alert()` triad. For **in-page DOM modals** (Radix dialogs, Headless UI modals, Stripe drawers, the DataAnnotation force-submit modal), the modal is regular DOM and `window.prompt` overrides do nothing. Click the modal's button directly via `click_element` or `react_call_prop`, and fill its textarea via `fill_input`.
+- This only intercepts the browser-native `window.prompt()` / `window.confirm()` / `window.alert()` triad. For **in-page DOM modals** (Radix dialogs, Headless UI modals, Stripe drawers, custom force-submit confirms), the modal is regular DOM and `window.prompt` overrides do nothing. Click the modal's button directly via `click_element` or `react_call_prop`, and fill its textarea via `fill_input`.
 
-**React Select / custom styled dropdowns** (e.g. "Select..." components on DataAnnotation):
+**React Select / custom styled dropdowns** (the "Select..." pattern):
 `click_element` and `fill_input` do NOT work on these — they intercept native events. The cleanest path is `react_set_input` (which handles the prototype-from-instance setter for you) followed by a click on the filtered option:
 
 ```
@@ -485,8 +486,9 @@ auto-handles this for native `<input type=radio>` and `<input type=checkbox>` in
 
 You only need to drop into `execute_script` for the no-native-input case below.
 
-**Shadow DOM `[role=radio]` / role-only custom radios silently no-op**: On sites like
-Outlier where the radio is a `[role=radio]` div with no underlying `<input>`,
+**Shadow DOM `[role=radio]` / role-only custom radios silently no-op**: on sites
+where the radio is a `[role=radio]` div with no underlying `<input>` (Radix UI
+without the native-input adapter, custom React role-only widgets),
 `click_element`'s native-input fallback can't help — the click target has no `.checked`
 property to verify. Two things must be true: (a) the element must be scrolled into view
 FIRST (`scrollIntoView({block:'center'})`), and (b) the full pointer-event chain must

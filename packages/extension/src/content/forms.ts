@@ -8,8 +8,7 @@
  *
  * All queries pierce open AND closed shadow roots via queryAllDeep so form
  * fields rendered inside Radix UI portals, Stencil/Lit web components, or
- * other shadow-host wrappers are reachable (Outlier task UI is the
- * canonical case).
+ * other shadow-host wrappers are reachable.
  */
 
 import { queryAllDeep } from "./shadow.js";
