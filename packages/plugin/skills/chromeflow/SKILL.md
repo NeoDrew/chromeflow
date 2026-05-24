@@ -310,7 +310,7 @@ screenshot to check what happened.
 **`fill_input` matched the wrong field** (always read the response — it names the matched element):
 - If you wanted "Ad rate" and got back `<input name="title">`, the fuzzy text walker latched onto a neighbour. Retry with `exact=true` and a more specific hint, or use `fill_input(selector=...)` with a precise CSS selector.
 - The match-strength is reported as `aria-eq`, `placeholder-eq`, `name-eq`, `id-eq`, `label-text-eq`, or fuzzier kinds. Anything labeled `fuzzy-text-walk` or `*-includes` is the lowest-confidence kind — verify the matched element really was what you wanted.
-- **Ambiguous fuzzy matches are now refused** rather than silently picking the first candidate. When 2+ inputs would match via fuzzy-text-walk and no explicit `nth` was passed, `fill_input` returns success=false with a `Candidates:` list — disambiguate via `exact: true`, an explicit `nth`, or `selector="<css>"`. This prevents the "overwrote the wrong textarea" bug on forms with multiple rationale-style fields.
+- **Ambiguous fuzzy matches are now refused** rather than silently picking the first candidate. When 2+ inputs would match via fuzzy-text-walk and no explicit `nth` was passed, `fill_input` returns success=false with a `Candidates:` list — disambiguate via `exact: true`, an explicit `nth`, or `selector="<css>"`. This prevents the "overwrote the wrong textarea" bug on forms with multiple similarly-labeled open-text fields.
 
 **`fill_input` not found or rejected by the page:**
 1. `click_element(hint)` to focus the field, then retry `fill_input`
@@ -338,10 +338,10 @@ click_element("Submit", until_url_changes=true)   — ANY URL change. Use when t
 
 If success=false: try `fill_input(selector=...)` to fire the click via the page's own React handler, or use `execute_script("document.querySelector(...).click()")` directly.
 
-**`click_element` nth across the whole document — scope it to a section**: when a long form has the same label per section (one "Minor Issue(s)" radio per evaluation axis), pass `within_selector` to restrict candidate counting to a CSS scope, or `near_text` to scope to the nearest container whose heading starts with the given text:
+**`click_element` nth across the whole document — scope it to a section**: when a long form has the same label per section (one "Approve" radio per row), pass `within_selector` to restrict candidate counting to a CSS scope, or `near_text` to scope to the nearest container whose heading starts with the given text:
 ```
-click_element("Minor Issue(s)", nth=1, within_selector="#response-b-style")
-click_element("Minor Issue(s)", nth=1, near_text="RESPONSE B - Style")
+click_element("Approve", nth=1, within_selector="#section-b")
+click_element("Approve", nth=1, near_text="Section B")
 ```
 Mirror of `find_text`'s `scope_selector`. When the scope doesn't match anything, the response carries `scope_missed: true` so callers can branch.
 
@@ -506,7 +506,7 @@ fire — not just `click()`:
 After scroll, re-query the radio list — its length may change as more content becomes
 visible. Then verify `aria-checked === "true"` before moving on.
 
-**Visibility-detection overlays** (e.g. Multimango's "Content Hidden" black overlay):
+**Visibility-detection overlays** (sites that black out the page when the tab loses focus):
 Some sites render a full-screen overlay when the tab loses focus, triggered by
 `document.visibilityState` / `document.hidden`. Chromeflow tab-switching triggers it.
 Workaround — remove the overlay and patch the APIs:

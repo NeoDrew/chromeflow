@@ -636,7 +636,7 @@ fire — not just `click()`:
 After scroll, re-query the radio list — its length may change as more content becomes
 visible. Then verify `aria-checked === "true"` before moving on.
 
-**Visibility-detection overlays** (e.g. Multimango's "Content Hidden" black overlay):
+**Visibility-detection overlays** (sites that black out the page when the tab loses focus):
 Some sites render a full-screen overlay when the tab loses focus, triggered by
 `document.visibilityState` / `document.hidden`. Chromeflow tab-switching triggers it.
 Workaround — remove the overlay and patch the APIs:
