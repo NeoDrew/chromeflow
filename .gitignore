@@ -219,3 +219,6 @@ ChromeFlowIssues.md
 # macOS Finder metadata
 .DS_Store
 
+# Node
+node_modules/
+
