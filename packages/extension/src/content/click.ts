@@ -15,10 +15,11 @@ import { markerIds } from "../markers.js";
  * interprets the click as a deselect (common on React-controlled form widgets).
  */
 export function prepareClickTarget(
-  textHint: string,
+  textHint: string | undefined,
   nth?: number,
   within_selector?: string,
   near_text?: string,
+  selector?: string,
 ): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean; nextCandidate?: string; scope_missed?: boolean } {
   // Clear any stale tags from a previous click
   document.querySelectorAll(`[${markerIds.clickTargetAttr()}]`).forEach((el) => el.removeAttribute(markerIds.clickTargetAttr()));
@@ -43,27 +44,45 @@ export function prepareClickTarget(
     scope = sectionScope;
   }
 
-  const lower = textHint.toLowerCase().trim();
-  const matches = findClickableAll(lower, scope);
-  // Merged list: visible first, hidden last. nth=N picks the Nth across the
-  // merged list — so if a flair-dropdown's hidden "Post this video as a GIF"
-  // was previously match #1, the visible "Post" button now wins #1 instead.
-  const merged = [...matches.visible, ...matches.hidden];
-  const idx = (nth && nth >= 1 ? nth : 1) - 1;
-  const el = merged[idx];
+  // Selector mode: skip textHint matcher, target by CSS selector directly via
+  // queryAllDeep so open AND closed shadow roots are pierced. Use when the
+  // target has no usable visible text (Reddit collapsed composer placeholder,
+  // icon-only buttons, drop-zone overlays).
+  let el: Element | undefined;
+  let nextCandidate: string | undefined;
+  let descriptor: string;
+  if (selector) {
+    const matches = queryAllDeep(scope, selector);
+    const idx = (nth && nth >= 1 ? nth : 1) - 1;
+    el = matches[idx];
+    descriptor = `selector "${selector}"`;
+    if (!el) {
+      return { success: false, message: `No element matched ${descriptor}${matches.length > 0 ? ` at nth=${nth ?? 1} (found ${matches.length} total)` : ""}` };
+    }
+  } else {
+    const lower = (textHint ?? "").toLowerCase().trim();
+    const matches = findClickableAll(lower, scope);
+    // Merged list: visible first, hidden last. nth=N picks the Nth across the
+    // merged list — so if a flair-dropdown's hidden "Post this video as a GIF"
+    // was previously match #1, the visible "Post" button now wins #1 instead.
+    const merged = [...matches.visible, ...matches.hidden];
+    const idx = (nth && nth >= 1 ? nth : 1) - 1;
+    el = merged[idx];
+    descriptor = `"${textHint ?? ""}"`;
 
-  if (!el) {
-    return { success: false, message: `No clickable element found for "${textHint}"` };
+    if (!el) {
+      return { success: false, message: `No clickable element found for ${descriptor}` };
+    }
+
+    // If the resolved target is in the hidden bucket BUT there's a visible
+    // alternative, surface it in nextCandidate so the caller can suggest a
+    // retry. The 0×0/hidden refusal at the background-script level uses this
+    // to give an actionable error message.
+    const isHidden = !matches.visible.includes(el);
+    nextCandidate = isHidden && matches.visible[0]
+      ? describeCandidate(matches.visible[0], textHint ?? "")
+      : undefined;
   }
-
-  // If the resolved target is in the hidden bucket BUT there's a visible
-  // alternative, surface it in nextCandidate so the caller can suggest a
-  // retry. The 0×0/hidden refusal at the background-script level uses this
-  // to give an actionable error message.
-  const isHidden = !matches.visible.includes(el);
-  const nextCandidate = isHidden && matches.visible[0]
-    ? describeCandidate(matches.visible[0], textHint)
-    : undefined;
 
   const checkable = resolveCheckableInput(el);
 
@@ -73,7 +92,8 @@ export function prepareClickTarget(
     const label =
       (el as HTMLElement).innerText?.trim() ||
       el.getAttribute("aria-label") ||
-      textHint;
+      textHint ||
+      descriptor;
     return { success: true, skipClick: true, message: `"${label}" — radio already checked, click skipped`, label };
   }
 
@@ -96,7 +116,8 @@ export function prepareClickTarget(
   const label =
     (el as HTMLElement).innerText?.trim() ||
     el.getAttribute("aria-label") ||
-    textHint;
+    textHint ||
+    descriptor;
 
   return { success: true, message: `Target prepared: "${label}"`, x, y, width: rect.width, height: rect.height, label, nextCandidate };
 }

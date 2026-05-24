@@ -5,7 +5,13 @@ import type { WsBridge } from "../ws-bridge.js";
 export function registerFlowTools(server: McpServer, bridge: WsBridge) {
   server.tool(
     "click_element",
-    `Click an interactive element by its visible text or aria-label. Optionally pass an until_* clause to verify the click took effect:
+    `Click an interactive element by its visible text/aria-label (textHint) OR by direct CSS selector (selector). Pass exactly one.
+
+\`textHint\` mode: fuzzy-rank against visible text, aria-label, button content. Ranks visible candidates ahead of hidden.
+
+\`selector\` mode: pierces open AND closed shadow roots via queryAllDeep. Use when the target has no visible text (icon buttons, custom-element placeholders like Reddit's collapsed comment composer, drop-zone overlays). Skips the textHint matcher entirely. \`nth\` still picks the Nth match.
+
+Optionally pass an until_* clause to verify the click took effect:
 - until_selector — CSS selector that should appear after the click
 - until_url_contains — substring that should appear in the URL (requires an actual URL change if the substring was already in the pre-click URL)
 - until_text_contains — substring that should appear in page text
@@ -22,8 +28,15 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
     {
       textHint: z
         .string()
+        .optional()
         .describe(
-          "The visible label of the button or link (e.g. 'Save product', 'Continue', 'Add a product', 'Create')"
+          "The visible label of the button or link (e.g. 'Save product', 'Continue', 'Add a product', 'Create'). Exactly one of textHint or selector must be set."
+        ),
+      selector: z
+        .string()
+        .optional()
+        .describe(
+          "CSS selector for the element to click (e.g. 'faceplate-textarea-input', '#open-composer', 'button[aria-label=\"More options\"]'). Pierces open AND closed shadow roots via queryAllDeep. Use when the target has no usable text. Exactly one of textHint or selector must be set."
         ),
       nth: z
         .number()
@@ -70,13 +83,21 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         .optional()
         .describe(`Opt-in last-resort fallback when silently_rejected fires. After the 1500ms activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest \`__reactProps$.onClick\` prop, and invokes it with a minimal synthetic event. Useful on React-heavy SPAs whose action buttons pass through isTrusted=true checks even on CDP events. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this — fiber-prop walking is undocumented and may misbehave on mangled production builds. Reserve for repeat silently_rejected on a known-safe React site.`),
     },
-    async ({ textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber }) => {
+    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber }) => {
+      // Validate exactly-one-of(textHint, selector)
+      if ((!textHint && !selector) || (textHint && selector)) {
+        return {
+          content: [{ type: "text", text: "click_element requires exactly one of textHint or selector" }],
+        };
+      }
+      // Identifier for error messages (which one the caller passed)
+      const targetLabel = textHint ?? `selector="${selector}"`;
       // The WS request must outlive the until-poll, with a buffer for navigation.
       const wsTimeout = Math.max(30_000, (until_timeout_ms ?? 0) + 10_000);
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber },
+          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber },
           wsTimeout
         );
       } catch (err) {
@@ -96,14 +117,14 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
             content: [
               {
                 type: "text",
-                text: `Could not confirm click on "${textHint}": ${errMsg}. The click MAY have already fired — the page just took longer than ${wsTimeout}ms to respond. Verify with get_page_text or wait_for_selector before retrying. Re-clicking can toggle the wrong way on React-controlled radios.${stateLine}`,
+                text: `Could not confirm click on "${targetLabel}": ${errMsg}. The click MAY have already fired — the page just took longer than ${wsTimeout}ms to respond. Verify with get_page_text or wait_for_selector before retrying. Re-clicking can toggle the wrong way on React-controlled radios.${stateLine}`,
               },
             ],
           };
         }
         return {
           content: [
-            { type: "text", text: `Could not click "${textHint}": ${errMsg}` },
+            { type: "text", text: `Could not click "${targetLabel}": ${errMsg}` },
           ],
         };
       }
@@ -148,7 +169,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
           content: [
             {
               type: "text",
-              text: `Could not click "${textHint}": ${r.message}${navLine}${focusLine}`,
+              text: `Could not click "${targetLabel}": ${r.message}${navLine}${focusLine}`,
             },
           ],
         };

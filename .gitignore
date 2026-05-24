@@ -222,3 +222,4 @@ ChromeFlowIssues.md
 # Node
 node_modules/
 
+.reddit*

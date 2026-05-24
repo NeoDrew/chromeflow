@@ -119,10 +119,11 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "prepare_click_target": {
       const result = prepareClickTarget(
-        msg.textHint as string,
+        msg.textHint as string | undefined,
         msg.nth as number | undefined,
         msg.within_selector as string | undefined,
         msg.near_text as string | undefined,
+        msg.selector as string | undefined,
       );
       return { type: "action_done", requestId: msg.requestId, ...result };
     }

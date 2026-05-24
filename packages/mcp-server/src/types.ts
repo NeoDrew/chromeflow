@@ -30,7 +30,8 @@ export type ServerMessage =
   | {
       type: "click_element";
       requestId: string;
-      textHint: string;
+      textHint?: string;
+      selector?: string;
       nth?: number;
       until_selector?: string;
       until_url_contains?: string;
@@ -42,7 +43,7 @@ export type ServerMessage =
       near_text?: string;
       try_fiber?: boolean;
     }
-  | { type: "prepare_click_target"; requestId: string; textHint: string; nth?: number; within_selector?: string; near_text?: string }
+  | { type: "prepare_click_target"; requestId: string; textHint?: string; selector?: string; nth?: number; within_selector?: string; near_text?: string }
   | { type: "post_click_inspect"; requestId: string }
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
   | { type: "get_page_text"; requestId: string; selector?: string; startIndex?: number }
