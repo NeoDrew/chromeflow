@@ -1603,6 +1603,7 @@ async function handleMcpMessage(msg: {
           type: "prepare_click_target",
           requestId: msg.requestId,
           textHint: msg.textHint,
+          selector: msg.selector,
           nth: msg.nth,
           within_selector: msg.within_selector,
           near_text: msg.near_text,
@@ -1644,6 +1645,7 @@ async function handleMcpMessage(msg: {
             type: "prepare_click_target",
             requestId: msg.requestId + "-advance",
             textHint: msg.textHint,
+            selector: msg.selector,
             // Skip the hidden first match by asking for nth=2 — findClickableAll
             // ranks visible candidates before hidden ones, so nth=2 lands on
             // the first visible peer (or a later visible candidate if there
@@ -1685,6 +1687,15 @@ async function handleMcpMessage(msg: {
       // On isTrusted-strict sites, synthetic clicks are ignored but
       // CDP-dispatched events pass. Falls back to the content script's
       // synthetic-click path on chrome:// pages or debugger failure.
+      //
+      // ANTI-BOT BYPASS: stricter Web Components (Reddit's faceplate-*, Twitter's
+      // tweet composer, etc.) check `event instanceof PointerEvent && event.isPrimary`
+      // in addition to isTrusted. The default Input.dispatchMouseEvent fires only
+      // MouseEvent, NOT PointerEvent. We pass pointerType="mouse" which makes
+      // Chrome fire PointerEvent alongside (isPrimary=true, pointerId=1, plus
+      // a realistic pressure value via `force`). Combined with the bezier
+      // trajectory, settle hover, and post-click jitter, this passes
+      // every behavioral check we've seen short of OS-level input.
       let result: { success: boolean; message: string };
       let usedCdp = false;
 
@@ -1697,6 +1708,11 @@ async function handleMcpMessage(msg: {
             };
             const cx = Math.round(prep.x!);
             const cy = Math.round(prep.y!);
+
+            // Realistic pointer params for every event — pointerType makes
+            // Chrome fire PointerEvent (with isPrimary=true), force gives
+            // a non-zero pressure that real mice report.
+            const ptr = { pointerType: "mouse" as const, force: 0.5 };
 
             // Build a curved path from an offset start point to the target,
             // using a quadratic bezier with a random control point. Humans
@@ -1723,19 +1739,50 @@ async function handleMcpMessage(msg: {
               const bx = Math.round((1 - t) * (1 - t) * sx + 2 * (1 - t) * t * ctlX + t * t * cx);
               const by = Math.round((1 - t) * (1 - t) * sy + 2 * (1 - t) * t * ctlY + t * t * cy);
               await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-                type: "mouseMoved", x: bx, y: by, button: "none", clickCount: 0,
+                type: "mouseMoved", x: bx, y: by, button: "none", clickCount: 0, ...ptr,
               });
               // Slight ease-out: gaps shorter in the middle, longer at the ends
               await new Promise((r) => setTimeout(r, 8 + Math.random() * 14));
             }
+
+            // Settle hover: 3 small jitter moves around the target. A real
+            // human's hand has micro-tremor — the cursor never lands perfectly
+            // still. Sites looking for "cursor froze at the exact target pixel
+            // 0ms before click" reject the synthetic case; this defeats it.
+            for (let j = 0; j < 3; j++) {
+              const jx = cx + Math.round((Math.random() - 0.5) * 4);
+              const jy = cy + Math.round((Math.random() - 0.5) * 4);
+              await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+                type: "mouseMoved", x: jx, y: jy, button: "none", clickCount: 0, ...ptr,
+              });
+              await new Promise((r) => setTimeout(r, 20 + Math.random() * 30));
+            }
+
             // Small settle pause before the press
             await new Promise((r) => setTimeout(r, 25 + Math.random() * 40));
+
+            // Press: fires pointerdown + mousedown (PointerEvent isPrimary=true)
             await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
               type: "mousePressed", x: cx, y: cy, button: "left", clickCount: 1,
+              buttons: 1, ...ptr,
             });
             await new Promise((r) => setTimeout(r, 40 + Math.random() * 60));
+
+            // Release: fires pointerup + mouseup + click (the click event
+            // chain Reddit's expand handler is listening for)
             await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
               type: "mouseReleased", x: cx, y: cy, button: "left", clickCount: 1,
+              buttons: 0, ...ptr,
+            });
+
+            // Post-click micro-move. Humans don't freeze the cursor at the
+            // exact click pixel — they continue with tiny motion. Sites that
+            // sample post-click cursor stillness fail synthetic clicks here.
+            await new Promise((r) => setTimeout(r, 30 + Math.random() * 50));
+            const px = cx + Math.round((Math.random() - 0.5) * 6);
+            const py = cy + Math.round((Math.random() - 0.5) * 6);
+            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+              type: "mouseMoved", x: px, y: py, button: "none", clickCount: 0, ...ptr,
             });
           });
           usedCdp = true;
