@@ -14,7 +14,7 @@ export function registerFlowTools(server: McpServer, bridge: WsBridge) {
 
 Returns {success, message, before_url, after_url, navigated}. \`navigated\` is true when the post-click URL differs from the pre-click URL — surfaces silent redirects without a second list_tabs call. Refuses to click 0×0 elements and now ranks visible candidates above hidden when text/aria match; when forced to refuse a hidden element it surfaces the next visible candidate in the error message.
 
-Scope matching with \`within_selector\` or \`near_text\` restricts where matches are searched — useful for long forms with repeated labels per section (e.g. one "Minor Issue(s)" radio per evaluation axis). \`within_selector\` is a CSS selector; \`near_text\` finds the nearest container whose heading starts with the given text.
+Scope matching with \`within_selector\` or \`near_text\` restricts where matches are searched — useful for long forms with repeated labels per section (e.g. one "Approve" radio per row). \`within_selector\` is a CSS selector; \`near_text\` finds the nearest container whose heading starts with the given text.
 
 Shadow DOM (open AND closed) is pierced by default via chrome.dom.openOrClosedShadowRoot — Reddit faceplate-* / r-post-form-submit-button / web-component-heavy SPAs no longer need manual deepFind recipes.
 
@@ -60,7 +60,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       within_selector: z
         .string()
         .optional()
-        .describe('Limit candidate matches to this CSS selector\'s subtree (mirrors find_text\'s scope_selector). Use to scope nth-counting to one section of a long form: click_element("Minor Issue(s)", nth=1, within_selector="#response-b-style"). Returns success=false with scope_missed=true if the selector does not match.'),
+        .describe('Limit candidate matches to this CSS selector\'s subtree (mirrors find_text\'s scope_selector). Use to scope nth-counting to one section of a long form: click_element("Approve", nth=1, within_selector="#section-b"). Returns success=false with scope_missed=true if the selector does not match.'),
       near_text: z
         .string()
         .optional()
