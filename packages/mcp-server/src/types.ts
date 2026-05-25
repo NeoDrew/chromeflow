@@ -304,6 +304,7 @@ export type ClientMessage =
       body_base64?: string;
       truncated: boolean;
       total_bytes: number;
+      anti_bot_detected?: string | null;
     }
   | {
       type: "download_file_response";

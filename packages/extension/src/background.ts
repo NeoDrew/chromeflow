@@ -829,6 +829,55 @@ function isScriptableUrl(url: string | undefined): boolean {
   );
 }
 
+/**
+ * High-confidence anti-bot block-page detection. Runs a regex pass against
+ * response HTML and returns a short human-readable label for the matched
+ * vendor when a block is recognised, or null otherwise.
+ *
+ * Read-only signal: surfaces on open_page and fetch_url responses as
+ * `anti_bot_detected`. Does not change behaviour, does not retry, does not
+ * fire events. The agent reads the field and decides what to do.
+ *
+ * Only Tier-1 structural markers (unique to block pages, virtually zero
+ * false-positive risk). The generic-term and structural-integrity tiers
+ * from crawler libraries are deliberately omitted — they false-positive
+ * on legitimate "Access Denied" articles, login forms, and empty SPA
+ * shells before hydration.
+ */
+function detectAntiBot(html: string): string | null {
+  if (!html || html.length < 50) return null;
+  // Cap the regex pass at 200KB. Block pages are typically tiny; legitimate
+  // SPA shells are huge and would slow scans without informative matches.
+  const slice = html.length > 200_000 ? html.slice(0, 200_000) : html;
+  const patterns: Array<[RegExp, string]> = [
+    // Akamai
+    [/Reference\s*#\s*[\d]+\.[0-9a-f]+\.\d+\.[0-9a-f]+/i, "Akamai block (Reference #)"],
+    [/Pardon\s+Our\s+Interruption/i, "Akamai challenge (Pardon Our Interruption)"],
+    // Cloudflare
+    [/challenge-form[\s\S]*?__cf_chl_f_tk=/i, "Cloudflare challenge form"],
+    [/<span\s+class="cf-error-code">\d{4}<\/span>/i, "Cloudflare firewall block"],
+    [/\/cdn-cgi\/challenge-platform\/\S+orchestrate/i, "Cloudflare JS challenge"],
+    // PerimeterX / HUMAN
+    [/window\._pxAppId\s*=/i, "PerimeterX block"],
+    [/captcha\.px-cdn\.net/i, "PerimeterX captcha"],
+    // DataDome
+    [/captcha-delivery\.com/i, "DataDome captcha"],
+    // Imperva / Incapsula
+    [/_Incapsula_Resource/i, "Imperva/Incapsula block"],
+    [/Incapsula\s+incident\s+ID/i, "Imperva/Incapsula incident"],
+    // Sucuri
+    [/Sucuri\s+WebSite\s+Firewall/i, "Sucuri firewall block"],
+    // Kasada
+    [/KPSDK\.scriptStart\s*=\s*KPSDK\.now\(\)/i, "Kasada challenge"],
+    // Network security block (Reddit-style large SPA shell with the message buried in)
+    [/blocked\s+by\s+network\s+security/i, "Network security block"],
+  ];
+  for (const [re, label] of patterns) {
+    if (re.test(slice)) return label;
+  }
+  return null;
+}
+
 async function forwardToContentScript(
   tab: chrome.tabs.Tab,
   msg: object
@@ -1046,6 +1095,22 @@ async function handleMcpMessage(msg: {
         } catch { /* non-scriptable or unloaded — skip settle check */ }
       }
 
+      // Anti-bot block-page detection: read the page's outerHTML (capped at
+      // 200KB) and regex against the Tier-1 vendor patterns. Read-only
+      // signal; no behaviour change. Field is null/absent when nothing
+      // matches, which is the common case.
+      let antiBotDetected: string | null = null;
+      if (targetTab.id && isScriptableUrl(targetTab.url ?? targetUrl)) {
+        try {
+          const r = await chrome.scripting.executeScript({
+            target: { tabId: targetTab.id },
+            func: () => document.documentElement.outerHTML.slice(0, 200_000),
+          });
+          const html = r[0]?.result as string | undefined;
+          if (html) antiBotDetected = detectAntiBot(html);
+        } catch { /* best-effort */ }
+      }
+
       if (stuckSpinner || (expectSelector && expectSelectorAppeared === false)) {
         // Caller decides whether to navigate elsewhere — we don't auto-reload
         // because the same page might just need a few more seconds.
@@ -1055,9 +1120,10 @@ async function handleMcpMessage(msg: {
           spinner_selector: spinnerSelector,
           expect_selector_appeared: expectSelectorAppeared,
           current_url: currentUrl,
+          anti_bot_detected: antiBotDetected,
         };
       }
-      return { type: "action_done", current_url: currentUrl };
+      return { type: "action_done", current_url: currentUrl, anti_bot_detected: antiBotDetected };
     }
 
     case "switch_to_tab": {
@@ -3505,6 +3571,13 @@ async function handleMcpMessage(msg: {
         };
       }
       const body_text = new TextDecoder("utf-8", { fatal: false }).decode(clipped);
+      // Anti-bot detection on text/html responses only (skip for json/xml/etc).
+      // Useful when fetch_url lands on a Cloudflare challenge page instead of
+      // the expected JSON body — surfaces the block as a structured signal so
+      // the caller doesn't waste a debugging cycle on "why is my parse failing".
+      const antiBotDetected = /text\/html/i.test(contentType)
+        ? detectAntiBot(body_text)
+        : null;
       return {
         type: "fetch_url_response",
         requestId: msg.requestId,
@@ -3515,6 +3588,7 @@ async function handleMcpMessage(msg: {
         body_text,
         truncated,
         total_bytes: totalBytes,
+        anti_bot_detected: antiBotDetected,
       };
     }
 

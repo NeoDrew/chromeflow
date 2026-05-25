@@ -24826,6 +24826,11 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
 
 \u26A0 expect_selector "${expect_selector}" never appeared within the 6s settle window. The page may be partially loaded or stuck.`;
       }
+      if (r.anti_bot_detected) {
+        text += `
+
+\u26A0 anti_bot_detected: "${r.anti_bot_detected}" \u2014 the page returned a known block / challenge response. Page content is unlikely to be the intended target. Don't try to interact with it; navigate elsewhere or surface to the user.`;
+      }
       return { content: [{ type: "text", text }] };
     }
   );
@@ -25589,6 +25594,8 @@ Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is r
       }, wsTimeout);
       if (response.type !== "fetch_url_response") throw new Error(`Unexpected response: ${response.type}`);
       const r = response;
+      const antiBotLine = r.anti_bot_detected ? `
+\u26A0 anti_bot_detected: "${r.anti_bot_detected}" \u2014 response body matches a known block / challenge page. Don't parse as the expected JSON/HTML; the user's IP may be challenged or the endpoint may require a real browser context.` : "";
       if (to_file) {
         const cwd = process.cwd();
         const resolved = isAbsolute(to_file) ? to_file : resolve(cwd, to_file);
@@ -25607,14 +25614,14 @@ Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is r
             type: "text",
             text: `HTTP ${r.status} ${r.status_text} \u2014 ${r.content_type || "no content-type"} \u2014 ${r.total_bytes} bytes
 Written to: ${resolved}
-Size on disk: ${buf.byteLength}
+Size on disk: ${buf.byteLength}${antiBotLine}
 
 Headers:
 ${hdrLines}`
           }]
         };
       }
-      const header = `HTTP ${r.status} ${r.status_text} \u2014 ${r.content_type || "no content-type"} \u2014 ${r.total_bytes} bytes${r.truncated ? ` (truncated to ${max_bytes ?? 1e5}; set to_file=<path> to capture the full ${r.total_bytes} bytes)` : ""}`;
+      const header = `HTTP ${r.status} ${r.status_text} \u2014 ${r.content_type || "no content-type"} \u2014 ${r.total_bytes} bytes${r.truncated ? ` (truncated to ${max_bytes ?? 1e5}; set to_file=<path> to capture the full ${r.total_bytes} bytes)` : ""}${antiBotLine}`;
       const bodyPart = r.body_base64 ? `
 
 [base64, ${r.body_base64.length} chars]
@@ -26048,7 +26055,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // ../mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.10.0" : "dev";
+var PACKAGE_VERSION = true ? "0.10.1" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

@@ -412,7 +412,11 @@ Set binary=true for non-text responses (PDFs, images, zips) — the body is retu
         body_base64?: string;
         truncated: boolean;
         total_bytes: number;
+        anti_bot_detected?: string | null;
       };
+      const antiBotLine = r.anti_bot_detected
+        ? `\n⚠ anti_bot_detected: "${r.anti_bot_detected}" — response body matches a known block / challenge page. Don't parse as the expected JSON/HTML; the user's IP may be challenged or the endpoint may require a real browser context.`
+        : "";
 
       // to_file path: write bytes to disk, return metadata only.
       if (to_file) {
@@ -433,12 +437,12 @@ Set binary=true for non-text responses (PDFs, images, zips) — the body is retu
         return {
           content: [{
             type: "text",
-            text: `HTTP ${r.status} ${r.status_text} — ${r.content_type || "no content-type"} — ${r.total_bytes} bytes\nWritten to: ${resolved}\nSize on disk: ${buf.byteLength}\n\nHeaders:\n${hdrLines}`,
+            text: `HTTP ${r.status} ${r.status_text} — ${r.content_type || "no content-type"} — ${r.total_bytes} bytes\nWritten to: ${resolved}\nSize on disk: ${buf.byteLength}${antiBotLine}\n\nHeaders:\n${hdrLines}`,
           }],
         };
       }
 
-      const header = `HTTP ${r.status} ${r.status_text} — ${r.content_type || "no content-type"} — ${r.total_bytes} bytes${r.truncated ? ` (truncated to ${max_bytes ?? 100_000}; set to_file=<path> to capture the full ${r.total_bytes} bytes)` : ""}`;
+      const header = `HTTP ${r.status} ${r.status_text} — ${r.content_type || "no content-type"} — ${r.total_bytes} bytes${r.truncated ? ` (truncated to ${max_bytes ?? 100_000}; set to_file=<path> to capture the full ${r.total_bytes} bytes)` : ""}${antiBotLine}`;
       const bodyPart = r.body_base64
         ? `\n\n[base64, ${r.body_base64.length} chars]\n${r.body_base64}`
         : r.body_text !== undefined
