@@ -25100,7 +25100,9 @@ ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
   );
   server.tool(
     "type_text",
-    `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). Pass \`into_selector\` to focus the target before typing (shadow-piercing CSS) \u2014 combined with \`clear_first: true\`, this collapses the old "wait_for_click \u2192 execute_script selectAll \u2192 type_text" pattern into a single call. Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.`,
+    `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). Pass \`into_selector\` to focus the target before typing (shadow-piercing CSS) \u2014 combined with \`clear_first: true\`, this collapses the old "wait_for_click \u2192 execute_script selectAll \u2192 type_text" pattern into a single call. Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.
+
+**TipTap / ProseMirror auto-recovery**: when \`into_selector\` targets a contenteditable inside a \`.tiptap\` / \`.ProseMirror\` / \`[data-tiptap-editor]\` ancestor, type_text verifies post-type that the text actually landed. If tiptap's internal state machine silently dropped the CDP keystrokes (a known failure mode where the editor reverts to placeholder a few seconds later), type_text automatically re-fills via \`document.execCommand('insertText', ...)\` which tiptap accepts. The response message records "TipTap/ProseMirror silently dropped..., recovered via execCommand insertText" when this fired.`,
     {
       text: external_exports.string().describe("The text to type into the focused element"),
       into_selector: external_exports.string().optional().describe(
@@ -25779,11 +25781,12 @@ Pass \`since: "now"\` in text mode to skip the initial check and only resolve on
       regex: external_exports.boolean().optional().describe("Text mode: interpret query (each entry, if an array) as a case-insensitive regex."),
       frame: external_exports.string().optional().describe("Same-origin iframe CSS selector to wait inside (text mode)."),
       since: external_exports.enum(["now"]).optional().describe(`Text mode: gate on a NEW mutation. Skips the initial check so already-present matches don't short-circuit. Use when the page keeps stale text in the DOM after a route change (e.g. stacked instruction panels) and you need to wait for the next render.`),
+      whole_word: external_exports.boolean().optional().describe(`Text mode: gate matches on word boundaries. Use for common English words ("Live", "New", "Done") that would otherwise substring-match unrelated content (e.g. "Live" matching "delivery"). Default false.`),
       settle_ms: external_exports.number().int().optional().describe("change_in mode: ms to wait after the first mutation for batching (default 150)."),
       max_chars: external_exports.number().int().min(50).optional().describe("change_in mode: cap the returned text content (default 1000). Chat-style mutations can dump huge text; agents that need more should opt in explicitly.")
     },
     async (args) => {
-      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, since, settle_ms, max_chars } = args;
+      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, since, settle_ms, max_chars, whole_word } = args;
       const isTextSet = text !== void 0 && text !== null && !(Array.isArray(text) && text.length === 0) && text !== "";
       const set = [selector, isTextSet ? text : void 0, change_in].filter((v) => v !== void 0 && v !== null && v !== "").length;
       if (set !== 1) {
@@ -25800,7 +25803,7 @@ Pass \`since: "now"\` in text mode to skip the initial check and only resolve on
       }
       if (text !== void 0) {
         const response2 = await bridge.request(
-          { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame, since },
+          { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame, since, whole_word },
           timeoutMs + 5e3
         );
         const r2 = response2;
@@ -25863,9 +25866,10 @@ Scope helpers: \`in_dialog: true\` restricts the search to the topmost open dial
       context_chars: external_exports.number().int().min(0).optional().describe("Surrounding context chars per match (default 40)."),
       frame: external_exports.string().optional().describe("Same-origin iframe CSS selector to search inside."),
       in_dialog: external_exports.boolean().optional().describe("Scope to the topmost open [role=dialog] / [role=alertdialog] / <dialog open>. Mirrors click_element."),
-      dialog_query: external_exports.string().optional().describe("Scope to the dialog whose heading or aria-label contains this substring. Mirrors click_element.")
+      dialog_query: external_exports.string().optional().describe("Scope to the dialog whose heading or aria-label contains this substring. Mirrors click_element."),
+      whole_word: external_exports.boolean().optional().describe(`Gate matches on word boundaries. Use for common English words ("Live", "New", "Done", "Confirm") that would otherwise substring-match unrelated pre-rendered content (e.g. "Live" matching "delivery", "Done" matching "abandoned"). Default false to preserve the substring-by-default contract; flip on whenever your query is a single common word that may also appear inside larger words.`)
     },
-    async ({ query, max, scope_selector, regex, visible_only, context_chars, frame, in_dialog, dialog_query }) => {
+    async ({ query, max, scope_selector, regex, visible_only, context_chars, frame, in_dialog, dialog_query, whole_word }) => {
       const response = await bridge.request({
         type: "find_text",
         query,
@@ -25876,7 +25880,8 @@ Scope helpers: \`in_dialog: true\` restricts the search to the topmost open dial
         context_chars: context_chars ?? 40,
         frame,
         in_dialog,
-        dialog_query
+        dialog_query,
+        whole_word
       });
       const r = response;
       if (r.frame_error) {
@@ -26004,7 +26009,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // ../mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.9.13" : "dev";
+var PACKAGE_VERSION = true ? "0.9.14" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

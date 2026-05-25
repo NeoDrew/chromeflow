@@ -627,7 +627,8 @@ return JSON.stringify(fields);   // write the returned string to a temp file via
 ```
 Restore reverses the process: read JSON, set values, dispatch `input`/`change` events.
 
-**`set_dialog_response` → `execute_script` override** (browser-native dialogs only — see the dedicated section above for full caveats and the in-page DOM modal alternative)
+**`set_dialog_response` no longer exists** (removed in 0.9.4). For native `prompt()` / `confirm()` / `alert()` dialogs, override the global in `execute_script` BEFORE the action that triggers the dialog. Browser-native dialogs only — for in-page DOM modals (Radix, Headless UI), see the dedicated section above and click the modal's button via `click_element` directly.
+
 ```js
 // Before triggering the action that shows a prompt():
 window.prompt = () => 'my response';

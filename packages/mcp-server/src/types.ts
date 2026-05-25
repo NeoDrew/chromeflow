@@ -94,6 +94,7 @@ export type ServerMessage =
       frame?: string;
       in_dialog?: boolean;
       dialog_query?: string;
+      whole_word?: boolean;
     }
   | {
       type: "find_input";
@@ -113,6 +114,7 @@ export type ServerMessage =
       regex?: boolean;
       frame?: string;
       since?: "now";
+      whole_word?: boolean;
     }
   | {
       type: "fetch_url";

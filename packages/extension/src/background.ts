@@ -240,10 +240,15 @@ async function withDebugger<T>(tabId: number, fn: () => Promise<T>): Promise<T> 
   tabDebuggerLocks.set(tabId, lock);
 
   try {
-    // Retry attach up to 3 times with 500ms backoff — another chromeflow
-    // instance (or DevTools) may briefly hold the debugger and release it.
+    // Retry attach up to 5 times with 500ms..2500ms backoff. The most common
+    // failure isn't a real conflict (DevTools, second chromeflow instance) —
+    // it's a transient race inside chromeflow itself where one handler's
+    // detach hasn't propagated yet when the next handler tries to attach.
+    // Bumped from 3 → 5 attempts because the 3-attempt budget (~1.5s) was
+    // tripping on these races even when no real conflict existed.
+    const MAX_ATTEMPTS = 5;
     let lastErr: Error | null = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       try {
         await (chrome.debugger as any).attach({ tabId }, "1.3");
         lastErr = null;
@@ -251,13 +256,13 @@ async function withDebugger<T>(tabId: number, fn: () => Promise<T>): Promise<T> 
       } catch (err) {
         lastErr = err as Error;
         const msg = String(lastErr.message ?? err);
-        if (msg.includes("Another debugger is already attached") && attempt < 2) {
+        if (msg.includes("Another debugger is already attached") && attempt < MAX_ATTEMPTS - 1) {
           await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
           continue;
         }
         if (msg.includes("Another debugger is already attached")) {
           throw new Error(
-            "Another debugger is already attached to this tab after 3 retries. Close Chrome DevTools (Cmd+Opt+I) or ensure the other chromeflow instance is using a separate Chrome window."
+            `Another debugger is already attached to this tab after ${MAX_ATTEMPTS} retries (waited ~7.5s). If you do not have Chrome DevTools open (Cmd+Opt+I) and no other chromeflow instance is using this tab, this is likely a transient internal race — retrying the same call should succeed. If it persists, close DevTools or move the other chromeflow instance to a separate Chrome window.`
           );
         }
         throw err;
@@ -2664,6 +2669,88 @@ async function handleMcpMessage(msg: {
         });
       });
 
+      // TipTap / ProseMirror silent-drop guard: CDP keystrokes land visually
+      // but tiptap's internal state machine doesn't see them as valid input,
+      // so a few hundred ms later the editor reverts to placeholder. We
+      // verify post-type for any into_selector target and, when the editor's
+      // text content is significantly shorter than what we typed AND the
+      // target is inside a recognised rich-text editor, fall back to
+      // execCommand('insertText') which tiptap DOES accept.
+      let tiptapFallback = "";
+      if (intoSelector && intoSelectorOk && !frameSelector) {
+        try {
+          const r = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: (selector: string, expectedText: string) => {
+              function getShadowRoot(el: Element): ShadowRoot | null {
+                const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+                if (chromeDom?.openOrClosedShadowRoot) {
+                  try {
+                    const sr = chromeDom.openOrClosedShadowRoot(el);
+                    if (sr) return sr;
+                  } catch { /* fall through */ }
+                }
+                return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+              }
+              function queryDeep(root: ParentNode, sel: string): Element | null {
+                const direct = root.querySelector(sel);
+                if (direct) return direct;
+                for (const el of Array.from(root.querySelectorAll<Element>("*"))) {
+                  const sr = getShadowRoot(el);
+                  if (sr) {
+                    const found = queryDeep(sr, sel);
+                    if (found) return found;
+                  }
+                }
+                return null;
+              }
+              const target = queryDeep(document, selector);
+              if (!(target instanceof HTMLElement)) return { ok: false };
+              // Walk up to detect ProseMirror / tiptap ancestor.
+              const isProseMirror =
+                target.classList.contains("ProseMirror") ||
+                target.classList.contains("tiptap") ||
+                target.closest?.(".ProseMirror, .tiptap, [data-tiptap-editor]") !== null;
+              const actual = target.isContentEditable
+                ? (target.textContent ?? "")
+                : ((target as HTMLInputElement | HTMLTextAreaElement).value ?? "");
+              // Drop threshold: editor has < 50% of expected content. Stricter
+              // than "0 chars" because tiptap sometimes lands a partial paste
+              // before reverting; < 50% captures both full-drop and partial-drop.
+              const dropped = actual.length < expectedText.length * 0.5;
+              if (!isProseMirror || !dropped) {
+                return { ok: true, fallback: false, isProseMirror, actualLength: actual.length, expectedLength: expectedText.length };
+              }
+              // Fallback: focus, select-all, replace via insertText.
+              target.focus();
+              try { document.execCommand("selectAll"); } catch { /* ignore */ }
+              try { document.execCommand("delete"); } catch { /* ignore */ }
+              try { document.execCommand("insertText", false, expectedText); } catch { /* ignore */ }
+              target.dispatchEvent(new Event("input", { bubbles: true }));
+              target.dispatchEvent(new Event("change", { bubbles: true }));
+              const finalText = target.textContent ?? "";
+              return {
+                ok: true,
+                fallback: true,
+                isProseMirror: true,
+                actualLength: actual.length,
+                expectedLength: expectedText.length,
+                finalLength: finalText.length,
+              };
+            },
+            args: [intoSelector, text],
+          });
+          const v = r[0]?.result as
+            | { ok: false }
+            | { ok: true; fallback: boolean; isProseMirror: boolean; actualLength: number; expectedLength: number; finalLength?: number }
+            | undefined;
+          if (v && v.ok && v.fallback) {
+            tiptapFallback =
+              ` — TipTap/ProseMirror silently dropped the typed text (${v.actualLength}/${v.expectedLength} chars survived), recovered via execCommand insertText (${v.finalLength ?? "?"} chars now in editor)`;
+          }
+        } catch { /* best-effort */ }
+      }
+
       // If we were typing into an iframe, also dispatch input/change on the
       // iframe's focused element. CDP's Runtime.evaluate above runs in the
       // top-level frame's execution context, so events dispatched there don't
@@ -2701,7 +2788,7 @@ async function handleMcpMessage(msg: {
         type: "action_done",
         requestId: msg.requestId,
         success: true,
-        message: `Typed ${text.length} characters via individual keystrokes${frameSelector ? ` into iframe "${frameSelector}"${frameVerify ? " " + frameVerify : ""}` : ""}`,
+        message: `Typed ${text.length} characters via individual keystrokes${frameSelector ? ` into iframe "${frameSelector}"${frameVerify ? " " + frameVerify : ""}` : ""}${tiptapFallback}`,
       };
     }
 

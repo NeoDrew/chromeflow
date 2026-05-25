@@ -284,11 +284,12 @@ Pass \`since: "now"\` in text mode to skip the initial check and only resolve on
       regex: z.boolean().optional().describe("Text mode: interpret query (each entry, if an array) as a case-insensitive regex."),
       frame: z.string().optional().describe("Same-origin iframe CSS selector to wait inside (text mode)."),
       since: z.enum(["now"]).optional().describe(`Text mode: gate on a NEW mutation. Skips the initial check so already-present matches don't short-circuit. Use when the page keeps stale text in the DOM after a route change (e.g. stacked instruction panels) and you need to wait for the next render.`),
+      whole_word: z.boolean().optional().describe(`Text mode: gate matches on word boundaries. Use for common English words ("Live", "New", "Done") that would otherwise substring-match unrelated content (e.g. "Live" matching "delivery"). Default false.`),
       settle_ms: z.number().int().optional().describe("change_in mode: ms to wait after the first mutation for batching (default 150)."),
       max_chars: z.number().int().min(50).optional().describe("change_in mode: cap the returned text content (default 1000). Chat-style mutations can dump huge text; agents that need more should opt in explicitly."),
     },
     async (args) => {
-      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, since, settle_ms, max_chars } = args;
+      const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, since, settle_ms, max_chars, whole_word } = args;
       const isTextSet = text !== undefined && text !== null && !(Array.isArray(text) && text.length === 0) && text !== "";
       const set = [selector, isTextSet ? text : undefined, change_in].filter((v) => v !== undefined && v !== null && v !== "").length;
       if (set !== 1) {
@@ -305,7 +306,7 @@ Pass \`since: "now"\` in text mode to skip the initial check and only resolve on
       }
       if (text !== undefined) {
         const response = await bridge.request(
-          { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame, since },
+          { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame, since, whole_word },
           timeoutMs + 5_000
         );
         const r = response as {
@@ -382,8 +383,9 @@ Scope helpers: \`in_dialog: true\` restricts the search to the topmost open dial
       frame: z.string().optional().describe("Same-origin iframe CSS selector to search inside."),
       in_dialog: z.boolean().optional().describe("Scope to the topmost open [role=dialog] / [role=alertdialog] / <dialog open>. Mirrors click_element."),
       dialog_query: z.string().optional().describe("Scope to the dialog whose heading or aria-label contains this substring. Mirrors click_element."),
+      whole_word: z.boolean().optional().describe(`Gate matches on word boundaries. Use for common English words ("Live", "New", "Done", "Confirm") that would otherwise substring-match unrelated pre-rendered content (e.g. "Live" matching "delivery", "Done" matching "abandoned"). Default false to preserve the substring-by-default contract; flip on whenever your query is a single common word that may also appear inside larger words.`),
     },
-    async ({ query, max, scope_selector, regex, visible_only, context_chars, frame, in_dialog, dialog_query }) => {
+    async ({ query, max, scope_selector, regex, visible_only, context_chars, frame, in_dialog, dialog_query, whole_word }) => {
       const response = await bridge.request({
         type: "find_text",
         query,
@@ -395,6 +397,7 @@ Scope helpers: \`in_dialog: true\` restricts the search to the topmost open dial
         frame,
         in_dialog,
         dialog_query,
+        whole_word,
       });
       const r = response as unknown as {
         matches: Array<{
