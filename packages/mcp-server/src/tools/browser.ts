@@ -219,10 +219,18 @@ Refuses fast on pages that are in fullscreen mode (captureVisibleTab hangs there
         }
       }
 
+      // Viewport / page / scroll metadata footer — lets agents map pixel
+      // positions in the image directly to CSS coordinates for
+      // click_at_coordinates without a separate execute_script probe.
+      const r = response as { viewport?: { width: number; height: number }; page?: { width: number; height: number }; scroll?: { x: number; y: number } };
+      const meta = r.viewport && r.page && r.scroll
+        ? ` viewport=${r.viewport.width}x${r.viewport.height}, page=${r.page.width}x${r.page.height}, scroll=(${r.scroll.x},${r.scroll.y}).`
+        : "";
+
       if (shouldInline) {
         const msg = notes.length
-          ? notes.join(". ") + "."
-          : `Screenshot captured (${response.width}x${response.height}, ${base64Len} base64 chars). Analyze the image to identify element positions for highlighting.`;
+          ? notes.join(". ") + "." + meta
+          : `Screenshot captured (${response.width}x${response.height}, ${base64Len} base64 chars).${meta} Analyze the image to identify element positions for highlighting.`;
         return {
           content: [
             { type: "image", data: response.image, mimeType: "image/png" },
@@ -232,7 +240,7 @@ Refuses fast on pages that are in fullscreen mode (captureVisibleTab hangs there
       }
 
       // Path-only return — image is too large for inline.
-      notes.push(`Image saved to ${landedPath} (${response.width}x${response.height}, ~${Math.round(imageBuffer.byteLength / 1024)}KB) — Read the file or use OS image viewer. To force inline despite size, pass inline="always".`);
+      notes.push(`Image saved to ${landedPath} (${response.width}x${response.height}, ~${Math.round(imageBuffer.byteLength / 1024)}KB).${meta} Read the file or use OS image viewer. To force inline despite size, pass inline="always".`);
       return {
         content: [{ type: "text", text: notes.join(". ") + "." }],
       };

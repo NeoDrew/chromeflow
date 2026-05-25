@@ -362,6 +362,22 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       if (startIndex + chunkSize < totalLength) {
         text += `\n\n... (${totalLength - startIndex - chunkSize} more characters — call get_page_text with startIndex=${startIndex + chunkSize} to continue)`;
       }
+      // Viewport / page / scroll snapshot so agents can compute click
+      // coordinates without a separate execute_script probe. Cheap to gather
+      // here since we're already on the page reading state.
+      const viewport = {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      };
+      const page = {
+        width: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0),
+        height: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0),
+      };
+      const scroll = {
+        x: window.scrollX,
+        y: window.scrollY,
+      };
+
       return {
         type: "page_text_response",
         requestId: msg.requestId,
@@ -369,6 +385,52 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         selector_missed: selectorMissed,
         selector_in_shadow: selectorInShadow,
         shadow_hosts_seen: shadowHostsSeen,
+        viewport,
+        page,
+        scroll,
+      };
+    }
+
+    case "get_page_html": {
+      const selector = msg.selector as string | undefined;
+      const maxChars = (msg.max_chars as number | undefined) ?? 50000;
+      let root: Element;
+      let selectorMissed = false;
+      let selectorInShadow = false;
+      if (selector) {
+        let el = document.querySelector(selector);
+        if (!el) {
+          const deep = queryAllDeep(document, selector)[0];
+          if (deep) {
+            el = deep;
+            selectorInShadow = true;
+          }
+        }
+        if (!el) selectorMissed = true;
+        root = el ?? document.body;
+      } else {
+        const main = document.querySelector("main, [role='main']");
+        root = (main && (main.textContent ?? "").trim().length > 80) ? main : document.body;
+      }
+      // outerHTML on the live element. Caller is responsible for paginating /
+      // truncating large pages via max_chars. We strip <script> and <style>
+      // tags so the agent doesn't burn tokens on JS bundles.
+      const clone = root.cloneNode(true) as Element;
+      ["script", "style", "noscript"].forEach((tag) => {
+        clone.querySelectorAll(tag).forEach((el) => el.remove());
+      });
+      const fullHtml = (clone as HTMLElement).outerHTML;
+      const totalChars = fullHtml.length;
+      const truncated = totalChars > maxChars;
+      const html = truncated ? fullHtml.slice(0, maxChars) : fullHtml;
+      return {
+        type: "page_html_response",
+        requestId: msg.requestId,
+        html,
+        total_chars: totalChars,
+        truncated,
+        selector_missed: selectorMissed,
+        selector_in_shadow: selectorInShadow,
       };
     }
 
