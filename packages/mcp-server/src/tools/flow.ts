@@ -82,8 +82,20 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         .boolean()
         .optional()
         .describe(`Opt-in last-resort fallback when silently_rejected fires. After the 1500ms activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest \`__reactProps$.onClick\` prop, and invokes it with a minimal synthetic event. Useful on React-heavy SPAs whose action buttons pass through isTrusted=true checks even on CDP events. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this — fiber-prop walking is undocumented and may misbehave on mangled production builds. Reserve for repeat silently_rejected on a known-safe React site.`),
+      via: z
+        .enum(["auto", "cdp", "fiber"])
+        .optional()
+        .describe(`Click dispatch mode. "auto" (default): CDP click, then fiber fallback when try_fiber=true and the activity probe failed. "cdp": CDP click only, no fiber fallback ever. "fiber": skip the CDP bezier + activity probe entirely and invoke __reactProps$.onClick directly. Use "fiber" on React-heavy SPAs (Outlier-style dashboards) where you already know the site is fiber-only — cuts ~3 seconds of ceremony off the round trip. The fiber path is undocumented React internal access, prefer "auto" until you've confirmed the site needs it.`),
+      in_dialog: z
+        .boolean()
+        .optional()
+        .describe(`Scope candidate matches to the topmost open dialog (\`[role=dialog]\`, \`[role=alertdialog]\`, or \`<dialog open>\`), highest z-index wins. Use when Radix/Headless UI dialogs portal to document.body and a generic textHint like "Cancel" would otherwise match the wrong button. Returns scope_missed=true when no dialog is open.`),
+      dialog_query: z
+        .string()
+        .optional()
+        .describe(`Scope candidate matches to a specific dialog by heading or aria-label substring. Use when multiple dialogs are open and in_dialog (topmost) would pick the wrong one — e.g. click_element("Confirm", dialog_query="Delete account"). Mutually exclusive with in_dialog; dialog_query wins when both are set.`),
     },
-    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber }) => {
+    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, via, in_dialog, dialog_query }) => {
       // Validate exactly-one-of(textHint, selector)
       if ((!textHint && !selector) || (textHint && selector)) {
         return {
@@ -97,7 +109,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber },
+          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, via, in_dialog, dialog_query },
           wsTimeout
         );
       } catch (err) {
@@ -230,17 +242,46 @@ If the click causes page navigation, this resolves when the new page finishes lo
   );
 
   server.tool(
+    "click_at_coordinates",
+    `Dispatch a real CDP mouse click at viewport (x, y). The only way to interact with cross-origin iframes — \`click_element\` refuses cross-origin frames because \`find_text\` can't enter them, but a CDP-level mouse event resolves at the renderer process and reaches the iframe's content the way an OS-level click does.
+
+Coordinates are viewport CSS pixels, NOT screen coordinates. \`list_frames\` reports each iframe at \`(x, y, width, height)\` in this same space, so to click 50px in / 80px down inside an iframe: \`click_at_coordinates(frame.x + 50, frame.y + 80)\`.
+
+Runs the same humanlike sequence as \`click_element\` (bezier approach path, settle-hover micro-tremor, press, release, post-click micro-move) so behavioural fingerprinters can't distinguish the call from any other chromeflow click. Skips the activity probe — cross-origin iframe activity isn't observable from the parent.
+
+Refuses obviously-bad coordinates (negative, > 10000). Use this only when DOM matching has failed and you have a known target position from \`list_frames\` or a screenshot.`,
+    {
+      x: z.number().describe("Viewport CSS X coordinate (left=0). Get from list_frames or a screenshot grid."),
+      y: z.number().describe("Viewport CSS Y coordinate (top=0). Get from list_frames or a screenshot grid."),
+      button: z.enum(["left", "right", "middle"]).optional().describe('Mouse button (default "left").'),
+      double: z.boolean().optional().describe("Fire a double-click instead of a single click. Default false."),
+    },
+    async ({ x, y, button, double }) => {
+      const response = await bridge.request({ type: "click_at_coordinates", x, y, button, double });
+      const r = response as { success: boolean; message: string; before_url?: string; after_url?: string; navigated?: boolean };
+      const navLine = r.navigated && r.after_url ? `\n→ Navigated: ${r.after_url}` : "";
+      return { content: [{ type: "text", text: `${r.message}${navLine}` }] };
+    }
+  );
+
+  server.tool(
     "wait_for",
-    `Wait for one of: a CSS selector to appear, a text substring to appear, or an existing element's subtree to mutate. Pass exactly one of \`selector\`, \`text\`, or \`change_in\`. Pierces open AND closed shadow roots (text \`scope_selector\` pierces too). Pass \`shadow_root: true\` when waiting for the host's shadowRoot to attach (post-SPA-navigation hydration). \`scope_selector\` limits text-mode search; \`regex: true\` interprets text as a case-insensitive regex; \`frame: "iframe.selector"\` waits inside a same-origin iframe (text mode). Pass \`since: "now"\` in text mode to skip the initial check and only resolve on text appearing in a NEW DOM mutation — defeats the "stale instruction panels still in DOM" false-positive.`,
+    `Wait for one of: a CSS selector to appear, a text substring (or any of an array of substrings) to appear, or an existing element's subtree to mutate. Pass exactly one of \`selector\`, \`text\`, or \`change_in\`. Pierces open AND closed shadow roots (text \`scope_selector\` pierces too). Pass \`shadow_root: true\` when waiting for the host's shadowRoot to attach (post-SPA-navigation hydration). \`scope_selector\` limits text-mode search; \`regex: true\` interprets text as a case-insensitive regex; \`frame: "iframe.selector"\` waits inside a same-origin iframe (text mode).
+
+Text mode accepts an array — \`text: ["New session", "Error", "Stop"]\` resolves on the first match and the response carries \`matched_query\` so you know which entry fired. Useful for "wait for success OR failure" without a polling loop.
+
+On timeout, the response carries \`last_text\` — the trailing 240 chars of the scope's content — so you can see the page state when the wait gave up. If the deploy panel shows "Starting up... 47%" and never reaches "Live", you'll see "Starting up... 47%" in last_text and know to extend the timeout instead of debugging a phantom failure.
+
+Pass \`since: "now"\` in text mode to skip the initial check and only resolve on text appearing in a NEW DOM mutation — defeats the "stale instruction panels still in DOM" false-positive. When the wait DOES match on the initial check faster than 50ms, the response carries \`initial_match_warning\` suggesting since:"now" so you don't accidentally short-circuit on stale state.`,
     {
       selector: z.string().optional().describe("CSS selector to wait for."),
-      text: z.string().optional().describe("Text substring (or regex with regex=true) to wait for."),
+      text: z.union([z.string(), z.array(z.string()).min(1)]).optional().describe('Text substring(s) to wait for. String for single match, array for "any of" mode (resolves on the first match; response includes matched_query and matched_index).'),
       change_in: z.string().optional().describe("CSS selector of an existing element whose subtree should mutate (MutationObserver)."),
       timeout_ms: z.number().int().optional().describe("Max ms to wait (default 30000)."),
       poll_interval_ms: z.number().int().optional().describe("Selector-mode poll interval (default 500). Set to 15000 for slow server-side jobs."),
       shadow_root: z.boolean().optional().describe("Selector mode: require the matched host to have an attached shadowRoot. Default false."),
       scope_selector: z.string().optional().describe("Text mode: limit search to this CSS selector's subtree. Pierces shadow roots."),
-      regex: z.boolean().optional().describe("Text mode: interpret query as a case-insensitive regex."),
+      regex: z.boolean().optional().describe("Text mode: interpret query (each entry, if an array) as a case-insensitive regex."),
       frame: z.string().optional().describe("Same-origin iframe CSS selector to wait inside (text mode)."),
       since: z.enum(["now"]).optional().describe(`Text mode: gate on a NEW mutation. Skips the initial check so already-present matches don't short-circuit. Use when the page keeps stale text in the DOM after a route change (e.g. stacked instruction panels) and you need to wait for the next render.`),
       settle_ms: z.number().int().optional().describe("change_in mode: ms to wait after the first mutation for batching (default 150)."),
@@ -248,7 +289,8 @@ If the click causes page navigation, this resolves when the new page finishes lo
     },
     async (args) => {
       const { selector, text, change_in, timeout_ms, poll_interval_ms, shadow_root, scope_selector, regex, frame, since, settle_ms, max_chars } = args;
-      const set = [selector, text, change_in].filter((v) => v !== undefined && v !== null && v !== "").length;
+      const isTextSet = text !== undefined && text !== null && !(Array.isArray(text) && text.length === 0) && text !== "";
+      const set = [selector, isTextSet ? text : undefined, change_in].filter((v) => v !== undefined && v !== null && v !== "").length;
       if (set !== 1) {
         return { content: [{ type: "text", text: "wait_for: pass exactly one of selector, text, or change_in." }] };
       }
@@ -266,10 +308,31 @@ If the click causes page navigation, this resolves when the new page finishes lo
           { type: "wait_for_text", query: text, timeout_ms: timeoutMs, scope_selector, regex, frame, since },
           timeoutMs + 5_000
         );
-        const r = response as { found: boolean; selector?: string; text?: string; context?: string; elapsed_ms: number; frame_error?: string };
+        const r = response as {
+          found: boolean;
+          selector?: string;
+          text?: string;
+          context?: string;
+          matched_query?: string;
+          matched_index?: number;
+          elapsed_ms: number;
+          last_text?: string;
+          initial_match_warning?: string;
+          frame_error?: string;
+        };
         if (r.frame_error) return { content: [{ type: "text", text: r.frame_error }] };
-        if (!r.found) return { content: [{ type: "text", text: `Text "${text}" did not appear within ${timeoutMs}ms.` }] };
-        return { content: [{ type: "text", text: `Found "${text}" after ${r.elapsed_ms}ms.\nselector: ${r.selector}\ncontext: ${r.context}` }] };
+        const display = Array.isArray(text)
+          ? text.map((t) => `"${t}"`).join(" / ")
+          : `"${text}"`;
+        if (!r.found) {
+          const tail = r.last_text ? `\nLast text seen in scope (trailing 240 chars): ${JSON.stringify(r.last_text)}` : "";
+          return { content: [{ type: "text", text: `Text ${display} did not appear within ${timeoutMs}ms.${tail}` }] };
+        }
+        const whichMatched = r.matched_query
+          ? `\nmatched: "${r.matched_query}" (index ${r.matched_index})`
+          : "";
+        const warn = r.initial_match_warning ? `\n⚠ ${r.initial_match_warning}` : "";
+        return { content: [{ type: "text", text: `Found ${display} after ${r.elapsed_ms}ms.${whichMatched}\nselector: ${r.selector}\ncontext: ${r.context}${warn}` }] };
       }
       // change_in mode
       const response = await bridge.request(
@@ -304,7 +367,11 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
 
   server.tool(
     "find_text",
-    `Search the active page for text and return actionable matches (text, surrounding context, best-effort CSS selector, clickable flag). Use this instead of get_page_text when checking "is X on the page?" or locating a clickable target. Pierces open shadow roots. Pass \`frame: "iframe.selector"\` for same-origin iframe search.`,
+    `Search the active page for text and return actionable matches (text, surrounding context, best-effort CSS selector, clickable flag). Use this instead of get_page_text when checking "is X on the page?" or locating a clickable target. Pierces open AND closed shadow roots. Pass \`frame: "iframe.selector"\` for same-origin iframe search.
+
+When visible_only=true (the default) filters out all matches AND there were hidden matches, the response surfaces the hidden count so you can re-run with visible_only=false instead of guessing "is this on the page or not?"
+
+Scope helpers: \`in_dialog: true\` restricts the search to the topmost open dialog; \`dialog_query: "Select"\` restricts it to a dialog whose heading or aria-label matches. Mirrors click_element's dialog scoping so the same flag works across discovery and action.`,
     {
       query: z.string().describe("Text to search for. Substring by default; regex=true → case-insensitive regex."),
       max: z.number().int().min(1).optional().describe("Maximum matches to return (default 5). total_matches is reported even when truncated."),
@@ -313,8 +380,10 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
       visible_only: z.boolean().optional().describe("Skip display:none / visibility:hidden / aria-hidden=true. Default true."),
       context_chars: z.number().int().min(0).optional().describe("Surrounding context chars per match (default 40)."),
       frame: z.string().optional().describe("Same-origin iframe CSS selector to search inside."),
+      in_dialog: z.boolean().optional().describe("Scope to the topmost open [role=dialog] / [role=alertdialog] / <dialog open>. Mirrors click_element."),
+      dialog_query: z.string().optional().describe("Scope to the dialog whose heading or aria-label contains this substring. Mirrors click_element."),
     },
-    async ({ query, max, scope_selector, regex, visible_only, context_chars, frame }) => {
+    async ({ query, max, scope_selector, regex, visible_only, context_chars, frame, in_dialog, dialog_query }) => {
       const response = await bridge.request({
         type: "find_text",
         query,
@@ -324,6 +393,8 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
         visible_only,
         context_chars: context_chars ?? 40,
         frame,
+        in_dialog,
+        dialog_query,
       });
       const r = response as unknown as {
         matches: Array<{
@@ -336,6 +407,7 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
           position: { x: number; y: number; width: number; height: number } | null;
         }>;
         total_matches: number;
+        hidden_count?: number;
         truncated: boolean;
         scope_missed?: boolean;
         frame_error?: string;
@@ -351,9 +423,15 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
         };
       }
       if (r.matches.length === 0) {
+        // Distinguish "not on page" from "on page but hidden" so the agent
+        // doesn't guess at visible_only=false unnecessarily.
+        const hidden = r.hidden_count ?? 0;
+        const hint = visible_only !== false && hidden > 0
+          ? ` ${hidden} hidden match(es) skipped (display:none / visibility:hidden / aria-hidden / off-viewport). Set visible_only=false to include them.`
+          : "";
         return {
           content: [
-            { type: "text", text: `No matches found for "${query}".` },
+            { type: "text", text: `No visible matches found for "${query}".${hint}` },
           ],
         };
       }

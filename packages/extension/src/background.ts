@@ -386,6 +386,131 @@ type ActivityProbeResult = {
   } | null;
 };
 
+/**
+ * Race a promise against a labeled timeout. Used by click_element to convert
+ * a single 30s WS-cap into per-phase timeouts so when something hangs we
+ * know WHICH phase hung (CDP attach, bezier dispatch, activity probe, fiber
+ * walk, post-click read), not just "timed out somewhere in 30s".
+ *
+ * The PHASE_BUDGET_MULT env var lets the user field-tune budgets without a
+ * release. Defaults to 1.0; set CHROMEFLOW_PHASE_BUDGET_MULT in the popup or
+ * via runtime config when iterating on a particular hang.
+ */
+const PHASE_BUDGET_MULT = 1.0; // multiplicative knob, future runtime config
+function phaseRace<T>(label: string, ms: number, p: Promise<T>): Promise<T> {
+  const budget = Math.max(50, ms * PHASE_BUDGET_MULT);
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      const err = new Error(`phase=${label} exceeded ${budget}ms`) as Error & { phase?: string; phaseTimedOut?: boolean };
+      err.phase = label;
+      err.phaseTimedOut = true;
+      reject(err);
+    }, budget);
+    p.then(
+      (v) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
+/**
+ * Run the full human-like CDP mouse-click sequence at (x, y): bezier
+ * approach path, settle-hover micro-tremor, press, release, post-click
+ * micro-move. Reused by click_element (where coordinates come from the
+ * matched element) and click_at_coordinates (where coordinates come from
+ * the caller — typically for cross-origin iframes whose targets can't be
+ * found by find_text). Coordinates are viewport CSS pixels.
+ *
+ * Anti-bot bypass: stricter Web Components (Reddit's faceplate-*,
+ * Twitter's composer, etc.) check `event instanceof PointerEvent &&
+ * event.isPrimary` in addition to isTrusted. We pass pointerType="mouse"
+ * which makes Chrome fire PointerEvent alongside MouseEvent (isPrimary=true,
+ * pointerId=1) with a realistic pressure via `force`. Combined with the
+ * bezier path and settle hover, this passes every behavioral check we've
+ * seen short of OS-level input.
+ */
+async function dispatchHumanMouseClick(
+  tabId: number,
+  cx: number,
+  cy: number,
+  options: { button?: "left" | "right" | "middle"; double?: boolean } = {},
+): Promise<void> {
+  await withDebugger(tabId, async () => {
+    const dbg = chrome.debugger as unknown as {
+      sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
+    };
+    const button = options.button ?? "left";
+    const ptr = { pointerType: "mouse" as const, force: 0.5 };
+    const sx = cx + Math.round((Math.random() - 0.5) * 60);
+    const sy = cy + Math.round((Math.random() - 0.5) * 60);
+    const midX = (sx + cx) / 2;
+    const midY = (sy + cy) / 2;
+    const perpDx = -(cy - sy);
+    const perpDy = cx - sx;
+    const perpLen = Math.sqrt(perpDx * perpDx + perpDy * perpDy) || 1;
+    const bowPx = (Math.random() * 0.4 - 0.2) * Math.min(80, perpLen);
+    const ctlX = midX + (perpDx / perpLen) * bowPx;
+    const ctlY = midY + (perpDy / perpLen) * bowPx;
+    const steps = 6 + Math.floor(Math.random() * 4);
+    for (let i = 1; i <= steps; i++) {
+      const t = i / steps;
+      const bx = Math.round((1 - t) * (1 - t) * sx + 2 * (1 - t) * t * ctlX + t * t * cx);
+      const by = Math.round((1 - t) * (1 - t) * sy + 2 * (1 - t) * t * ctlY + t * t * cy);
+      await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+        type: "mouseMoved", x: bx, y: by, button: "none", clickCount: 0, ...ptr,
+      });
+      await new Promise((r) => setTimeout(r, 8 + Math.random() * 14));
+    }
+    for (let j = 0; j < 3; j++) {
+      const jx = cx + Math.round((Math.random() - 0.5) * 4);
+      const jy = cy + Math.round((Math.random() - 0.5) * 4);
+      await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+        type: "mouseMoved", x: jx, y: jy, button: "none", clickCount: 0, ...ptr,
+      });
+      await new Promise((r) => setTimeout(r, 20 + Math.random() * 30));
+    }
+    await new Promise((r) => setTimeout(r, 25 + Math.random() * 40));
+    const clickCount = options.double ? 2 : 1;
+    await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+      type: "mousePressed", x: cx, y: cy, button, clickCount, buttons: 1, ...ptr,
+    });
+    await new Promise((r) => setTimeout(r, 40 + Math.random() * 60));
+    await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+      type: "mouseReleased", x: cx, y: cy, button, clickCount, buttons: 0, ...ptr,
+    });
+    if (options.double) {
+      // Second click of a double-click within the OS double-click window.
+      await new Promise((r) => setTimeout(r, 50 + Math.random() * 50));
+      await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+        type: "mousePressed", x: cx, y: cy, button, clickCount: 2, buttons: 1, ...ptr,
+      });
+      await new Promise((r) => setTimeout(r, 40 + Math.random() * 60));
+      await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+        type: "mouseReleased", x: cx, y: cy, button, clickCount: 2, buttons: 0, ...ptr,
+      });
+    }
+    await new Promise((r) => setTimeout(r, 30 + Math.random() * 50));
+    const px = cx + Math.round((Math.random() - 0.5) * 6);
+    const py = cy + Math.round((Math.random() - 0.5) * 6);
+    await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+      type: "mouseMoved", x: px, y: py, button: "none", clickCount: 0, ...ptr,
+    });
+  });
+}
+
 async function runActivityProbe(
   tabId: number,
   beforeUrl: string,
@@ -954,7 +1079,17 @@ async function handleMcpMessage(msg: {
         throw new Error(`No tab matching "${msg.query}". Open tabs:\n${list}`);
       }
       await chrome.tabs.update(target.id, { active: true });
-      return { type: "action_done" };
+      // Re-read post-update so the response carries the actual landed URL
+      // and title — useful when the agent wants to verify it switched to
+      // the intended tab without a separate list_tabs round trip.
+      const landed = await chrome.tabs.get(target.id).catch(() => target);
+      return {
+        type: "switch_to_tab_response",
+        success: true,
+        message: `Switched to tab matching "${msg.query}"`,
+        url: landed?.url ?? target.url ?? "",
+        title: landed?.title ?? target.title ?? "",
+      };
     }
 
     case "list_tabs": {
@@ -1047,14 +1182,37 @@ async function handleMcpMessage(msg: {
       // cause the downscaled image to use the wrong coordinate space.
       let cssWidth = tab.width ?? 1280;
       let cssHeight = tab.height ?? 800;
+      let inFullscreen = false;
       if (isScriptableUrl(tab.url)) {
         try {
           const r = await chrome.scripting.executeScript({
             target: { tabId: tab.id! },
-            func: () => [window.innerWidth, window.innerHeight] as [number, number],
+            func: () => ({
+              w: window.innerWidth,
+              h: window.innerHeight,
+              fs: !!(document.fullscreenElement || (document as Document & { webkitFullscreenElement?: Element }).webkitFullscreenElement),
+            }),
           });
-          if (r[0]?.result) [cssWidth, cssHeight] = r[0].result;
+          const probe = r[0]?.result as { w: number; h: number; fs: boolean } | undefined;
+          if (probe) {
+            cssWidth = probe.w;
+            cssHeight = probe.h;
+            inFullscreen = probe.fs;
+          }
         } catch { /* fall back to tab.width/height */ }
+      }
+
+      // Fullscreen on the page (typically a video player or an iframe that
+      // requested fullscreen) breaks chrome.tabs.captureVisibleTab — the
+      // request hangs and the 30s WS timeout fires before any image lands.
+      // Fail fast with the recovery hint so the caller doesn't burn the
+      // whole budget on retries that can't succeed.
+      if (inFullscreen && msg.allow_fullscreen !== true) {
+        throw new Error(
+          `take_screenshot refused: page is in fullscreen mode (captureVisibleTab hangs there). ` +
+          `Exit fullscreen first via execute_script("document.exitFullscreen()") or by highlighting + wait_for_click on an exit-fullscreen control. ` +
+          `If you really need the screenshot in fullscreen, retry with allow_fullscreen: true (it usually times out).`
+        );
       }
 
       // captureVisibleTab + bitmap readback both flake intermittently on
@@ -1063,9 +1221,13 @@ async function handleMcpMessage(msg: {
       // exponential backoff before giving up; on terminal failure, attempt a
       // CDP Page.captureScreenshot fallback if the debugger is already
       // attached (no extra attach permission prompt).
+      //
+      // Per-attempt timeout dropped from 10s to 5s and backoff tightened from
+      // [0,500,1500] to [0,400,1000]ms so the total worst case is ~17s — well
+      // under the 30s WS cap, leaves margin for unexpected slowness.
       async function captureOnce(): Promise<{ dataUrl: string; via: "visibleTab" | "cdp" }> {
         return new Promise(async (resolve, reject) => {
-          const wsTimer = setTimeout(() => reject(new Error("captureVisibleTab timed out after 10000ms")), 10_000);
+          const wsTimer = setTimeout(() => reject(new Error("captureVisibleTab timed out after 5000ms")), 5_000);
           try {
             const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId!, { format: "png" });
             clearTimeout(wsTimer);
@@ -1102,7 +1264,7 @@ async function handleMcpMessage(msg: {
 
       let capture: { dataUrl: string; via: "visibleTab" | "cdp" } | null = null;
       let lastErr: Error | null = null;
-      const backoffMs = [0, 500, 1500];
+      const backoffMs = [0, 400, 1000];
       for (const wait of backoffMs) {
         if (wait > 0) await new Promise((r) => setTimeout(r, wait));
         try {
@@ -1392,27 +1554,90 @@ async function handleMcpMessage(msg: {
       let alertMsg: string | null = null;
       let cspBlocked = false;
 
+      // Shadow-DOM-piercing helpers ($deep, $deepAll, shadowDocument) are
+      // injected into the user's script via a wrapper that declares them as
+      // local variables of an IIFE. Direct eval inside the IIFE sees the
+      // locals, so `$deep('button')` works without polluting window.* on
+      // the page.
+      //
+      // Open shadow roots only — MAIN world can't reach
+      // chrome.dom.openOrClosedShadowRoot. For closed roots, callers should
+      // use find_text / get_page_text / click_element / fill_input which DO
+      // pierce both kinds via the content-script API.
+      const SHADOW_HELPERS = `
+        var $deep = function(selector, root) {
+          root = root || document;
+          var direct = root.querySelector(selector);
+          if (direct) return direct;
+          var all = root.querySelectorAll('*');
+          for (var i = 0; i < all.length; i++) {
+            if (all[i].shadowRoot) {
+              var nested = $deep(selector, all[i].shadowRoot);
+              if (nested) return nested;
+            }
+          }
+          return null;
+        };
+        var $deepAll = function(selector, root) {
+          root = root || document;
+          var out = [];
+          var seen = new WeakSet();
+          var recurse = function(r) {
+            var matches = r.querySelectorAll(selector);
+            for (var i = 0; i < matches.length; i++) {
+              if (!seen.has(matches[i])) { seen.add(matches[i]); out.push(matches[i]); }
+            }
+            var all = r.querySelectorAll('*');
+            for (var i = 0; i < all.length; i++) {
+              if (all[i].shadowRoot) recurse(all[i].shadowRoot);
+            }
+          };
+          recurse(root);
+          return out;
+        };
+        var shadowDocument = (function() {
+          var all = document.querySelectorAll('*');
+          for (var i = 0; i < all.length; i++) {
+            if (all[i].shadowRoot) return all[i].shadowRoot;
+          }
+          return document;
+        })();
+      `;
+
       const runInjection = () => chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        func: async (code: string, usesAwait: boolean) => {
+        func: async (code: string, usesAwait: boolean, shadowHelpers: string) => {
           let result: unknown;
+          // Build a single source string that declares $deep/$deepAll/
+          // shadowDocument as locals of an IIFE, then runs the user code
+          // inside that IIFE. Direct eval inside the IIFE picks up the
+          // helpers without leaking them onto window.
+          //
+          // For non-await: try direct eval first (expression returns work)
+          // and fall back to a wrapping function on "Illegal return".
+          // For await: always wrap as async IIFE since top-level await
+          // only makes sense inside an async function anyway.
+          const wrap = (body: string) => `(function() { ${shadowHelpers}; return (function() { ${body} })(); })()`;
+          const wrapAsync = (body: string) => `(async function() { ${shadowHelpers}; return await (async function() { ${body} })(); })()`;
+          // Expression form: helpers declared in an outer IIFE, user code
+          // evaluated via direct eval to allow `42` / `document.title`-style
+          // returns. var declarations inside indirect eval would leak globally;
+          // direct eval inside the IIFE scopes them to the IIFE.
+          const wrapExpr = `(function() { ${shadowHelpers}; return eval(${JSON.stringify(code)}); })()`;
           try {
             if (usesAwait) {
-              // Wrap in an async IIFE expression so eval parses the body as
-              // an async function (top-level await works inside async fns).
-              // Then await the returned promise here.
-              result = await (0, eval)(`(async () => { ${code} })()`);
+              result = await (0, eval)(wrapAsync(code));
             } else {
-              result = (0, eval)(code);
+              result = (0, eval)(wrapExpr);
             }
           } catch (e) {
             if (String(e).includes("Illegal return")) {
               try {
                 if (usesAwait) {
-                  result = await (0, eval)(`(async () => { ${code} })()`);
+                  result = await (0, eval)(wrapAsync(code));
                 } else {
-                  result = (0, eval)(`(function() { ${code} })()`);
+                  result = (0, eval)(wrap(code));
                 }
               } catch (e2) {
                 result = `Error: ${e2}`;
@@ -1421,11 +1646,29 @@ async function handleMcpMessage(msg: {
               result = `Error: ${e}`;
             }
           }
+          // Auto-stringify objects so callers don't have to wrap every return
+          // in JSON.stringify themselves. Strings, numbers, booleans, null,
+          // undefined all pass through String(). Arrays and objects become
+          // JSON; circular refs fall back to String() (which yields
+          // "[object Object]" but that's the documented behavior for circular
+          // structures the caller would have hit anyway).
+          let serialized: string;
+          if (result === null || result === undefined) {
+            serialized = "undefined";
+          } else if (typeof result === "object") {
+            try {
+              serialized = JSON.stringify(result);
+            } catch {
+              serialized = String(result);
+            }
+          } else {
+            serialized = String(result);
+          }
           const captured = (window as any)._alertCapture ?? null;
           if (captured) (window as any)._alertCapture = null;
-          return JSON.stringify({ result: String(result ?? "undefined"), alert: captured });
+          return JSON.stringify({ result: serialized, alert: captured });
         },
-        args: [code, usesAwait],
+        args: [code, usesAwait, SHADOW_HELPERS],
       });
 
       try {
@@ -1506,27 +1749,47 @@ async function handleMcpMessage(msg: {
             // CDP Runtime.evaluate can await a returned promise directly via
             // awaitPromise: true. So in the await-detected path we just have the
             // expression be the async IIFE; awaitPromise resolves it for us.
+            // Auto-stringify objects, mirroring runInjection above. Strings
+            // and primitives go through String(); objects/arrays through
+            // JSON.stringify. CDP path is used when CSP blocks eval, the
+            // serialization rules must match the chrome.scripting path so
+            // callers see consistent output.
+            const SERIALIZER = `function(__r) {
+              if (__r === null || __r === undefined) return "undefined";
+              if (typeof __r === "object") {
+                try { return JSON.stringify(__r); } catch (e) { return String(__r); }
+              }
+              return String(__r);
+            }`;
+            // Shadow helpers + user code wrapped so direct eval inside the
+            // IIFE sees the locals. Mirrors the chrome.scripting path so
+            // CSP-strict pages (Stripe, GitHub) get the same $deep/$deepAll
+            // behavior as everyone else.
             const wrappedCode = usesAwait
               ? `(async () => {
+                  var __serialize = ${SERIALIZER};
+                  ${SHADOW_HELPERS}
                   var __result;
                   try { __result = await (async () => { ${code} })(); }
                   catch(e) { __result = "Error: " + e; }
                   var __alert = window._alertCapture || null;
                   if (__alert) window._alertCapture = null;
-                  return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
+                  return JSON.stringify({ result: __serialize(__result), alert: __alert });
                 })()`
               : `(function() {
+                  var __serialize = ${SERIALIZER};
+                  ${SHADOW_HELPERS}
                   var __result;
-                  try { __result = (0, eval)(${JSON.stringify(code)}); }
+                  try { __result = eval(${JSON.stringify(code)}); }
                   catch(e) {
                     if (String(e).includes("Illegal return")) {
-                      try { __result = (0, eval)("(function() { " + ${JSON.stringify(code)} + " })()"); }
+                      try { __result = (function() { ${code} })(); }
                       catch(e2) { __result = "Error: " + e2; }
                     } else { __result = "Error: " + e; }
                   }
                   var __alert = window._alertCapture || null;
                   if (__alert) window._alertCapture = null;
-                  return JSON.stringify({ result: String(__result ?? "undefined"), alert: __alert });
+                  return JSON.stringify({ result: __serialize(__result), alert: __alert });
                 })()`;
             const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
               expression: wrappedCode,
@@ -1597,6 +1860,40 @@ async function handleMcpMessage(msg: {
         nextCandidate?: string;
         scope_missed?: boolean;
       };
+      // via:"fiber" skips the CDP click entirely and goes straight to React
+      // fiber prop invocation. Use when the caller already knows the site is
+      // React-fiber-only and wants to skip ~3 seconds of bezier-ceremony +
+      // activity probe. via:"cdp" is the historical default — no fiber
+      // fallback ever fires. via:"auto" (default) does CDP first, then fiber
+      // when try_fiber=true was also set and activity probe failed.
+      const via = (msg.via as "auto" | "cdp" | "fiber" | undefined) ?? "auto";
+
+      if (via === "fiber") {
+        const fiberResult = await forwardToContentScript(tab, {
+          type: "react_fiber_click",
+          requestId: msg.requestId + "-fiber-only",
+          textHint: msg.textHint,
+          nth: msg.nth,
+          within_selector: msg.within_selector,
+          near_text: msg.near_text,
+          in_dialog: msg.in_dialog,
+          dialog_query: msg.dialog_query,
+        }).catch((e) => ({ success: false, message: String(e), fired: false })) as {
+          success: boolean; message: string; fired: boolean; component?: string; label?: string;
+        };
+        const [postTabF] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+        const afterUrlF = postTabF?.url ?? before_url;
+        return {
+          type: "click_element_response",
+          success: fiberResult.success,
+          message: fiberResult.message,
+          before_url,
+          after_url: afterUrlF,
+          navigated: afterUrlF !== before_url,
+          fiber_attempted: true,
+        };
+      }
+
       let prep: PrepResult | undefined;
       for (let attempt = 0; attempt < 3; attempt++) {
         prep = await forwardToContentScript(tab, {
@@ -1607,6 +1904,8 @@ async function handleMcpMessage(msg: {
           nth: msg.nth,
           within_selector: msg.within_selector,
           near_text: msg.near_text,
+          in_dialog: msg.in_dialog,
+          dialog_query: msg.dialog_query,
         }) as PrepResult;
         if (prep.success) break;
         // Don't retry when the scope itself was missing — it won't appear on a 500ms delay.
@@ -1653,6 +1952,8 @@ async function handleMcpMessage(msg: {
             nth: 2,
             within_selector: msg.within_selector,
             near_text: msg.near_text,
+            in_dialog: msg.in_dialog,
+            dialog_query: msg.dialog_query,
           }) as PrepResult;
           if (reprep.success && reprep.width !== 0 && reprep.height !== 0) {
             // Replace prep so the rest of the flow uses the visible candidate.
@@ -1699,95 +2000,22 @@ async function handleMcpMessage(msg: {
       let result: { success: boolean; message: string };
       let usedCdp = false;
 
+      // via === "fiber" returned early above, so by here via is "auto" or "cdp"
+      // and CDP is always allowed when canCdp is true.
       const canCdp = isScriptableUrl(tab.url) && typeof prep.x === "number" && typeof prep.y === "number";
+      let cdpPhaseError: string | null = null;
       if (canCdp) {
         try {
-          await withDebugger(tabId, async () => {
-            const dbg = chrome.debugger as unknown as {
-              sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
-            };
-            const cx = Math.round(prep.x!);
-            const cy = Math.round(prep.y!);
-
-            // Realistic pointer params for every event — pointerType makes
-            // Chrome fire PointerEvent (with isPrimary=true), force gives
-            // a non-zero pressure that real mice report.
-            const ptr = { pointerType: "mouse" as const, force: 0.5 };
-
-            // Build a curved path from an offset start point to the target,
-            // using a quadratic bezier with a random control point. Humans
-            // move in arcs, not straight lines — behavioral fingerprinters
-            // (LinkedIn, Akamai) score on trajectory smoothness and curvature.
-            const sx = cx + Math.round((Math.random() - 0.5) * 60);
-            const sy = cy + Math.round((Math.random() - 0.5) * 60);
-            // Control point offset perpendicular to the line, random magnitude.
-            const midX = (sx + cx) / 2;
-            const midY = (sy + cy) / 2;
-            const perpDx = -(cy - sy);
-            const perpDy = cx - sx;
-            const perpLen = Math.sqrt(perpDx * perpDx + perpDy * perpDy) || 1;
-            // Control-point offset in pixels, along the unit-perpendicular
-            // vector. Random sign + magnitude scaled with path length (capped).
-            const bowPx = (Math.random() * 0.4 - 0.2) * Math.min(80, perpLen);
-            const ctlX = midX + (perpDx / perpLen) * bowPx;
-            const ctlY = midY + (perpDy / perpLen) * bowPx;
-
-            const steps = 6 + Math.floor(Math.random() * 4); // 6-9 waypoints
-            for (let i = 1; i <= steps; i++) {
-              const t = i / steps;
-              // Quadratic bezier B(t) = (1-t)^2 P0 + 2(1-t)t P1 + t^2 P2
-              const bx = Math.round((1 - t) * (1 - t) * sx + 2 * (1 - t) * t * ctlX + t * t * cx);
-              const by = Math.round((1 - t) * (1 - t) * sy + 2 * (1 - t) * t * ctlY + t * t * cy);
-              await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-                type: "mouseMoved", x: bx, y: by, button: "none", clickCount: 0, ...ptr,
-              });
-              // Slight ease-out: gaps shorter in the middle, longer at the ends
-              await new Promise((r) => setTimeout(r, 8 + Math.random() * 14));
-            }
-
-            // Settle hover: 3 small jitter moves around the target. A real
-            // human's hand has micro-tremor — the cursor never lands perfectly
-            // still. Sites looking for "cursor froze at the exact target pixel
-            // 0ms before click" reject the synthetic case; this defeats it.
-            for (let j = 0; j < 3; j++) {
-              const jx = cx + Math.round((Math.random() - 0.5) * 4);
-              const jy = cy + Math.round((Math.random() - 0.5) * 4);
-              await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-                type: "mouseMoved", x: jx, y: jy, button: "none", clickCount: 0, ...ptr,
-              });
-              await new Promise((r) => setTimeout(r, 20 + Math.random() * 30));
-            }
-
-            // Small settle pause before the press
-            await new Promise((r) => setTimeout(r, 25 + Math.random() * 40));
-
-            // Press: fires pointerdown + mousedown (PointerEvent isPrimary=true)
-            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-              type: "mousePressed", x: cx, y: cy, button: "left", clickCount: 1,
-              buttons: 1, ...ptr,
-            });
-            await new Promise((r) => setTimeout(r, 40 + Math.random() * 60));
-
-            // Release: fires pointerup + mouseup + click (the click event
-            // chain Reddit's expand handler is listening for)
-            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-              type: "mouseReleased", x: cx, y: cy, button: "left", clickCount: 1,
-              buttons: 0, ...ptr,
-            });
-
-            // Post-click micro-move. Humans don't freeze the cursor at the
-            // exact click pixel — they continue with tiny motion. Sites that
-            // sample post-click cursor stillness fail synthetic clicks here.
-            await new Promise((r) => setTimeout(r, 30 + Math.random() * 50));
-            const px = cx + Math.round((Math.random() - 0.5) * 6);
-            const py = cy + Math.round((Math.random() - 0.5) * 6);
-            await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-              type: "mouseMoved", x: px, y: py, button: "none", clickCount: 0, ...ptr,
-            });
-          });
+          // Per-phase budget: bezier + settle + press/release usually completes
+          // in well under 2s. Cap at 8s so a hung CDP attach reports the phase
+          // explicitly instead of dragging the whole click to the 30s WS cap.
+          await phaseRace("cdp_click", 8000, dispatchHumanMouseClick(tabId, Math.round(prep.x!), Math.round(prep.y!)));
           usedCdp = true;
-        } catch {
-          // CDP path failed — fall through to synthetic click.
+        } catch (e) {
+          const err = e as Error & { phase?: string; phaseTimedOut?: boolean };
+          if (err.phaseTimedOut) cdpPhaseError = err.phase ?? "cdp_click";
+          // Either CDP attach failed (fall through to synthetic) or the
+          // phase exceeded its budget (record so the response carries it).
         }
       }
 
@@ -1804,6 +2032,25 @@ async function handleMcpMessage(msg: {
 
       if (usedCdp) {
         result = { success: true, message: `Clicked "${prep.label ?? msg.textHint}"${postNote}` };
+      } else if (cdpPhaseError) {
+        // CDP phase hit its budget. Try the content-script synthetic click
+        // as a graceful fallback, but tag the message so the agent sees the
+        // CDP path didn't run. Helps diagnose "click_element succeeded but
+        // looks like a synthetic click" cases.
+        try {
+          result = await forwardToContentScript(tab, msg) as { success: boolean; message: string };
+          result.message = `${result.message} (CDP phase "${cdpPhaseError}" timed out; used synthetic click fallback)`;
+        } catch {
+          return {
+            type: "click_element_response",
+            success: false,
+            message: `Clicked "${prep.label ?? msg.textHint}" failed: CDP phase "${cdpPhaseError}" exceeded its budget and the synthetic-click fallback also failed. Likely a hung debugger session or a tab whose content script was evicted.`,
+            before_url,
+            after_url: before_url,
+            navigated: false,
+            phase_timed_out: cdpPhaseError,
+          };
+        }
       } else {
         // Fallback: content-script synthetic click (isTrusted=false).
         try {
@@ -1837,8 +2084,21 @@ async function handleMcpMessage(msg: {
       // Returns early as soon as activity is detected, so most clicks (which
       // do produce activity) add only ~100ms before continuing to the
       // existing until-poll / expect_submit / SPA-nav-wait flow.
+      // Wrapped in phaseRace so a hung probe (rare, but happens when
+      // MAIN-world JS is blocked by a long synchronous handler) reports the
+      // phase instead of running to the WS cap.
       const probe = isScriptableUrl(tab.url) && tab.id
-        ? await runActivityProbe(tab.id, before_url, 1500)
+        ? await phaseRace("activity_probe", 3500, runActivityProbe(tab.id, before_url, 1500)).catch((e) => {
+            const err = e as Error & { phase?: string };
+            return {
+              activity: true,
+              reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
+              mutation_count: 0,
+              url_changed: false,
+              after_url: before_url,
+              focused_after: null,
+            } as ActivityProbeResult;
+          })
         : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
 
       if (!probe.activity) {
@@ -1849,14 +2109,16 @@ async function handleMcpMessage(msg: {
         // try_fiber=true) because the fiber-prop path is undocumented and
         // could no-op or misbehave on non-React or mangled-prod builds.
         if (msg.try_fiber === true) {
-          const fiberResult = await forwardToContentScript(tab, {
+          const fiberResult = await phaseRace("react_fiber_click", 3500, forwardToContentScript(tab, {
             type: "react_fiber_click",
             requestId: msg.requestId + "-fiber",
             textHint: msg.textHint,
             nth: msg.nth,
             within_selector: msg.within_selector,
             near_text: msg.near_text,
-          }).catch((e) => ({ success: false, message: String(e), fired: false })) as {
+            in_dialog: msg.in_dialog,
+            dialog_query: msg.dialog_query,
+          })).catch((e) => ({ success: false, message: String(e), fired: false })) as {
             success: boolean; message: string; fired: boolean; component?: string; label?: string;
           };
 
@@ -1865,7 +2127,17 @@ async function handleMcpMessage(msg: {
           // the second probe sees it and we fall through to the rest of the
           // click flow (until_*, expect_submit, etc).
           const probe2 = isScriptableUrl(tab.url) && tab.id
-            ? await runActivityProbe(tab.id, before_url, 1500)
+            ? await phaseRace("activity_probe_2", 3500, runActivityProbe(tab.id, before_url, 1500)).catch((e) => {
+                const err = e as Error & { phase?: string };
+                return {
+                  activity: true,
+                  reason: `(probe2 phase exceeded budget: ${err.phase}; treating as activity)`,
+                  mutation_count: 0,
+                  url_changed: false,
+                  after_url: before_url,
+                  focused_after: null,
+                } as ActivityProbeResult;
+              })
             : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
 
           if (probe2.activity) {
@@ -2112,6 +2384,74 @@ async function handleMcpMessage(msg: {
       return { type: "click_element_response", success: true, message, before_url, after_url, navigated, focused_after: probe.focused_after };
     }
 
+    case "click_at_coordinates": {
+      const tab = await getActiveTab(port);
+      const tabId = tab.id!;
+      const before_url = tab.url ?? "";
+      const x = Math.round(msg.x as number);
+      const y = Math.round(msg.y as number);
+      const button = (msg.button as "left" | "right" | "middle" | undefined) ?? "left";
+      const double = msg.double === true;
+
+      if (!isScriptableUrl(tab.url)) {
+        return {
+          type: "click_at_coordinates_response",
+          requestId: msg.requestId,
+          success: false,
+          message: `Cannot click on ${tab.url} (non-scriptable URL — chrome://, devtools, etc.)`,
+          before_url,
+          after_url: before_url,
+          navigated: false,
+        };
+      }
+      // Cheap viewport sanity check: a click at (-50, 5000) is almost
+      // certainly a coordinate-space mix-up. We don't know the actual viewport
+      // size from background but we can spot obviously-bad values.
+      if (x < 0 || y < 0 || x > 10000 || y > 10000) {
+        return {
+          type: "click_at_coordinates_response",
+          requestId: msg.requestId,
+          success: false,
+          message: `click_at_coordinates refused: (${x}, ${y}) is outside any plausible viewport. Coordinates must be viewport CSS pixels relative to the active tab; list_frames reports each iframe at (x, y, width, height) in this space.`,
+          before_url,
+          after_url: before_url,
+          navigated: false,
+        };
+      }
+
+      try {
+        await phaseRace("cdp_click_at", 8000, dispatchHumanMouseClick(tabId, x, y, { button, double }));
+      } catch (e) {
+        const err = e as Error & { phase?: string; phaseTimedOut?: boolean };
+        return {
+          type: "click_at_coordinates_response",
+          requestId: msg.requestId,
+          success: false,
+          message: `click_at_coordinates failed at (${x}, ${y}): ${err.message}`,
+          before_url,
+          after_url: before_url,
+          navigated: false,
+        };
+      }
+
+      // Brief settle so navigations and modal openings register before we
+      // read after_url. Don't run the full activity probe — coordinate
+      // clicks frequently target cross-origin iframes whose state changes
+      // are invisible to the parent.
+      await new Promise((r) => setTimeout(r, 250));
+      const [postTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+      const after_url = postTab?.url ?? before_url;
+      return {
+        type: "click_at_coordinates_response",
+        requestId: msg.requestId,
+        success: true,
+        message: `Clicked at (${x}, ${y})${double ? " double-click" : ""}${button !== "left" ? ` button=${button}` : ""}${after_url !== before_url ? ` — navigated to ${after_url}` : ""}`,
+        before_url,
+        after_url,
+        navigated: after_url !== before_url,
+      };
+    }
+
     case "type_text": {
       const tab = await getActiveTab(port);
       const tabId = tab.id!;
@@ -2249,7 +2589,10 @@ async function handleMcpMessage(msg: {
 
       // Type character-by-character with individual keyDown/keyUp events
       // and randomized delays to produce input indistinguishable from real typing.
+      // For long typings, emit a progress heartbeat every 200 chars so the WS
+      // request timer resets and we don't trip the timeout while still typing.
       await withDebugger(tabId, async () => {
+        const PROGRESS_INTERVAL = 200;
         for (let i = 0; i < text.length; i++) {
           const char = text[i];
 
@@ -2276,9 +2619,32 @@ async function handleMcpMessage(msg: {
             });
           }
 
+          // Slow-pause cap tightened from 500ms to 250ms. Empirically the
+          // upper tail wasn't load-bearing for behavioral-fingerprint defeat
+          // and it pushed long-typing budgets past the WS timeout. Reddit /
+          // X composer flows continue to accept synthetic input at the 250ms
+          // cap (validated via the chromeflow anti-bot click sequence which
+          // already lands isTrusted=true events).
           const baseDelay = 30 + Math.random() * 60;
-          const pause = Math.random() < 0.05 ? 200 + Math.random() * 300 : baseDelay;
+          const pause = Math.random() < 0.05 ? 150 + Math.random() * 100 : baseDelay;
           await new Promise((r) => setTimeout(r, pause));
+
+          // Heartbeat: tell the bridge we're still making forward progress so
+          // the request-timeout clock resets. Without this, ~1800-char typings
+          // can complete on the page but trip the WS timeout in the bridge.
+          // Routed via offscreen so the heartbeat lands on the correct WS
+          // connection (one per Claude Code instance).
+          if ((i + 1) % PROGRESS_INTERVAL === 0) {
+            try {
+              chrome.runtime.sendMessage({
+                source: "chromeflow-progress",
+                port,
+                requestId: msg.requestId,
+                phase: "type_text",
+                detail: `${i + 1}/${text.length} chars`,
+              }).catch(() => {});
+            } catch { /* best-effort */ }
+          }
         }
 
         // After typing, dispatch an input event on the focused element to nudge
@@ -2483,10 +2849,34 @@ async function handleMcpMessage(msg: {
       const value = msg.value as string;
       const frameSelector = msg.frame as string | undefined;
 
+      // Tag the element in the content script first (queryAllDeep pierces
+      // open AND closed shadow roots). The MAIN-world script then reads by
+      // tag attribute. Top-frame only — same-origin iframe access is still
+      // routed through doc.querySelector below since the content script
+      // doesn't run inside iframe documents.
+      const tagId = `chromeflow-react-target-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      let taggedInShadow = false;
+      if (!frameSelector) {
+        try {
+          const tagResult = await forwardToContentScript(tab, {
+            type: "tag_for_react",
+            requestId: msg.requestId + "-tag",
+            selector,
+            tagId,
+          }) as { tagged: boolean; in_shadow: boolean };
+          if (tagResult?.tagged) {
+            taggedInShadow = !!tagResult.in_shadow;
+          }
+        } catch {
+          // Tagging is best-effort; fall back to plain doc.querySelector below
+          // if it failed (e.g. content script not loaded on this page).
+        }
+      }
+
       const r = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        func: (sel: string, val: string, frameSel: string | undefined) => {
+        func: (sel: string, val: string, frameSel: string | undefined, tag: string) => {
           // Resolve the input — top-frame document by default, contentDocument
           // when frameSel is given (same-origin iframes only).
           let doc: Document = document;
@@ -2501,7 +2891,31 @@ async function handleMcpMessage(msg: {
               return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
             }
           }
-          const el = doc.querySelector(sel);
+          // Prefer the tag-based lookup when the content script tagged
+          // something for us (closed-shadow-root reachable). Fall through to
+          // plain querySelector when no tag was placed (iframe path, or
+          // tagging failed).
+          let el: Element | null = null;
+          if (tag) {
+            // Tag lookup walks open shadow roots only from MAIN world. The
+            // content script already verified the element exists via
+            // queryAllDeep, so we just need to find it in a re-attached form.
+            const findTagged = (root: ParentNode): Element | null => {
+              const direct = root.querySelector(`[data-chromeflow-react-target="${tag}"]`);
+              if (direct) return direct;
+              const all = root.querySelectorAll('*');
+              for (let i = 0; i < all.length; i++) {
+                const sr = (all[i] as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+                if (sr) {
+                  const nested = findTagged(sr);
+                  if (nested) return nested;
+                }
+              }
+              return null;
+            };
+            el = findTagged(doc);
+          }
+          if (!el) el = doc.querySelector(sel);
           if (!el) return { ok: false, reason: `selector "${sel}" not found${frameSel ? ` inside iframe "${frameSel}"` : ""}` };
 
           // Use the prototype FROM THE INSTANCE so the setter is callable on
@@ -2520,6 +2934,11 @@ async function handleMcpMessage(msg: {
           el.dispatchEvent(new Event("input", { bubbles: true }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
 
+          // Clean up the chromeflow tag so we don't pollute the DOM. Best
+          // effort; if removeAttribute throws (frozen elements, custom
+          // proxies), the tag is harmless.
+          try { el.removeAttribute("data-chromeflow-react-target"); } catch { /* ignore */ }
+
           // Read back to confirm React accepted it
           const readBack = (el as unknown as { value?: unknown }).value;
           return {
@@ -2532,7 +2951,7 @@ async function handleMcpMessage(msg: {
             readBack: typeof readBack === "string" ? readBack : String(readBack),
           };
         },
-        args: [selector, value, frameSelector],
+        args: [selector, value, frameSelector, tagId],
       });
 
       const result = r[0]?.result as
@@ -2544,13 +2963,14 @@ async function handleMcpMessage(msg: {
 
       const accepted = result.readBack === value;
       const desc = `<${result.tag}${result.type ? ` type="${result.type}"` : ""}${result.name ? ` name="${result.name}"` : ""}${result.id ? ` id="${result.id}"` : ""}>`;
+      const shadowNote = taggedInShadow ? " (resolved inside shadow DOM)" : "";
       return {
         type: "action_done",
         requestId: msg.requestId,
         success: true,
         message: accepted
-          ? `Set ${desc} to "${value.slice(0, 60)}"${frameSelector ? ` (inside iframe "${frameSelector}")` : ""}`
-          : `Set ${desc} via native setter, but React reported back "${result.readBack.slice(0, 60)}" — the page may be controlling the value externally.`,
+          ? `Set ${desc} to "${value.slice(0, 60)}"${frameSelector ? ` (inside iframe "${frameSelector}")` : ""}${shadowNote}`
+          : `Set ${desc} via native setter, but React reported back "${result.readBack.slice(0, 60)}" — the page may be controlling the value externally.${shadowNote}`,
       };
     }
 
@@ -2567,10 +2987,25 @@ async function handleMcpMessage(msg: {
       const maxDepth = (msg.max_depth ?? 30) as number;
       const frameSelector = msg.frame as string | undefined;
 
+      // Tag-from-content-script + read-from-main-world so closed shadow root
+      // selectors work. Iframe path skips tagging since the content script
+      // runs against the top frame only.
+      const tagId = `chromeflow-react-target-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      if (!frameSelector) {
+        try {
+          await forwardToContentScript(tab, {
+            type: "tag_for_react",
+            requestId: msg.requestId + "-tag",
+            selector,
+            tagId,
+          });
+        } catch { /* best-effort */ }
+      }
+
       const r = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        func: async (sel: string, pName: string, callArgs: unknown[], depth: number, frameSel: string | undefined) => {
+        func: async (sel: string, pName: string, callArgs: unknown[], depth: number, frameSel: string | undefined, tag: string) => {
           let doc: Document = document;
           if (frameSel) {
             const iframe = document.querySelector(frameSel);
@@ -2583,7 +3018,27 @@ async function handleMcpMessage(msg: {
               return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
             }
           }
-          const el = doc.querySelector(sel);
+          let el: Element | null = null;
+          if (tag) {
+            const findTagged = (root: ParentNode): Element | null => {
+              const direct = root.querySelector(`[data-chromeflow-react-target="${tag}"]`);
+              if (direct) return direct;
+              const all = root.querySelectorAll('*');
+              for (let i = 0; i < all.length; i++) {
+                const sr = (all[i] as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+                if (sr) {
+                  const nested = findTagged(sr);
+                  if (nested) return nested;
+                }
+              }
+              return null;
+            };
+            el = findTagged(doc);
+            if (el) {
+              try { el.removeAttribute("data-chromeflow-react-target"); } catch { /* ignore */ }
+            }
+          }
+          if (!el) el = doc.querySelector(sel);
           if (!el) return { ok: false, reason: `selector "${sel}" not found${frameSel ? ` inside iframe "${frameSel}"` : ""}` };
 
           const fiberKey = Object.keys(el).find((k) => k.startsWith("__reactFiber$"));
@@ -2637,7 +3092,7 @@ async function handleMcpMessage(msg: {
           }
           return { ok: false, reason: `no prop "${pName}" found within ${depth} fiber levels`, walked: depth };
         },
-        args: [selector, propName, args, maxDepth, frameSelector],
+        args: [selector, propName, args, maxDepth, frameSelector, tagId],
       });
 
       const result = r[0]?.result as

@@ -83,9 +83,16 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
         };
       }
       const q = String(raw);
-      await bridge.request({ type: "switch_to_tab", query: q });
+      const response = await bridge.request({ type: "switch_to_tab", query: q });
+      // Newer extension returns the landed URL/title; older extensions return
+      // a bare action_done. Handle both so a fresh server keeps working with
+      // a not-yet-reloaded extension.
+      const r = response as { url?: string; title?: string };
+      const echo = r.url
+        ? ` → "${r.title ?? ""}" (${r.url})`
+        : "";
       return {
-        content: [{ type: "text", text: `Switched to tab matching "${q}"` }],
+        content: [{ type: "text", text: `Switched to tab matching "${q}"${echo}` }],
       };
     }
   );
@@ -150,7 +157,9 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
 
   server.tool(
     "take_screenshot",
-    `Capture a screenshot of the active tab. By default the image is returned to the agent inline UNLESS it exceeds ~500KB base64, in which case it's saved to a temp file and the path is returned instead (preserves the agent's context window). Set inline="always" to force inline regardless of size, or inline="never" to always write to a file. Set save_to or copy_to_clipboard to also share the image with the user. Reserved for cases where DOM lookup has already failed — use get_page_text and find_text for reading content.`,
+    `Capture a screenshot of the active tab. By default the image is returned to the agent inline UNLESS it exceeds ~500KB base64, in which case it's saved to a temp file and the path is returned instead (preserves the agent's context window). Set inline="always" to force inline regardless of size, or inline="never" to always write to a file. Set save_to or copy_to_clipboard to also share the image with the user. Reserved for cases where DOM lookup has already failed — use get_page_text and find_text for reading content.
+
+Refuses fast on pages that are in fullscreen mode (captureVisibleTab hangs there). Exit fullscreen first with execute_script("document.exitFullscreen()") or pass allow_fullscreen: true if you really must try anyway.`,
     {
       copy_to_clipboard: z
         .boolean()
@@ -164,12 +173,16 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
         .enum(["auto", "always", "never"])
         .optional()
         .describe('Whether to return the image base64 inline to the agent. "auto" (default): inline if under 500KB base64, otherwise write to a temp file and return the path. "always": inline regardless of size — large images may exceed the MCP token ceiling. "never": always return the path, never inline.'),
+      allow_fullscreen: z
+        .boolean()
+        .optional()
+        .describe("Bypass the fullscreen fast-fail. Default false. captureVisibleTab usually hangs in fullscreen mode and the request times out — set this only when you've confirmed the page can produce a screenshot in fullscreen."),
     },
-    async ({ copy_to_clipboard = false, save_to = "none", inline = "auto" }) => {
+    async ({ copy_to_clipboard = false, save_to = "none", inline = "auto", allow_fullscreen }) => {
       const sharing = copy_to_clipboard || save_to !== "none";
       // grid:false when sharing — coord grid is noise when the image is for
       // pasting into chats / uploading to forms.
-      const response = await bridge.request({ type: "screenshot", grid: !sharing });
+      const response = await bridge.request({ type: "screenshot", grid: !sharing, allow_fullscreen });
       if (response.type !== "screenshot_response") {
         throw new Error("Unexpected response from extension");
       }
@@ -319,15 +332,18 @@ The saved file path can be passed directly to set_file_input(hint, file_path) to
     "get_form_fields",
     `Inventory form fields on the active page (inputs, textareas, selects, CodeMirror editors). Sorted top-to-bottom by y-position; includes fields below the fold.
 
-Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old find_input behavior — match strength reported as aria-eq / placeholder-eq / label-text-eq / name-eq / id-eq / *-includes / fuzzy-text-walk). Pass \`exact: true\` to refuse fuzzy text-walk matches.`,
+Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old find_input behavior — match strength reported as aria-eq / placeholder-eq / label-text-eq / name-eq / id-eq / *-includes / fuzzy-text-walk). Pass \`exact: true\` to refuse fuzzy text-walk matches.
+
+Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. This is the "why is Submit disabled" diagnostic: it returns just the required fields that haven't been filled yet (or radios/checkboxes still unchecked) and skips everything that's already populated. Required-ness is detected via the \`required\` attribute, \`aria-required\`, or a trailing \`*\` in the associated label text.`,
     {
       query: z.string().optional().describe("If set, filter+rank fields by hint matching label/placeholder/aria-label/name/id."),
       max: z.number().int().min(1).optional().describe("Maximum fields to return when query is set (default 5). Ignored without query (full inventory)."),
       type_filter: z.string().optional().describe('Restrict to a specific input type (e.g. "email", "checkbox", "file"). Only with query.'),
       exact: z.boolean().optional().describe("Refuse fuzzy text-walk and *-includes matches. Only with query."),
       frame: z.string().optional().describe("Same-origin iframe CSS selector to search inside. Cross-origin iframes are not supported."),
+      only_empty: z.boolean().optional().describe("Filter inventory to required-but-empty fields only. Use as a Submit-disabled diagnostic. Ignored when query is set."),
     },
-    async ({ query, max, type_filter, exact, frame }) => {
+    async ({ query, max, type_filter, exact, frame, only_empty }) => {
       if (query !== undefined) {
         // Filtered mode — route to find_input bridge message.
         const response = await bridge.request({ type: "find_input", query, type_filter, max, exact, frame });
@@ -345,10 +361,10 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
         return { content: [{ type: "text", text: `${header}\n${lines.join("\n")}\n\nTo fill: fill_input("${r.fields[0].label}", "<value>")` }] };
       }
       // Inventory mode.
-      const response = await bridge.request({ type: "get_form_fields" });
+      const response = await bridge.request({ type: "get_form_fields", only_empty });
       if (response.type !== "form_fields_response") throw new Error("Unexpected response");
       const r = response as {
-        fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string }>;
+        fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string; required?: boolean; empty?: boolean }>;
         warning?: string;
         captcha?: { kind: string; sitekey: string | null } | null;
         oauthIndicators?: string[];
@@ -361,14 +377,21 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
         ? `\n\nℹ OAuth providers detected on this form: ${r.oauthIndicators.join(", ")}. If the user wants to sign in via one of these, click it instead of filling email/password.`
         : "";
       if (fields.length === 0) {
-        return { content: [{ type: "text", text: "No form fields found on page." + (r.warning ?? "") + captchaLine + oauthLine }] };
+        const empty = only_empty
+          ? "No required-but-empty fields detected."
+          : "No form fields found on page.";
+        return { content: [{ type: "text", text: empty + (r.warning ?? "") + captchaLine + oauthLine }] };
       }
       const lines = fields.map(f => {
         const val = f.value ? ` [currently: "${f.value}"]` : "";
         const ctx = f.context ? ` [under: "${f.context}"]` : "";
-        return `${f.index}. [${f.type}] "${f.label}"${val}${ctx} — y:${f.y}`;
+        const req = f.required ? " *required" : "";
+        return `${f.index}. [${f.type}] "${f.label}"${req}${val}${ctx} — y:${f.y}`;
       });
-      return { content: [{ type: "text", text: `Form fields (${fields.length} total, sorted top-to-bottom):\n${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
+      const header = only_empty
+        ? `Required-but-empty fields (${fields.length}):`
+        : `Form fields (${fields.length} total, sorted top-to-bottom):`;
+      return { content: [{ type: "text", text: `${header}\n${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
     }
   );
 
@@ -397,9 +420,12 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
         ),
     },
     async ({ text, frame, into_selector, clear_first }) => {
-      // Average ~90ms per char (60ms avg delay + overhead) + 15s buffer for
-      // debugger attach/detach and the post-typing input event dispatch.
-      const timeoutMs = Math.max(30_000, text.length * 90 + 15_000);
+      // Average ~80ms per char (60ms avg delay + overhead) but with a 5% slow
+      // pause tail. 110ms/char gives margin over the empirical p99 and the
+      // background also emits a "progress" heartbeat every 200 chars that
+      // resets the bridge's request timer — combined, ~1800-char typings
+      // complete reliably without timeout-ambiguity.
+      const timeoutMs = Math.max(30_000, text.length * 110 + 15_000);
       const response = await bridge.request(
         { type: "type_text", text, frame, into_selector, clear_first },
         timeoutMs
@@ -445,6 +471,15 @@ Pass \`query\` to filter+rank by label/placeholder/aria-label/name/id (the old f
   server.tool(
     "execute_script",
     `Execute JavaScript in a tab's MAIN world (the page's own context, not the extension's isolated world). Use for reading framework state or DOM properties not visible in text — prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
+
+**Object returns are auto-stringified** — return an object/array and the response carries its JSON. No need to wrap return values in JSON.stringify yourself.
+
+**Shadow-piercing helpers are pre-injected** into every script:
+- \`$deep(selector, root?)\` — querySelector that walks open shadow roots
+- \`$deepAll(selector, root?)\` — querySelectorAll equivalent, returns an array
+- \`shadowDocument\` — the first attached open shadow root on the page, or \`document\` if none. Useful when an SPA mounts ALL of its UI inside a single root shadow host (Outlier-style annotation dashboards): replace every \`document.querySelector*\` call with \`shadowDocument.querySelector*\` and the same code now reaches the SPA's content.
+
+The helpers pierce OPEN shadow roots only — MAIN world can't reach closed roots. For closed roots, use find_text / get_page_text / click_element / fill_input which pierce both kinds via chrome.dom.openOrClosedShadowRoot.
 
 MAIN-world means the page's Content-Security-Policy applies: \`fetch()\` against authenticated APIs is often blocked by the page's connect-src directive. When that happens, switch to fetch_url — it runs in the extension's privileged context (full host_permissions, automatic cookie jar, no page CSP).
 

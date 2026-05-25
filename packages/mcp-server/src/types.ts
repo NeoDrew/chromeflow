@@ -7,9 +7,10 @@ export type DistributiveOmit<T, K extends keyof T> = T extends unknown
 export type ServerMessage =
   | { type: "navigate"; requestId: string; url: string; newTab?: boolean; background?: boolean; expect_selector?: string }
   | { type: "switch_to_tab"; requestId: string; query: string }
+  | { type: "click_via_fiber"; requestId: string; textHint?: string; selector?: string; nth?: number; within_selector?: string; near_text?: string; in_dialog?: boolean; dialog_query?: string }
   | { type: "close_tab"; requestId: string; query?: string }
   | { type: "close_other_tabs"; requestId: string; keep_query?: string }
-  | { type: "screenshot"; requestId: string; grid?: boolean }
+  | { type: "screenshot"; requestId: string; grid?: boolean; allow_fullscreen?: boolean }
   | { type: "find_highlight"; requestId: string; text: string; message: string; valueToType?: string }
   | {
       type: "highlight_region";
@@ -42,16 +43,27 @@ export type ServerMessage =
       within_selector?: string;
       near_text?: string;
       try_fiber?: boolean;
+      via?: "auto" | "cdp" | "fiber";
+      in_dialog?: boolean;
+      dialog_query?: string;
     }
-  | { type: "prepare_click_target"; requestId: string; textHint?: string; selector?: string; nth?: number; within_selector?: string; near_text?: string }
+  | {
+      type: "click_at_coordinates";
+      requestId: string;
+      x: number;
+      y: number;
+      button?: "left" | "right" | "middle";
+      double?: boolean;
+    }
+  | { type: "prepare_click_target"; requestId: string; textHint?: string; selector?: string; nth?: number; within_selector?: string; near_text?: string; in_dialog?: boolean; dialog_query?: string }
   | { type: "post_click_inspect"; requestId: string }
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
   | { type: "get_page_text"; requestId: string; selector?: string; startIndex?: number }
   | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number; refresh?: number; shadow_root?: boolean }
   | { type: "wait_for_change"; requestId: string; selector: string; timeout: number; settle?: number }
-  | { type: "execute_script"; requestId: string; code: string; tab_query?: string }
+  | { type: "execute_script"; requestId: string; code: string; tab_query?: string; pierce_shadow?: boolean }
   | { type: "get_elements"; requestId: string }
-  | { type: "get_form_fields"; requestId: string }
+  | { type: "get_form_fields"; requestId: string; only_empty?: boolean }
   | { type: "scroll_to_element"; requestId: string; query: string }
   | { type: "save_page_state"; requestId: string }
   | { type: "restore_page_state"; requestId: string; state: PageFieldState[] }
@@ -80,6 +92,8 @@ export type ServerMessage =
       visible_only?: boolean;
       context_chars?: number;
       frame?: string;
+      in_dialog?: boolean;
+      dialog_query?: string;
     }
   | {
       type: "find_input";
@@ -93,7 +107,7 @@ export type ServerMessage =
   | {
       type: "wait_for_text";
       requestId: string;
-      query: string;
+      query: string | string[];
       timeout_ms?: number;
       scope_selector?: string;
       regex?: boolean;
@@ -137,6 +151,7 @@ export type PageFieldState = {
 // Messages sent from Extension → MCP server
 export type ClientMessage =
   | { type: "ready" }
+  | { type: "progress"; requestId: string; phase?: string; detail?: string }
   | {
       type: "screenshot_response";
       requestId: string;
@@ -170,6 +185,7 @@ export type ClientMessage =
       scope_missed?: boolean;
       silently_rejected?: boolean;
       fiber_attempted?: boolean;
+      phase_timed_out?: string;
       focused_after?: {
         tag: string;
         id: string;
@@ -179,6 +195,15 @@ export type ClientMessage =
         value_preview: string;
       } | null;
     }
+  | {
+      type: "click_at_coordinates_response";
+      requestId: string;
+      success: boolean;
+      message: string;
+      before_url?: string;
+      after_url?: string;
+      navigated?: boolean;
+    }
   | { type: "page_text_response"; requestId: string; text: string }
   | { type: "script_response"; requestId: string; result: string; alert?: string | null; context?: "main"; navigated?: boolean; reauthorized?: boolean }
   | { type: "error"; requestId: string; message: string }
@@ -186,13 +211,14 @@ export type ClientMessage =
   | {
       type: "form_fields_response";
       requestId: string;
-      fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string }>;
+      fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; required?: boolean; empty?: boolean }>;
       warning?: string;
       captcha?: { kind: "recaptcha" | "turnstile" | "hcaptcha"; sitekey: string | null } | null;
       oauthIndicators?: string[];
     }
   | { type: "save_state_response"; requestId: string; state: PageFieldState[] }
   | { type: "tabs_response"; requestId: string; tabs: Array<{ index: number; title: string; url: string; active: boolean }> }
+  | { type: "switch_to_tab_response"; requestId: string; success: boolean; message: string; url?: string; title?: string }
   | { type: "fill_form_response"; requestId: string; results: Array<{ label: string; success: boolean; message: string; matched?: string }>; succeeded: number; total: number }
   | {
       type: "find_text_response";
@@ -207,6 +233,7 @@ export type ClientMessage =
         position: { x: number; y: number; width: number; height: number } | null;
       }>;
       total_matches: number;
+      hidden_count?: number;
       truncated: boolean;
       scope_missed?: boolean;
       frame_error?: string;
@@ -234,7 +261,11 @@ export type ClientMessage =
       selector?: string;
       text?: string;
       context?: string;
+      matched_query?: string;
+      matched_index?: number;
       elapsed_ms: number;
+      last_text?: string;
+      initial_match_warning?: string;
       frame_error?: string;
     }
   | {
