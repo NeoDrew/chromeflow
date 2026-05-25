@@ -1,0 +1,14 @@
+{
+  "generated_at": "2026-05-25T22:37:02Z",
+  "platforms": [
+    {"name":"closed-shadow-input","validated":"Pass (closed-shadow read piercing); partial (write into deep closed-shadow native input)","status":"Pass","stability":"Stable","last_verified":"2026-05-25"},
+    {"name":"facebook-feed-composer","validated":"Pass (open + type; submit not tested)","status":"Pass","stability":"Stable","last_verified":"2026-05-25"},
+    {"name":"instagram-input","validated":"Pass (React-controlled native input via selector-mode fill_input)","status":"Pass","stability":"Stable for native-input fill; full DM/comment composer not exercised","last_verified":"2026-05-25"},
+    {"name":"linkedin-feed-composer","validated":"Pass (open + type; submit not tested)","status":"Pass","stability":"Stable","last_verified":"2026-05-25"},
+    {"name":"radix-dialog-scoping","validated":"Pass (in_dialog correctly scopes matches)","status":"Pass","stability":"Stable for scope resolution","last_verified":"2026-05-25"},
+    {"name":"reddit-comment-submit","validated":"Pass (typing path; submit not exercised by design)","status":"Pass","stability":"Stable","last_verified":"2026-05-25"},
+    {"name":"reddit-composer-expand","validated":"Pass (with caveat)","status":"Pass","stability":"Stable for state transition; activity probe false-negative","last_verified":"2026-05-25"},
+    {"name":"tiptap-silent-drop","validated":"Pass on standard ProseMirror demo; silent-drop recovery path untested (failure mode is env-specific)","status":"Pass","stability":"Stable for typing path","last_verified":"2026-05-25"},
+    {"name":"x-tweet-input","validated":"Pass (typing path with leading-space workaround; submit not tested)","status":"Pass","stability":"Stable","last_verified":"2026-05-25"}
+  ]
+}

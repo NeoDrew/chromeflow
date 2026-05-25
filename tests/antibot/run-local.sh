@@ -69,7 +69,6 @@ show_summary() {
     return 0
   fi
   local count=0
-  local stale=0
   local broken=0
   echo "Chromeflow anti-bot validation summary"
   echo "======================================"
@@ -89,6 +88,45 @@ show_summary() {
   echo
   echo "$count platforms; $broken broken."
   echo "Run \`$(basename "$0") <name>\` to see one platform's procedure."
+
+  # Emit machine-readable artifacts that the website + READMEs consume.
+  # The HTML pulls last-run.json on page load to populate "Working as of"
+  # dates and green/yellow/red badges without rebuilding the React app.
+  write_last_run_json
+}
+
+write_last_run_json() {
+  local out="$HERE/last-run.json"
+  local web_out="$HERE/../../apps/website/public/validated/last-run.json"
+  local now
+  now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+  mkdir -p "$(dirname "$web_out")"
+  {
+    printf '{\n'
+    printf '  "generated_at": "%s",\n' "$now"
+    printf '  "platforms": [\n'
+    local first=1
+    for f in "$PLATFORMS_DIR"/*.md; do
+      [[ -e "$f" ]] || continue
+      local name validated stability last
+      name=$(basename "$f" .md)
+      validated=$(grep -m1 -i "^\*\*Validated:" "$f" | sed 's/.*Validated:\*\* *//' | sed 's/$//' | tr -d '\r' || echo "")
+      stability=$(grep -m1 -i "^\*\*Stability:" "$f" | sed 's/.*Stability:\*\* *//' | tr -d '\r' || echo "")
+      last=$(grep -m1 -i "^\*\*Last verified:" "$f" | sed 's/.*Last verified:\*\* *//' | awk '{print $1}' || echo "")
+      # First word of "Validated" gives Pass / Partial / etc.
+      local v_short
+      v_short=$(echo "$validated" | awk '{print $1}')
+      [[ $first -eq 0 ]] && printf ',\n'
+      first=0
+      printf '    {"name":"%s","validated":"%s","status":"%s","stability":"%s","last_verified":"%s"}' \
+        "$name" "$(echo "$validated" | sed 's/"/\\"/g')" "$v_short" "$stability" "$last"
+    done
+    printf '\n  ]\n}\n'
+  } > "$out"
+  cp "$out" "$web_out"
+  echo
+  echo "Wrote $out"
+  echo "Mirrored to $web_out for the website."
 }
 
 case "${1:-}" in

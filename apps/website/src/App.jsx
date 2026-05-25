@@ -5,6 +5,7 @@ import Demo from './components/Demo'
 import OctoWave from './components/OctoWave'
 import BeforeAfter from './components/BeforeAfter'
 import InfiniteTasks from './components/InfiniteTasks'
+import ValidatedPlatforms from './components/ValidatedPlatforms'
 import Comparison from './components/Comparison'
 import Privacy from './components/Privacy'
 
@@ -23,6 +24,7 @@ export default function App() {
         <OctoWave />
         <BeforeAfter />
         <InfiniteTasks />
+        <ValidatedPlatforms />
         <Comparison />
       </main>
     </>
