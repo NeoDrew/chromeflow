@@ -1,70 +1,53 @@
 # X / Twitter tweet input
 
-**Validated:** Yes (text input; submit still requires real gesture)
-**Last verified:** 2026-05-25 on chromeflow 0.9.12
-**Auth required:** Yes (logged-in X account)
+**Validated:** Pass (typing path with leading-space workaround; submit not tested)
+**Last verified:** 2026-05-25 on chromeflow 0.10.1
+**Auth required:** Yes
 **Stability:** Stable
 
 ## What this validates
 
 `type_text` with isTrusted=true CDP keystrokes lands text in X's
-tweet composer textarea. X's `[data-testid="tweetTextarea_0"]` is a
-contenteditable Lexical editor; vanilla `value` assignment doesn't
-update its internal state.
+tweet composer Lexical contenteditable. X's
+`[data-testid="tweetTextarea_0"]` is a contenteditable Lexical editor;
+vanilla `value` assignment does not update its internal state.
 
-## Preconditions
+## Procedure executed (2026-05-25)
 
-- Logged in.
-- Tweet composer open (home, compose modal, or reply context).
+1. `open_page("https://x.com/home")` — verified logged in via `execute_script` (`!$deep('[data-testid="login"]')`).
+2. `type_text(text=" Validation test text — never posted", into_selector="[data-testid='tweetTextarea_0']", clear_first=true)` — leading space is the throwaway character for the known first-char-drop issue.
+3. Verify via `execute_script`:
+   - `textContent`: `"Validation test text — never posted"` (35 chars).
+   - First real char `V` preserved (leading space eaten as expected).
 
-## Procedure
+## Result
 
-1. `find_text("What is happening?!")` or
-   `click_element(selector="[data-testid='tweetTextarea_0']")` to
-    focus the composer.
-2. `type_text(" Tweet body text",
-    into_selector="[data-testid='tweetTextarea_0']", clear_first=true)`.
-3. Verify via
-   `execute_script("return $deep('[data-testid=\\\"tweetTextarea_0\\\"]').textContent")`.
+**Pass.** 36 typed chars (including leading space) → 35 char textContent
+(leading space dropped, first real char `V` landed correctly). The
+leading-space workaround for the first-char-drop bug works as
+documented.
 
-## Leading-space workaround
+## First-char-drop workaround
 
-`type_text` with `clear_first=true` can drop the first character.
-Prepend the body with a leading space so "Worth checking" becomes
-" Worth checking" — the leading space is the throwaway.
+`type_text(into_selector="[data-testid='tweetTextarea_0']",
+clear_first=true)` drops the first character on X's Lexical editor.
+Prepend the body with a leading space (or any throwaway char) so the
+real first character of your content lands correctly.
 
-## Expected response fields
+## Submit handoff (untested by design)
 
-- `type_text` reports `Typed N characters` with no `silently_rejected`.
-- `execute_script` returns the full body text including the leading
-  space.
+Submit is gated on a real isTrusted gesture even when CDP click
+passes elsewhere. Recovery: `highlight_region` on the Post button +
+`wait_for_click()`.
 
-## Manual verification
+## Shadow-ban caveat
 
-The composer should show the typed body. Character count under the
-composer should match (account for the leading space byte).
-
-## Submit handoff
-
-Synthetic `click_element` on the Tweet/Post submit button silently
-rejects (X's submit handler checks a real-user-initiated flag).
-Recovery: `highlight_region` on the Post button + `wait_for_click`.
-
-## Shadow ban caveat
-
-Small X accounts (under ~50 followers) shadow-ban after ~10-15
-promotional replies. Confirmed on @NeoDrewX at ~38 followers. Cap
-outreach at 5 promo replies/day.
+Per memory: small X accounts (< ~50 followers) shadow-ban after
+~10-15 promotional replies in a session. Confirmed on @NeoDrewX at
+~38 followers. Cap at 5 promo replies/day.
 
 ## Domain spacing trick
 
-Write "chromeflow .run" with a space when mentioning chromeflow's
-domain — X's autolinker won't auto-detect it as a URL, avoiding the
-"contains external link" reach penalty.
-
-## Known regressions
-
-None at 0.9.13. The pre-0.9.13 progress-heartbeat absence caused
-long tweet bodies (>1500 chars) to false-positive a WS timeout; the
-type completed on the page but the response read as failed. Fixed
-via heartbeats every 200 chars.
+When mentioning chromeflow's URL in a tweet, write `chromeflow .run`
+with a space so X's autolinker does not auto-detect it as a URL.
+Avoids the "contains external link" reach penalty.

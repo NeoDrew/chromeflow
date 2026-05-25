@@ -1,52 +1,62 @@
 # Reddit composer expand
 
-**Validated:** Yes
-**Last verified:** 2026-05-24 on chromeflow 0.9.12
-**Auth required:** No
-**Stability:** Stable
+**Validated:** Pass (with caveat)
+**Last verified:** 2026-05-25 on chromeflow 0.10.1
+**Auth required:** Logged-in account
+**Stability:** Stable for state transition; activity probe false-negative
 
 ## What this validates
 
-Chromeflow's CDP click sequence (bezier + settle-hover + PointerEvent
-isPrimary=true + post-click jitter) passes Reddit's faceplate-* Web
-Component check on the comment composer expand. Vanilla CDP clicks
-silently no-op here.
+Chromeflow's CDP click sequence on Reddit's `faceplate-textarea-input`
+trigger transitions the composer state (submit button becomes visible,
+focus jumps to the contenteditable). The faceplate-* Web Component
+checks PointerEvent isPrimary=true in addition to isTrusted, which
+vanilla Playwright clicks do not pass.
 
-## Preconditions
+## Procedure executed (2026-05-25)
 
-- Logged out is fine; comment composer is visible on any post.
-- A current Reddit post URL.
+1. `open_page("https://www.reddit.com/r/programming/comments/<id>/...")`
+2. Pre-click state via `execute_script` using the injected `$deep` helper:
+   - `#comment-composer-submit-button` exists but `getBoundingClientRect().width === 0`.
+   - Visible `faceplate-textarea-input[data-testid="trigger-button"]` is the 2nd instance (1st is the desktop/mobile duplicate).
+3. `click_element(selector="faceplate-textarea-input[data-testid='trigger-button']", nth=2)`.
+4. Post-click state via `execute_script`:
+   - Submit button visibility transitioned `false → true`.
+   - `document.activeElement` is `div[contenteditable="true"][role="textbox"][name="body"]`.
 
-## Procedure
+## Result
 
-1. `open_page("https://www.reddit.com/r/<sub>/comments/<id>/<slug>/")`
-2. `find_text("Add a comment")` — confirm the placeholder is present.
-3. `click_element("Add a comment")` OR
-   `click_element(selector="faceplate-textarea-input")`.
+**State transition succeeded.** Reddit's faceplate-* check accepted
+the CDP click sequence; the composer expanded.
 
-## Expected response fields
+**Activity-probe false negative.** `click_element` returned
+`silently_rejected: true` because the 1500ms probe watches DOM
+mutations / focus / URL / value / checked / alert / toast / modal —
+but composer expansion toggles CSS-driven visibility on an existing
+DOM node, which the probe does not catch. The response's `→ Focused:`
+line did show focus moving into the textbox, but the probe didn't
+score that as activity for this target shape.
 
-- `success: true`
-- No `silently_rejected: true`
-- The composer expands (verified visually OR via
-  `wait_for(selector='[contenteditable=true][role="textbox"]')`)
+**Implication for callers:** when clicking faceplate-* triggers
+(composer expand, comment-action expand, etc.), do not trust
+`silently_rejected` alone. Verify post-state via `execute_script`.
 
-## Manual verification
+## Recommended primary path
 
-After the click, the page should show the expanded composer with a
-contenteditable text area, "Comment" and "Cancel" buttons visible
-below the textarea.
+```
+click_element(selector="faceplate-textarea-input[data-testid='trigger-button']", nth=2)
+# Ignore silently_rejected if returned
+execute_script(`
+  return {
+    submit_visible: (function(){var b=$deep('#comment-composer-submit-button'); return b?b.getBoundingClientRect().width>0:false})(),
+    focused_ce: document.activeElement?.isContentEditable
+  };
+`)
+# Both true ⇒ composer expanded successfully.
+```
 
-If the click reports success but `wait_for(selector=
-'[contenteditable=true][role="textbox"]', timeout_ms=2000)` times
-out, the bypass has regressed — re-check `background.ts:445-580`
-(`dispatchHumanMouseClick`).
+## Open follow-up
 
-## Known regressions
-
-None at 0.9.12. The pre-0.9.12 version dispatched MouseEvent only;
-Reddit added the `event instanceof PointerEvent && event.isPrimary`
-check in their faceplate-textarea-input handler and synthetic clicks
-stopped opening the composer. The fix was `pointerType: "mouse"` on
-all `Input.dispatchMouseEvent` calls so Chrome fires PointerEvent
-alongside.
+The activity probe could be tuned to weight `focused_after` (any
+non-body focused element after a click) as activity. Tracked as a
+known false-negative source.
