@@ -1,3 +1,4 @@
+import { Analytics } from '@vercel/analytics/react'
 import Nav from './components/Nav'
 import Hero from './components/Hero'
 import Setup from './components/Setup'
@@ -12,7 +13,12 @@ import Privacy from './components/Privacy'
 const path = window.location.pathname.replace(/\/$/, '')
 
 export default function App() {
-  if (path === '/privacy') return <Privacy />
+  if (path === '/privacy') return (
+    <>
+      <Privacy />
+      <Analytics />
+    </>
+  )
 
   return (
     <>
@@ -27,6 +33,7 @@ export default function App() {
         <ValidatedPlatforms />
         <Comparison />
       </main>
+      <Analytics />
     </>
   )
 }
