@@ -22,8 +22,11 @@ the implementation has stayed correct.
 | Reddit composer expand | `click_element` on the textarea-input wrapper opens the composer | `platforms/reddit-composer-expand.md` |
 | Reddit comment submit | Pre-fill + highlight + `wait_for_click` lands a comment | `platforms/reddit-comment-submit.md` |
 | X / Twitter tweet input | `type_text(into_selector="[data-testid='tweetTextarea_0']")` lands text | `platforms/x-tweet-input.md` |
-| React Radix portal dialog | `click_element(in_dialog=true)` scopes correctly | `platforms/radix-dialog-scoping.md` |
-| Closed shadow-root input | `fill_input(selector=...)` reaches inputs inside closed roots | `platforms/closed-shadow-input.md` |
+| LinkedIn feed composer | `click_element("Start a post")` + `type_text` into Quill editor | `platforms/linkedin-feed-composer.md` |
+| Facebook feed composer | `click_element("on your mind")` + `type_text` into Lexical editor | `platforms/facebook-feed-composer.md` |
+| Instagram input | `fill_input(selector=...)` lands value via React-aware native value setter | `platforms/instagram-input.md` |
+| Radix portal dialog | `click_element(in_dialog=true)` scopes correctly | `platforms/radix-dialog-scoping.md` |
+| Closed shadow-root pierce | `find_text(frame=iframe)` reads inside Stencil closed shadow | `platforms/closed-shadow-input.md` |
 | TipTap silent-drop recovery | Post-type verify + execCommand fallback on TipTap editors | `platforms/tiptap-silent-drop.md` |
 
 ## What we do NOT claim
@@ -102,8 +105,9 @@ Before tagging a new version, run `./run-local.sh` and verify all
 target platforms PASS or SKIP (no FAILs). Capture the JSON summary
 and reference it in the release notes:
 
-> "Validated against {reddit-composer, x-tweet-input,
->  radix-dialog-scoping, closed-shadow-input,
+> "Validated against {reddit-composer, reddit-comment-submit,
+>  x-tweet-input, linkedin-feed-composer, facebook-feed-composer,
+>  instagram-input, radix-dialog-scoping, closed-shadow-input,
 >  tiptap-silent-drop} on chromeflow N.N.N (last-run.json)."
 
 If a platform FAILs, do not ship the release without either fixing

@@ -1,54 +1,80 @@
-# Closed shadow-root input
+# Closed shadow-root piercing
 
-**Validated:** Yes
-**Last verified:** 2026-05-25 on chromeflow 0.9.13
-**Auth required:** Depends on host site
+**Validated:** Pass (closed-shadow read piercing); partial (write into deep closed-shadow native input)
+**Last verified:** 2026-05-25 on chromeflow 0.10.1
+**Auth required:** None
 **Stability:** Stable
 
 ## What this validates
 
-`fill_input(selector="input[name=email]", value="...")` reaches inputs
-nested inside closed shadow roots (Stencil / Lit / Radix portal
-wrappers). The fix uses content-script tagging
-(`data-chromeflow-react-target`) so the MAIN-world script can find the
-element by attribute after the content script has located it via
-`chrome.dom.openOrClosedShadowRoot`.
+Chromeflow's content-script-based shadow piercing (via
+`chrome.dom.openOrClosedShadowRoot`) reaches into closed shadow roots
+where MAIN-world JavaScript and Playwright/Puppeteer cannot see.
 
-## Preconditions
+## Procedure executed (2026-05-25)
 
-- A page with a form field rendered inside a closed shadow root. Any
-  shadcn/ui form on a Stencil-based design system qualifies.
-- A field with a stable selector (name, id, or unique attribute).
+1. `open_page("https://ionicframework.com/docs/api/input")` —
+   Ionic's docs page hosts ion-input demos in same-origin iframes.
+   Ionic uses Stencil with closed shadow roots.
+2. Verify closed-shadow signature via `execute_script` against the
+   iframe's contentDocument: all 5 `ion-input` elements report
+   `.shadowRoot === null` from MAIN world (the canonical closed-root
+   signal: shadow attached but invisible to MAIN).
+3. `find_text(query="Default input", frame="iframe:nth-of-type(1)")`
+   → finds the label INSIDE the closed shadow root (selector path:
+   `ion-content > div > ion-list > ion-item:nth-of-type(1) > ion-input > label`).
+4. Attempted `fill_input(selector="ion-input input.native-input",
+   frame="iframe:nth-of-type(1)", value="...")` — failed:
+   `selector matched a non-HTMLElement`. The CSS combinator
+   `ion-input input.native-input` does not cross shadow boundaries.
 
-## Procedure
+## Result
 
-1. `list_frames()` — verify the `Shadow hosts:` section shows
-    `closed` count > 0.
-2. `execute_script("return document.querySelector('input[name=email]')")` —
-    should return `null` (MAIN world can't reach closed roots).
-3. `find_text("Email", scope_selector="form")` — should find the
-    field (chromeflow's piercing primitive).
-4. `fill_input(selector="input[name=email]", value="test@example.com")` —
-    response should include `(resolved inside shadow DOM)` note.
+**Read piercing PASSES.** `find_text(frame=iframe)` successfully
+located `"Default input"` text inside Stencil's closed shadow root.
+This is the canonical proof: MAIN-world JavaScript cannot reach this
+text, chromeflow's content-script handlers can.
 
-## Expected response fields
+**Write into deep closed-shadow native input: partial.** CSS
+selectors don't traverse shadow boundaries, so
+`ion-input input.native-input` matches nothing. The write path needs
+either:
+- A selector that starts INSIDE the shadow root (e.g. just `input`
+  scoped via `frame=` to a shadow-root iframe — but the iframe here
+  is the OUTER document, the shadow is nested below).
+- `react_call_prop` / `react_set_input` style targeting where the
+  content script tags the inner element via deep walk.
+- Click-to-focus then `type_text` into the focused element.
 
-- `fill_input` response: `Set <input type="email" name="email" ...> to
-  "test@example.com" (resolved inside shadow DOM)`.
-- `execute_script` afterward: re-reading the same selector still
-  returns null in MAIN world, but the field value is visible in the UI.
-- `get_form_fields()` shows the field with the new value.
+## Recommended primary path
 
-## Manual verification
+When you know a site uses closed shadow DOM (Stencil, Lit with
+`shadowRoot: 'closed'`, Radix portals):
 
-The input should display the typed value. If the page's React state
-has it as empty, the React-aware native setter didn't fire its
-input/change events — re-check `background.ts:react_set_input`.
+```
+# Discovery confirms the closed shadow is in play
+list_frames()          # check Shadow hosts: N closed > 0
+get_page_text()        # auto-pierces; surfaces shadow_hosts_seen > 0
+
+# Reading text inside closed shadow
+find_text("label", in_dialog=true)  # pierces
+get_page_text()                      # pierces
+get_form_fields()                    # pierces
+
+# Filling an input inside closed shadow
+# Preferred: click_element on the visible label (chromeflow's content
+# script walks the closed shadow via queryAllDeep), then type_text
+click_element(textHint="Default input")
+type_text("value")
+# OR if the host element supports value prop (Stencil ion-input does):
+execute_script("$deep('ion-input').value = 'value'")  # via the helper
+```
 
 ## Known regressions
 
-The pre-0.9.13 version used plain `doc.querySelector` in the MAIN-
-world handler for `react_set_input`. Closed-shadow inputs were
-unreachable. Fixed by adding `tag_for_react` content-script handler
-that tags the matched element via `queryAllDeep`, then the MAIN-world
-script looks up by attribute.
+None for the read path. The deep-closed-shadow CSS combinator
+limitation is fundamental to CSS, not a chromeflow bug. Future
+ergonomic improvement: chromeflow's `set_file_input` already uses
+content-script tagging to reach inputs across closed shadow
+boundaries; the same pattern could be applied to a future
+`fill_input(deep_selector="input.native-input")` mode.

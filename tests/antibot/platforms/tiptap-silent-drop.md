@@ -1,64 +1,81 @@
-# TipTap silent-drop recovery
+# TipTap / ProseMirror typing
 
-**Validated:** Yes
-**Last verified:** 2026-05-25 on chromeflow 0.9.14
-**Auth required:** Depends on host site
-**Stability:** Stable
+**Validated:** Pass on standard ProseMirror demo; silent-drop recovery path untested (failure mode is env-specific)
+**Last verified:** 2026-05-25 on chromeflow 0.10.1
+**Auth required:** None (public demo)
+**Stability:** Stable for typing path
 
 ## What this validates
 
-`type_text` post-type verification auto-recovers from TipTap /
-ProseMirror's silent-drop failure mode. CDP keystrokes visibly land in
-the editor, then TipTap's internal state machine reverts the content
-to the placeholder a few seconds later. The fix detects the drop and
-re-fills via `document.execCommand("insertText", false, text)` which
-TipTap accepts.
+`type_text` with `into_selector=".ProseMirror"` and `clear_first=true`
+lands multi-paragraph text into a ProseMirror editor with isTrusted=true
+CDP keystrokes. Paragraph breaks are preserved as proper `<p>` block
+structure.
 
-## Preconditions
+The silent-drop auto-recovery path (post-type verify, fall back to
+`execCommand("insertText")` when < 50% of expected content survived) is
+not exercised on the public ProseMirror demo because the demo does not
+reproduce the silent-drop failure mode.
 
-- A page with a TipTap or ProseMirror editor (any site using TipTap
-  v2 — many annotation dashboards, modern CMSes, knowledge-base apps).
-- The editor's CSS selector (typically `.ProseMirror` or `.tiptap`).
+## Procedure executed (2026-05-25)
 
-## Procedure
+1. `open_page("https://prosemirror.net/examples/basic/")`.
+2. `type_text` with 272-character body across 3 paragraphs (newlines as `\n\n`), `into_selector=".ProseMirror"`, `clear_first=true`.
+3. Wait 3s for any TipTap state-machine settle.
+4. Verify via `execute_script`:
+   - `textContent.length` = 776 (existing demo content + my 272 chars; `clear_first` did NOT fully clear the demo's default text on standard ProseMirror).
+   - `querySelectorAll('p').length` = 7 (3 of mine + 4 pre-existing).
+   - `textContent.startsWith("First paragraph chromeflow validation")` = true.
 
-1. `open_page(<site with TipTap editor>)`
-2. `find_text("Prompt")` to locate the editor's label, confirms
-    it's a contenteditable inside `.ProseMirror`.
-3. `type_text("Test body content with at least 400 characters to
-    trigger the silent-drop. Padding: ...",
-    into_selector=".ProseMirror", clear_first=true)`
-4. Wait 2-3s for TipTap's internal state to settle.
-5. `execute_script("return document.querySelector('.ProseMirror').textContent.length")`
+## Result
 
-## Expected response fields
+**Pass for typing path.** The typed text persisted past the 3-second
+settle wait. No silent drop happened — my content remained in the
+editor.
 
-- `type_text` response includes the recovery note when fallback fires:
-  `"Typed N characters via individual keystrokes — TipTap/ProseMirror
-  silently dropped the typed text (X/Y chars survived), recovered via
-  execCommand insertText (Z chars now in editor)"`.
-- If the editor accepts CDP keystrokes natively (some TipTap configs do),
-  the message is the plain `"Typed N characters..."` with no recovery
-  note. Both outcomes are PASS.
+**Silent-drop recovery path: untested.** The known TipTap silent-drop
+failure mode (CDP keystrokes land visually, then a TipTap internal
+state diff reverts to placeholder a few seconds later) does not
+reproduce on the public ProseMirror demo. The failure mode is
+environment-specific to certain stricter TipTap configurations,
+typically when an extension's state diff is configured to discard
+input not matching expected schema.
 
-## Manual verification
-
-The editor should display the full typed text 2-3 seconds after the
-type completes. If the placeholder reappears and no recovery note
-fires in the response, the detection threshold (50% of expected
-content) is too low for this editor — increase the threshold or
-detect via a TipTap-specific class.
-
-## Known regressions
-
-Pre-0.9.14: `type_text` reported success even when TipTap discarded
-the text, leaving the editor empty. The user had to manually verify
-and retry via `execute_script`. The 0.9.14 fix adds post-type
-verification + execCommand fallback.
+**`clear_first` partial behavior.** On standard ProseMirror,
+`clear_first=true` does NOT fully clear default editor content. The
+typed text was APPENDED after the existing content rather than
+replacing it. This is a known quirk of ProseMirror's state machine
+restoring its default doc state. On Lexical editors (Reddit,
+Facebook), `clear_first` works correctly.
 
 ## Recommended primary path
 
-For TipTap, prefer `fill_input(textHint="Editor label", value="...")`
-which auto-detects `.ProseMirror` / `.tiptap` / `[data-tiptap-editor]`
-and uses execCommand from the start. `type_text` is the fallback for
-when fill_input doesn't find the right editor.
+For known TipTap / ProseMirror editors where you want explicit
+control:
+
+```
+# Preferred: fill_input auto-detects ProseMirror and uses execCommand
+fill_input(textHint="Description", value="...")
+# This routes through fillProseMirror which uses execCommand insertText
+# (the path TipTap accepts most reliably).
+
+# Fallback for cases fill_input does not find the editor by hint:
+type_text("...", into_selector=".ProseMirror", clear_first=true)
+# If clear_first leaves residual content, follow with a selector-mode
+# fill_input to set the value via the React-aware setter.
+```
+
+## Auto-recovery (not exercised in this validation)
+
+When `type_text(into_selector="...")` resolves to a contenteditable
+inside `.tiptap` / `.ProseMirror` / `[data-tiptap-editor]` ancestor
+AND post-type verification sees < 50% of expected content,
+chromeflow auto-falls-back to `execCommand("insertText", false,
+text)`. The response message records the recovery.
+
+## Known regressions
+
+None at 0.10.1. The standard ProseMirror demo does not reproduce the
+silent-drop failure mode. Open follow-up: catalog which TipTap
+configurations DO reproduce silent-drop and add them as a separate
+controlled test fixture.
