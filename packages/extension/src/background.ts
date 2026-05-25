@@ -1367,7 +1367,42 @@ async function handleMcpMessage(msg: {
         if (base64.length <= MAX_BASE64_BYTES) break;
       }
 
-      return { type: "screenshot_response", image: base64, width: finalWidth, height: finalHeight };
+      // Viewport / page / scroll snapshot so the agent can compute coordinates
+      // for click_at_coordinates without a separate execute_script probe.
+      let viewport: { width: number; height: number } | undefined;
+      let page: { width: number; height: number } | undefined;
+      let scroll: { x: number; y: number } | undefined;
+      if (isScriptableUrl(tab.url)) {
+        try {
+          const m = await chrome.scripting.executeScript({
+            target: { tabId: tab.id! },
+            func: () => ({
+              vw: window.innerWidth,
+              vh: window.innerHeight,
+              pw: Math.max(document.documentElement.scrollWidth, document.body?.scrollWidth ?? 0),
+              ph: Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0),
+              sx: window.scrollX,
+              sy: window.scrollY,
+            }),
+          });
+          const r = m[0]?.result as { vw: number; vh: number; pw: number; ph: number; sx: number; sy: number } | undefined;
+          if (r) {
+            viewport = { width: r.vw, height: r.vh };
+            page = { width: r.pw, height: r.ph };
+            scroll = { x: r.sx, y: r.sy };
+          }
+        } catch { /* best-effort */ }
+      }
+
+      return {
+        type: "screenshot_response",
+        image: base64,
+        width: finalWidth,
+        height: finalHeight,
+        viewport,
+        page,
+        scroll,
+      };
     }
 
     case "start_click_watch": {

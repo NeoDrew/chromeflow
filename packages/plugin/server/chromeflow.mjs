@@ -24950,8 +24950,10 @@ Refuses fast on pages that are in fullscreen mode (captureVisibleTab hangs there
         } catch {
         }
       }
+      const r = response;
+      const meta = r.viewport && r.page && r.scroll ? ` viewport=${r.viewport.width}x${r.viewport.height}, page=${r.page.width}x${r.page.height}, scroll=(${r.scroll.x},${r.scroll.y}).` : "";
       if (shouldInline) {
-        const msg = notes.length ? notes.join(". ") + "." : `Screenshot captured (${response.width}x${response.height}, ${base64Len} base64 chars). Analyze the image to identify element positions for highlighting.`;
+        const msg = notes.length ? notes.join(". ") + "." + meta : `Screenshot captured (${response.width}x${response.height}, ${base64Len} base64 chars).${meta} Analyze the image to identify element positions for highlighting.`;
         return {
           content: [
             { type: "image", data: response.image, mimeType: "image/png" },
@@ -24959,7 +24961,7 @@ Refuses fast on pages that are in fullscreen mode (captureVisibleTab hangs there
           ]
         };
       }
-      notes.push(`Image saved to ${landedPath} (${response.width}x${response.height}, ~${Math.round(imageBuffer.byteLength / 1024)}KB) \u2014 Read the file or use OS image viewer. To force inline despite size, pass inline="always".`);
+      notes.push(`Image saved to ${landedPath} (${response.width}x${response.height}, ~${Math.round(imageBuffer.byteLength / 1024)}KB).${meta} Read the file or use OS image viewer. To force inline despite size, pass inline="always".`);
       return {
         content: [{ type: "text", text: notes.join(". ") + "." }]
       };
@@ -25355,8 +25357,45 @@ Never use take_screenshot just to read page content \u2014 paginate with startIn
 
 ` + text;
       }
+      if ((startIndex ?? 0) === 0 && r.viewport && r.page && r.scroll) {
+        const footer = `
+
+---
+viewport: ${r.viewport.width}x${r.viewport.height}, page: ${r.page.width}x${r.page.height}, scroll: (${r.scroll.x}, ${r.scroll.y})`;
+        text = text + footer;
+      }
       return {
         content: [{ type: "text", text: text || "(no text found on page)" }]
+      };
+    }
+  );
+  server.tool(
+    "get_page_html",
+    `Get the raw HTML of the current page or a scoped element. Use when you need to parse structure (tables, attribute values, nested data) and \`get_page_text\` strips too much, or when you're extracting structured data from a page Claude can't easily reason about from text alone.
+
+Pierces open AND closed shadow roots for the \`selector\` lookup (Radix portals, Stencil/Lit web components). \`<script>\`, \`<style>\`, \`<noscript>\` are stripped before returning.
+
+Default \`max_chars\` is 50,000. If the page is bigger, the response carries \`truncated: true\` and \`total_chars\` so you can decide whether to scope further with \`selector\`.
+
+When the goal is "is X on this page?" or "find clickable Y", use \`find_text\` instead \u2014 it returns a focused match list rather than a wall of HTML.`,
+    {
+      selector: external_exports.string().optional().describe(
+        "CSS selector to scope the HTML to. Pierces closed shadow roots. Omit to return the main content area (or body)."
+      ),
+      max_chars: external_exports.number().int().min(1e3).optional().describe("Truncate after this many chars (default 50000). The response includes total_chars so you know if you missed anything.")
+    },
+    async ({ selector, max_chars }) => {
+      const response = await bridge.request({ type: "get_page_html", selector, max_chars });
+      if (response.type !== "page_html_response") throw new Error("Unexpected response");
+      const r = response;
+      const notes = [];
+      if (r.selector_missed) notes.push(`selector "${selector}" not found, returning full body HTML`);
+      if (r.selector_in_shadow) notes.push(`selector matched inside a closed shadow root`);
+      if (r.truncated) notes.push(`truncated at ${max_chars ?? 5e4} of ${r.total_chars} chars; scope further with selector to see more`);
+      const header = notes.length > 0 ? `[${notes.join("; ")}]
+` : "";
+      return {
+        content: [{ type: "text", text: header + r.html }]
       };
     }
   );
@@ -26009,7 +26048,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // ../mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.9.14" : "dev";
+var PACKAGE_VERSION = true ? "0.10.0" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);
