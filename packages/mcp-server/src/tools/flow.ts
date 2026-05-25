@@ -24,7 +24,7 @@ Scope matching with \`within_selector\` or \`near_text\` restricts where matches
 
 Shadow DOM (open AND closed) is pierced by default via chrome.dom.openOrClosedShadowRoot — Reddit faceplate-* / r-post-form-submit-button / web-component-heavy SPAs no longer need manual deepFind recipes.
 
-ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X / Twitter, OAuth login, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry — pre-fill the form, then highlight the submit button and call wait_for_click so a real human gesture fires the submission.`,
+ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X / Twitter, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry — pre-fill the form, then highlight the submit button and call wait_for_click so a real human gesture fires the submission.`,
     {
       textHint: z
         .string()

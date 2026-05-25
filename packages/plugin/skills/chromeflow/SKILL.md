@@ -8,7 +8,7 @@ description: >
   React-heavy forms with TipTap / ProseMirror / Stripe contenteditable
   inputs, working with closed shadow DOM (Radix portals, Stencil, Lit web
   components), bypassing isTrusted-strict anti-bot detection (Reddit
-  faceplate-*, X / Twitter composer, and similar handlers, LinkedIn,
+  faceplate-*, X / Twitter composer, LinkedIn,
   behavioural fingerprinters), navigating dashboards, capturing API keys
   from settings pages, uploading files through custom drag-zone uploaders,
   parallel multi-tab automation, or any browser step blocking code work.
@@ -43,8 +43,8 @@ Use chromeflow automatically when a task needs any of:
 - Filling forms behind modern React frameworks (TipTap, ProseMirror,
   CodeMirror, Monaco, Stripe contenteditable)
 - Driving sites with closed shadow DOM (Radix portals, Stencil, Lit)
-- Driving sites with anti-bot detection (Reddit, X, and similar handlers,
-  LinkedIn, Akamai-protected dashboards)
+- Driving sites with anti-bot detection (Reddit, X, LinkedIn,
+  Akamai-protected dashboards)
 - Any browser-based step blocking code work
 
 Do NOT ask "should I open the browser?" — just do it. The user expects
@@ -73,7 +73,7 @@ product, adding an env var), continue immediately with chromeflow.
    changes.** Never poll with repeated `take_screenshot`.
 
 4. **Form submits on anti-bot platforms require a real human gesture.**
-   Reddit, X / Twitter, and similar handlers, mcp.so all silently reject
+   Reddit, X / Twitter, mcp.so all silently reject
    synthetic submit clicks even when chromeflow's CDP click passes
    isTrusted. For these platforms: pre-fill the form with
    `fill_form` / `fill_input`, then `highlight_region` the submit button
@@ -156,8 +156,8 @@ Use the absolute path for `envPath` (Claude Code working dir + `/.env`).
 When the simple flow above isn't enough, load the relevant reference.
 References live alongside this skill at `references/<topic>.md`:
 
-- **`references/anti-bot.md`** — isTrusted-strict sites (Reddit, X, GitHub
-  OAuth login, LinkedIn). The CDP click sequence, silent-rejection
+- **`references/anti-bot.md`** — isTrusted-strict sites (Reddit, X,
+  LinkedIn). The CDP click sequence, silent-rejection
   decision tree, `expect_submit`, `try_fiber`, `via: "fiber"` flag,
   validated-against list, what we explicitly DON'T claim. Read this
   whenever a click looks like it succeeded but the page didn't react.
@@ -200,7 +200,7 @@ Auto-detected; uses execCommand insertText which TipTap accepts. If it
 fails, `type_text(into_selector=".ProseMirror", clear_first=true, text=…)`
 also auto-recovers from TipTap silent-drop.
 
-**Anti-bot submit (Reddit, X, and similar handlers):**
+**Anti-bot submit (Reddit, X, similar isTrusted-strict forms):**
 ```
 get_form_fields()                          # pre-fill what you can
 fill_form([{label: ..., value: ...}])
