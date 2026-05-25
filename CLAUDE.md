@@ -67,7 +67,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         fill_input(textHint="Product name", value="Pro")   — fill a single field by label hint (works on React, CodeMirror, and contenteditable). Always check the response — it names the matched element so you can spot wrong-field matches
         fill_input(textHint="Rate", value="5", exact=true) — exact-match mode for short generic labels that may collide with neighbouring fields
         fill_input(selector="input[name=email]", value="x@y") — selector-mode (replaces the old react_set_input). Bypasses fuzzy matching and uses the React-aware native value-setter so React's onChange picks up the change. Supports `frame` for same-origin iframe inputs.
-        type_text("hello world")            — type via trusted keyboard events (use when fill_input fails isTrusted checks)
+        type_text("hello world")            — type via trusted keyboard events (use when fill_input fails isTrusted checks). Long typings emit a progress heartbeat every 200 chars so the WS request-timer resets — ~1800-char typings complete reliably without false timeout-reports
         type_text("new value", into_selector=".ProseMirror", clear_first=true)  — focus a target (shadow-piercing) and overwrite in one call (tiptap / ProseMirror / dense rich-text)
         type_text("description", frame="iframe.se-rte")  — type into a same-origin iframe's contenteditable (eBay description editor pattern)
         set_file_input("Upload", "/abs/path/to/file.zip") — upload a file; returns success only after the upload is observably committed (no manual sleep needed between rapid uploads)
@@ -77,6 +77,7 @@ Do NOT ask "should I open the browser?" — just do it. The user expects seamles
         get_page_text()                     — read errors/status after actions
         wait_for(selector=".success")       — wait for a CSS selector to appear (replaces wait_for_selector)
         wait_for(text="Saved")              — wait for a text substring to appear (replaces wait_for_text)
+        wait_for(text=["Saved","Error","Failed"])  — any-of mode; returns matched_query so you know which one fired
         wait_for(change_in=".toast")        — wait for an existing element's subtree to mutate, then read its text (replaces wait_for_change)
         execute_script("return await fetch('/api/x').then(r => r.json())")  — top-level await is supported, no window.__variable + sleep dance needed
    c. When an element can't be found or clicked:
@@ -153,12 +154,23 @@ Pages built on Radix UI portals, Stencil components, Lit web components, or any 
 - `find_text(query)` — locate by visible text
 - `get_page_text(selector?)` — read the page (its response also carries `shadow_hosts_seen: N` so you can confirm the diagnosis)
 - `get_form_fields()` — full form inventory, including fields inside shadow-rooted wrappers
-- `click_element(textHint)` — click; `within_selector` also pierces
+- `click_element(textHint)` — click; `within_selector`, `in_dialog`, and `dialog_query` all pierce
 - `fill_input(label, value)` — fill (including tiptap / ProseMirror)
+- `fill_input(selector="...", value=...)` — selector mode now also pierces closed shadow roots (via content-script tagging). Same for `react_call_prop`.
 - `scroll_to_element(query)` — scroll, walks `overflow:auto/scroll` ancestors so inner scroll panes move
 - `list_frames()` — diagnostic: surfaces the shadow-host inventory
 
 **Why**: `execute_script` runs in MAIN world (or the content-script isolated world) and is subject to the same shadow-root opacity that any page script sees. chromeflow's content-script handlers use the extension API that bypasses closed-shadow-root opacity entirely.
+
+**Open-shadow-root helpers inside `execute_script`**: every script body has these three locals pre-injected, so you don't need the manual "walk all elements looking for `.shadowRoot`" preamble that 40-call sessions used to repeat:
+
+- `$deep(selector, root?)` — querySelector that walks open shadow roots. Returns null if nothing matches.
+- `$deepAll(selector, root?)` — querySelectorAll equivalent. Returns an array.
+- `shadowDocument` — the first attached open shadow root on the page, or `document` if none. Useful when an SPA mounts ALL of its UI inside a single root shadow host: replace every `document.querySelector*` with `shadowDocument.querySelector*` and the same code now reaches the SPA's content.
+
+Open roots only, MAIN world cannot reach closed roots. For closed shadow trees, stay with `find_text` / `click_element` / `fill_input` / `get_form_fields` (all pierce both kinds).
+
+**Object returns are auto-stringified**. `return { foo: bar }` in an `execute_script` body now produces JSON, no `JSON.stringify` wrap needed. Strings, numbers, booleans, null pass through `String()`.
 
 To capture and share a screenshot (e.g. for uploading to a form or pasting into a chat),
 use `take_screenshot(copy_to_clipboard=true, save_to="downloads")` — saves a PNG to ~/Downloads
@@ -171,6 +183,11 @@ context window — Reddit / X / large PR pages routinely hit this). Pass
 get a path. Pixel-coordinate work usually benefits from the inline image; "show this
 to the user" usually benefits from the path + `save_to`.
 
+**Fullscreen fast-fail**: `take_screenshot` refuses if `document.fullscreenElement` is set
+(captureVisibleTab usually hangs there). The error tells you to run
+`execute_script("document.exitFullscreen()")` first. Pass `allow_fullscreen: true` to bypass
+the check, but the call will probably time out anyway.
+
 ## Working with complex forms
 - Before filling a large or unfamiliar form, call `get_form_fields()` to get a full inventory
   of every field (type, label, current value, vertical position, and section heading). It also
@@ -179,6 +196,11 @@ to the user" usually benefits from the path + `save_to`.
   name/id (match strength reported as `aria-eq` / `placeholder-eq` / `label-text-eq` /
   `name-eq` / `id-eq` / `*-includes` / `fuzzy-text-walk`). Pass `exact:true` to refuse fuzzy
   text-walk matches. All queries pierce open AND closed shadow roots.
+- **"Why is Submit disabled?"**: pass `get_form_fields(only_empty=true)` for the required-but-empty
+  filter. Returns just the required fields that haven't been filled yet (or radios/checkboxes still
+  unchecked) and skips everything that's already populated. Required-ness is detected via the
+  `required` attribute, `aria-required`, or a trailing `*` in the associated label text. Replaces
+  the "walk every field manually to find the missing one" diagnostic.
 - `get_form_fields()` also surfaces **captcha presence** (reCAPTCHA / Cloudflare Turnstile /
   hCaptcha) and **OAuth provider buttons** ("Continue with Google", "Sign in with GitHub").
   When captcha is detected: synthetic submits will be silently rejected — pre-fill the form,
@@ -337,8 +359,10 @@ If success=false: try `fill_input(selector=...)` to fire the click via the page'
 ```
 click_element("Approve", nth=1, within_selector="#section-b")
 click_element("Approve", nth=1, near_text="Section B")
+click_element("Cancel", in_dialog=true)                   — scope to topmost open [role=dialog]; useful for Radix portals
+click_element("Confirm", dialog_query="Delete account")   — scope to the dialog whose heading matches
 ```
-Mirror of `find_text`'s `scope_selector`. When the scope doesn't match anything, the response carries `scope_missed: true` so callers can branch.
+Mirror of `find_text`'s `scope_selector`. When the scope doesn't match anything, the response carries `scope_missed: true` so callers can branch. `find_text` accepts the same `in_dialog` / `dialog_query` for discovery symmetry.
 
 **Spotting silent redirects**: every `click_element` response now includes `before_url`, `after_url`, and `navigated`. The agent-facing text appends a `→ Navigated: <url>` line whenever `before_url !== after_url`. This catches the "I clicked Assessment but the page bounced me to course home" case without needing a separate `list_tabs` round-trip. If the URL didn't change but the click is supposed to navigate, that's a sign the click never registered.
 
@@ -346,9 +370,24 @@ Mirror of `find_text`'s `scope_selector`. When the scope doesn't match anything,
 
 **`switch_to_tab` accepts `tab` as a synonym for `query`**: `switch_to_tab({tab: 1})`, `switch_to_tab({tab: "github"})`, and `switch_to_tab({query: "github"})` all work. Use whichever reads more naturally — `tab` for indices, `query` for substring matches.
 
+**`switch_to_tab` echoes the landed URL and title**: response now reads `Switched to tab matching "X" → "Page Title" (https://...)` so you can confirm you landed on the right tab without a separate `list_tabs` round trip.
+
 **`click_element` returned silently_rejected (anti-bot fast-fail)**: after dispatch, chromeflow runs a 1500ms activity probe (DOM mutations, focus change, URL change, value/checked change, alert/toast/modal appearance). When the probe sees 0 activity, the click was silently rejected by anti-bot detection (isTrusted-strict React UIs, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success). The response carries `silently_rejected: true` and the message ends with "Switch to highlight_region + wait_for_click so the user's real gesture fires the action." Do NOT retry the same `click_element` — re-targeting won't help. Pre-fill any related fields, then `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
 
 **`try_fiber: true` as a last resort on React-heavy SPAs**: when `silently_rejected: true` keeps recurring on a known React site and `highlight_region + wait_for_click` is not yet an option, pass `click_element(..., try_fiber: true)`. After the activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest `__reactProps$.onClick` prop, and invokes it directly with a minimal synthetic event. The response carries `fiber_attempted: true` so you can tell the path was taken. Do NOT default this on every click — fiber-prop walking is undocumented, may misbehave on mangled production builds, and a real `silently_rejected` is sometimes a captcha deliberately wanting a human gesture. Reserve for repeat rejections on a known-safe React site.
+
+**`via: "fiber"` to skip the CDP click entirely**: on React-heavy SPAs where you already know the action is fiber-only (Outlier-style annotation dashboards), pass `click_element(..., via: "fiber")` to bypass the ~3 seconds of bezier + activity-probe ceremony and invoke `__reactProps$.onClick` straight away. Three modes: `via: "auto"` (default, CDP first then fiber when `try_fiber` is set), `via: "cdp"` (CDP only, no fallback), `via: "fiber"` (fiber only, no CDP). Prefer "auto" until you've confirmed the site needs the bypass.
+
+**Phase-level timeouts replace the all-or-nothing 30s WS cap**: click_element now wraps each phase (CDP click, activity probe, fiber walk, second probe) in its own budget. When a phase exceeds its budget, the response carries `phase_timed_out: "<phase_name>"` and the message identifies WHICH phase hung. The all-up worst case is ~17 seconds, well under the 30s WS cap. If you ever see `phase_timed_out`, it's a hint about WHERE to look (CDP attach contention, hung MAIN-world handler, etc.), not just "timed out somewhere".
+
+**Cross-origin iframes — `click_at_coordinates(x, y)`**: when the target lives inside a cross-origin iframe, `click_element` can't enter (find_text won't cross the boundary) and `execute_script` returns null from `elementFromPoint`. The fix: dispatch a CDP mouse click at viewport coordinates. Same humanlike sequence as `click_element` (bezier, settle, press/release, post-click micro-move) so behavioural fingerprinters can't distinguish the calls. Coordinates are viewport CSS pixels, NOT screen coordinates. `list_frames` reports each iframe at `(x, y, width, height)` in this same space:
+```
+list_frames()                                   — get the iframe's viewport rect
+click_at_coordinates(frame.x + 50, frame.y + 80)  — click 50,80 inside it
+click_at_coordinates(640, 360, button="right")    — context-menu click (rare)
+click_at_coordinates(640, 360, double=true)       — double-click
+```
+Refuses obviously-bad coordinates (negative, > 10000). Skips the activity probe — cross-origin iframe state changes aren't observable from the parent.
 
 **`click_element` timed out (the WS request, not the fast-fail)**: rare since the fast-fail kicks in at 1500ms. If it still happens (a CDP attach hung or a content-script reload during dispatch), the message will say "the click MAY have already fired". Don't blindly retry — re-clicking can toggle React radios OFF or fire a duplicate submit. Verify with `get_page_text`, `wait_for(selector=…)`, or `wait_for(text=…)` first; only retry if the page state confirms the click never took effect.
 
@@ -376,6 +415,10 @@ set_file_input("Photos", "/path/2.jpg", verify_selector=".photo-thumbnail:nth-of
 The page-level file count is reported in the response — use it to spot uploaders that consume-and-reset the input vs uploaders that keep the file there.
 
 **Waiting for async results** (build, save, deploy): `wait_for_selector(selector, timeout)` — never poll with screenshots. `wait_for_selector` pierces open shadow roots, so a selector inside a web component (Lit/Stencil/Radix widget) matches without ceremony.
+
+**On timeout, `wait_for(text=...)` surfaces `last_text`**: the trailing 240 chars of the scope's content when the wait gave up. If you're waiting for "Live" and the deploy panel shows "Starting up... 47%" the whole time, last_text tells you to extend the timeout instead of debugging a phantom failure.
+
+**Initial-match short-circuit warning**: when `wait_for(text=...)` matches the initial check faster than 50ms AND the page kept stale instruction text in the DOM from a prior step, the response carries `initial_match_warning` suggesting `since: "now"`. Acts on the warning to defeat stale-DOM false positives without you having to remember the `since` option.
 
 **Waiting for a shadow host's tree to attach** (e.g. SPA route flips where `<my-host>` appears 10s before its shadow content hydrates, and `wait_for_selector("my-host")` resolves while `host.shadowRoot` is still null): pass `shadow_root=true`. The wait then requires the matched element's `.shadowRoot` to be non-null, not just for the host element to exist.
 ```

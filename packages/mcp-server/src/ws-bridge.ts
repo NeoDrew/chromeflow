@@ -12,6 +12,13 @@ type PendingRequest = {
   resolve: (value: ClientMessage) => void;
   reject: (err: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  /**
+   * Refreshes the request timer by `timeoutMs` from "now". Called when a
+   * `progress` message arrives from the extension so long-running operations
+   * (long type_text, slow downloads) don't trip the request timeout while
+   * they're still making forward progress.
+   */
+  refresh: () => void;
 };
 
 export class WsBridge {
@@ -63,6 +70,13 @@ export class WsBridge {
         } catch {
           return;
         }
+        if (msg.type === "progress") {
+          // Heartbeat from a long-running handler. Reset the request's
+          // timeout so the next-progress-or-completion gap is what counts.
+          const pending = this.pending.get(msg.requestId);
+          if (pending) pending.refresh();
+          return;
+        }
         if (msg.type === "ready") {
           console.error("[chromeflow] Extension ready");
           // Send identity so the extension knows which project this server belongs to.
@@ -84,14 +98,14 @@ export class WsBridge {
           }));
           return;
         }
-        const pending = this.pending.get(msg.requestId);
-        if (pending) {
-          clearTimeout(pending.timer);
+        const pending2 = this.pending.get(msg.requestId);
+        if (pending2) {
+          clearTimeout(pending2.timer);
           this.pending.delete(msg.requestId);
           if (msg.type === "error") {
-            pending.reject(new Error(msg.message));
+            pending2.reject(new Error(msg.message));
           } else {
-            pending.resolve(msg);
+            pending2.resolve(msg);
           }
         }
       });
@@ -133,12 +147,24 @@ export class WsBridge {
     }
     const requestId = crypto.randomUUID();
     return new Promise<ClientMessage>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let lastProgressAt = Date.now();
+      const fire = () => {
         this.pending.delete(requestId);
-        reject(new Error(`Request timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
+        reject(new Error(`Request timed out after ${timeoutMs}ms (last progress ${Date.now() - lastProgressAt}ms ago). The operation may have completed on the page; verify state before retrying.`));
+      };
+      let timer = setTimeout(fire, timeoutMs);
+      const refresh = () => {
+        clearTimeout(timer);
+        lastProgressAt = Date.now();
+        timer = setTimeout(fire, timeoutMs);
+      };
 
-      this.pending.set(requestId, { resolve, reject, timer });
+      this.pending.set(requestId, {
+        resolve,
+        reject,
+        timer,
+        refresh,
+      });
       this.client!.send(JSON.stringify({ ...message, requestId }));
     });
   }

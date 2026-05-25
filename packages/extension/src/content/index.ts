@@ -6,7 +6,7 @@ import {
 } from "./highlight.js";
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
-import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView, reactFiberClickByHint } from "./click.js";
+import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView, reactFiberClickByHint, findTopmostDialog, findDialogByQuery } from "./click.js";
 import { collectShadowHosts, countShadowHosts, extractTextDeep, queryAllDeep } from "./shadow.js";
 import { enumerateFormFields } from "./forms.js";
 import { findText, findInputs, waitForText } from "./find.js";
@@ -124,6 +124,8 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         msg.within_selector as string | undefined,
         msg.near_text as string | undefined,
         msg.selector as string | undefined,
+        msg.in_dialog as boolean | undefined,
+        msg.dialog_query as string | undefined,
       );
       return { type: "action_done", requestId: msg.requestId, ...result };
     }
@@ -131,6 +133,35 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     case "post_click_inspect": {
       const result = postClickInspect();
       return { type: "action_done", requestId: msg.requestId, ...result };
+    }
+
+    case "tag_for_react": {
+      // Used by background.react_set_input and background.react_call_prop to
+      // bridge MAIN-world prototype access with content-script shadow piercing.
+      // queryAllDeep walks open AND closed shadow roots (via
+      // chrome.dom.openOrClosedShadowRoot), so selectors that target inputs
+      // inside Radix/Stencil/Lit web components resolve here even when plain
+      // doc.querySelector from MAIN world wouldn't find them.
+      const sel = msg.selector as string;
+      const tagId = msg.tagId as string;
+      try {
+        const matches = queryAllDeep<Element>(document, sel);
+        const el = matches[0];
+        if (!el) {
+          return { type: "action_done", requestId: msg.requestId, tagged: false, in_shadow: false };
+        }
+        // Walk parent chain to detect if the element lives inside a shadow root.
+        let cur: Node | null = el;
+        let inShadow = false;
+        while (cur) {
+          if (cur instanceof ShadowRoot) { inShadow = true; break; }
+          cur = cur.parentNode;
+        }
+        el.setAttribute("data-chromeflow-react-target", tagId);
+        return { type: "action_done", requestId: msg.requestId, tagged: true, in_shadow: inShadow };
+      } catch {
+        return { type: "action_done", requestId: msg.requestId, tagged: false, in_shadow: false };
+      }
     }
 
     case "react_fiber_click": {
@@ -142,6 +173,8 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         msg.nth as number | undefined,
         msg.within_selector as string | undefined,
         msg.near_text as string | undefined,
+        msg.in_dialog as boolean | undefined,
+        msg.dialog_query as string | undefined,
       );
       return { type: "action_done", requestId: msg.requestId, ...result };
     }
@@ -394,13 +427,23 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "get_form_fields": {
       const { fields, hiddenFieldCount, captcha, oauthIndicators } = enumerateFormFields(document);
+      const onlyEmpty = msg.only_empty === true;
 
       let warning = "";
       if (hiddenFieldCount > 0) {
         warning = `\n\n⚠ ${hiddenFieldCount} hidden field(s) not shown above — they may appear after you interact with radio buttons, checkboxes, or toggles. Call get_form_fields() again after any such interaction to get an updated inventory.`;
       }
+      const filtered = onlyEmpty ? fields.filter((f) => f.required && f.empty) : fields;
+      // Renumber so visible indices stay 1..N within the filtered slice.
+      filtered.forEach((f, i) => { f.index = i + 1; });
+      if (onlyEmpty) {
+        const skipped = fields.length - filtered.length;
+        warning += skipped > 0
+          ? `\n\nℹ only_empty=true: showing ${filtered.length} required-but-empty field(s); ${skipped} other field(s) skipped.`
+          : `\n\nℹ only_empty=true: no required-but-empty fields detected. If Submit is still disabled, the page may use a custom validation hook (try react_call_prop on the validation handler) or required-ness comes from radio/checkbox groups not flagged with required.`;
+      }
 
-      return { type: "form_fields_response", requestId: msg.requestId, fields, warning, captcha, oauthIndicators };
+      return { type: "form_fields_response", requestId: msg.requestId, fields: filtered, warning, captcha, oauthIndicators };
     }
 
     case "find_text": {
@@ -411,21 +454,57 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           requestId: msg.requestId,
           matches: [],
           total_matches: 0,
+          hidden_count: 0,
           truncated: false,
           frame_error: `Iframe "${msg.frame}" not found, cross-origin, or contentDocument unavailable`,
         };
+      }
+      // in_dialog / dialog_query override scope_selector when set, matching
+      // click_element's behavior so the same flag works across both tools.
+      let scopeSelector = msg.scope_selector as string | undefined;
+      if (msg.dialog_query) {
+        const d = findDialogByQuery(msg.dialog_query as string);
+        if (!d) {
+          return {
+            type: "find_text_response", requestId: msg.requestId,
+            matches: [], total_matches: 0, hidden_count: 0, truncated: false,
+            scope_missed: true,
+            frame_error: `dialog_query "${msg.dialog_query}" did not match any open dialog`,
+          };
+        }
+        // Tag the dialog with a temporary id we can pass as scope_selector.
+        const scopeId = `chromeflow-find-scope-${Date.now()}`;
+        d.setAttribute("data-chromeflow-find-scope", scopeId);
+        scopeSelector = `[data-chromeflow-find-scope="${scopeId}"]`;
+      } else if (msg.in_dialog) {
+        const d = findTopmostDialog();
+        if (!d) {
+          return {
+            type: "find_text_response", requestId: msg.requestId,
+            matches: [], total_matches: 0, hidden_count: 0, truncated: false,
+            scope_missed: true,
+            frame_error: `in_dialog=true but no open dialog on the page`,
+          };
+        }
+        const scopeId = `chromeflow-find-scope-${Date.now()}`;
+        d.setAttribute("data-chromeflow-find-scope", scopeId);
+        scopeSelector = `[data-chromeflow-find-scope="${scopeId}"]`;
       }
       const result = findText(
         msg.query as string,
         {
           max: msg.max as number | undefined,
-          scope_selector: msg.scope_selector as string | undefined,
+          scope_selector: scopeSelector,
           regex: msg.regex as boolean | undefined,
           visible_only: msg.visible_only as boolean | undefined,
           context_chars: msg.context_chars as number | undefined,
         },
         doc
       );
+      // Clean up the temporary scope tag so subsequent calls don't leak.
+      if (msg.in_dialog || msg.dialog_query) {
+        document.querySelectorAll("[data-chromeflow-find-scope]").forEach((el) => el.removeAttribute("data-chromeflow-find-scope"));
+      }
       return { type: "find_text_response", requestId: msg.requestId, ...result };
     }
 
@@ -465,7 +544,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         };
       }
       const result = await waitForText(
-        msg.query as string,
+        msg.query as string | string[],
         {
           timeout_ms: msg.timeout_ms as number | undefined,
           scope_selector: msg.scope_selector as string | undefined,

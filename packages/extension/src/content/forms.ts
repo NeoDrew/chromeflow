@@ -21,6 +21,16 @@ export interface EnumeratedField {
   y: number;
   selector: string;
   context?: string;
+  /** True when the field is `required`, `aria-required="true"`, or its
+   *  containing `<label>` text ends in `*` (the de-facto required-field
+   *  convention on dashboards that don't use semantic attributes). Used by
+   *  the only_empty filter to surface required-but-empty fields the user
+   *  hasn't filled yet, the "why is Submit disabled" diagnostic. */
+  required?: boolean;
+  /** True when the field's current value is empty/unchecked/unselected.
+   *  Combined with `required`, lets the caller filter to required-but-empty
+   *  fields in one pass. */
+  empty?: boolean;
 }
 
 export interface EnumerateResult {
@@ -171,6 +181,46 @@ function deriveFileLabel(el: HTMLInputElement, doc: Document): string {
 }
 
 /**
+ * True when an input is required via the standard HTML attribute, ARIA, or
+ * the unofficial "label ends in *" convention.
+ */
+function isRequiredField(el: HTMLElement, doc: Document): boolean {
+  if (el.hasAttribute("required")) return true;
+  if (el.getAttribute("aria-required") === "true") return true;
+  if (el.id) {
+    const lbl = queryAllDeep<HTMLLabelElement>(doc, `label[for="${CSS.escape(el.id)}"]`)[0];
+    if (lbl && /[*✱∗]\s*$/.test((lbl.textContent ?? "").trim())) return true;
+  }
+  // Wrapping <label> case
+  const parentLabel = el.closest?.("label");
+  if (parentLabel && /[*✱∗]\s*$/.test((parentLabel.textContent ?? "").trim())) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * True when the field's value (or checked state) is empty / unselected.
+ * Mirrors the logic in enumerate's value-extraction so the `empty` flag is
+ * consistent with the displayed `value`.
+ */
+function isFieldEmpty(el: HTMLElement): boolean {
+  if (el instanceof HTMLSelectElement) {
+    return !el.value || el.selectedIndex < 0;
+  }
+  if (el instanceof HTMLInputElement) {
+    if (el.type === "checkbox" || el.type === "radio") return !el.checked;
+    if (el.type === "file") return !el.files || el.files.length === 0;
+    return el.value.trim().length === 0;
+  }
+  if (el instanceof HTMLTextAreaElement) {
+    return el.value.trim().length === 0;
+  }
+  // Custom editors (CodeMirror/Monaco): consider empty if no text content.
+  return (el.textContent ?? "").trim().length === 0;
+}
+
+/**
  * Build a unique-ish CSS selector for an element. Prefers id, falls back
  * to tag:nth-of-type. Mirrors the inline pattern in get_form_fields.
  */
@@ -208,6 +258,8 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
       value: el.files?.[0]?.name ?? "",
       y: getDocumentY(el, doc),
       selector: el.id ? `#${CSS.escape(el.id)}` : "input[type=file]",
+      required: isRequiredField(el, doc),
+      empty: isFieldEmpty(el),
       ...(context ? { context } : {}),
     });
   }
@@ -237,6 +289,8 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
       value: value.slice(0, 60),
       y: getDocumentY(el, doc),
       selector: buildSelector(el, doc),
+      required: isRequiredField(el, doc),
+      empty: isFieldEmpty(el),
       ...(context ? { context } : {}),
     });
   }
@@ -268,6 +322,8 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
       value: currentText,
       y: Math.round(rect.top + scrollY),
       selector: ".cm-editor",
+      required: isRequiredField(editor, doc),
+      empty: (editor.querySelector(".cm-content")?.textContent ?? "").trim().length === 0,
       ...(context ? { context } : {}),
     });
   }
@@ -301,6 +357,8 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
       value: currentText,
       y: getDocumentY(editor, doc),
       selector: ".monaco-editor",
+      required: isRequiredField(editor, doc),
+      empty: currentText.trim().length === 0,
       ...(context ? { context } : {}),
     });
   }

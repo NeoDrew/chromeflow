@@ -20,13 +20,27 @@ export function prepareClickTarget(
   within_selector?: string,
   near_text?: string,
   selector?: string,
+  in_dialog?: boolean,
+  dialog_query?: string,
 ): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean; nextCandidate?: string; scope_missed?: boolean } {
   // Clear any stale tags from a previous click
   document.querySelectorAll(`[${markerIds.clickTargetAttr()}]`).forEach((el) => el.removeAttribute(markerIds.clickTargetAttr()));
   document.querySelectorAll(`[${markerIds.preCheckedAttr()}]`).forEach((el) => el.removeAttribute(markerIds.preCheckedAttr()));
 
   let scope: Document | Element = document;
-  if (within_selector) {
+  if (dialog_query) {
+    const d = findDialogByQuery(dialog_query);
+    if (!d) {
+      return { success: false, message: `dialog_query "${dialog_query}" did not match any open dialog`, scope_missed: true };
+    }
+    scope = d;
+  } else if (in_dialog) {
+    const d = findTopmostDialog();
+    if (!d) {
+      return { success: false, message: `in_dialog=true but no open [role=dialog]/[role=alertdialog]/<dialog open> on the page`, scope_missed: true };
+    }
+    scope = d;
+  } else if (within_selector) {
     // Pierce shadow roots so a selector returned by find_text (which walks
     // closed shadow trees via chrome.dom.openOrClosedShadowRoot) is usable as
     // a click scope. Plain document.querySelector misses elements inside
@@ -297,9 +311,19 @@ export function reactFiberClickByHint(
   nth?: number,
   within_selector?: string,
   near_text?: string,
+  in_dialog?: boolean,
+  dialog_query?: string,
 ): { success: boolean; message: string; fired: boolean; component?: string; label?: string } {
   let scope: Document | Element = document;
-  if (within_selector) {
+  if (dialog_query) {
+    const d = findDialogByQuery(dialog_query);
+    if (!d) return { success: false, message: `dialog_query "${dialog_query}" did not match`, fired: false };
+    scope = d;
+  } else if (in_dialog) {
+    const d = findTopmostDialog();
+    if (!d) return { success: false, message: `in_dialog=true but no open dialog`, fired: false };
+    scope = d;
+  } else if (within_selector) {
     const scoped = queryAllDeep(document, within_selector)[0] ?? null;
     if (!scoped) {
       return { success: false, message: `within_selector "${within_selector}" did not match`, fired: false };
@@ -608,6 +632,63 @@ function findSectionByHeading(needle: string): Element | null {
     if (!text.startsWith(lower)) continue;
     const container = h.closest("section, fieldset, article, form, div, main, aside") ?? h.parentElement;
     if (container) return container;
+  }
+  return null;
+}
+
+/**
+ * Resolve the topmost open dialog on the page. "Topmost" picks the dialog
+ * with the highest CSS z-index, falling back to document-order last. Pierces
+ * shadow roots so Radix portals (which mount their dialogs at document.body
+ * inside a closed shadow root) are reachable. Returns null when no dialog
+ * is currently open.
+ */
+export function findTopmostDialog(): Element | null {
+  const candidates = queryAllDeep(document, '[role="dialog"], [role="alertdialog"], dialog[open]');
+  if (candidates.length === 0) return null;
+  let best: Element | null = null;
+  let bestZ = -Infinity;
+  for (const el of candidates) {
+    // Skip dialogs that aren't actually visible. The closest [aria-hidden=true]
+    // or [hidden] ancestor disqualifies the candidate.
+    if (el.getAttribute("aria-hidden") === "true") continue;
+    if (el.hasAttribute("hidden")) continue;
+    let z = 0;
+    try {
+      const view = el.ownerDocument.defaultView;
+      if (view) {
+        const cs = view.getComputedStyle(el as Element);
+        const parsed = parseInt(cs.zIndex || "0", 10);
+        if (Number.isFinite(parsed)) z = parsed;
+      }
+    } catch { /* cross-window — ignore */ }
+    // Last-write-wins among equal z-index, biases toward the most-recently
+    // appended dialog (document order).
+    if (z >= bestZ) {
+      bestZ = z;
+      best = el;
+    }
+  }
+  return best;
+}
+
+/**
+ * Resolve a dialog by heading or aria-label substring. Used by
+ * click_element(dialog_query="Select a snapshot") to scope candidates to a
+ * specific named dialog when multiple dialogs are open (rare but happens on
+ * confirm-inside-confirm flows).
+ */
+export function findDialogByQuery(query: string): Element | null {
+  const lower = query.toLowerCase().trim();
+  if (!lower) return null;
+  const dialogs = queryAllDeep(document, '[role="dialog"], [role="alertdialog"], dialog[open]');
+  for (const d of dialogs) {
+    const aria = (d.getAttribute("aria-label") ?? "").toLowerCase();
+    if (aria.includes(lower)) return d;
+    // Check headings inside
+    const heading = d.querySelector("h1, h2, h3, h4, h5, h6, [role='heading']");
+    const text = (heading?.textContent ?? "").toLowerCase().trim();
+    if (text.includes(lower)) return d;
   }
   return null;
 }

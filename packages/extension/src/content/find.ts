@@ -26,6 +26,10 @@ export interface FindTextMatch {
 export interface FindTextResult {
   matches: FindTextMatch[];
   total_matches: number;
+  /** Count of matches that exist in the DOM but were filtered out because
+   *  visible_only=true. Lets callers distinguish "not on page" from "on page
+   *  but hidden" so the agent learns to pass visible_only=false when needed. */
+  hidden_count: number;
   truncated: boolean;
   scope_missed?: boolean;
 }
@@ -78,23 +82,24 @@ export function findText(
     // components / Lit web components.
     scope = queryAllDeep(doc, opts.scope_selector)[0] ?? null;
     if (!scope) {
-      return { matches: [], total_matches: 0, truncated: false, scope_missed: true };
+      return { matches: [], total_matches: 0, hidden_count: 0, truncated: false, scope_missed: true };
     }
   } else {
     scope = doc.body;
   }
   if (!scope) {
-    return { matches: [], total_matches: 0, truncated: false };
+    return { matches: [], total_matches: 0, hidden_count: 0, truncated: false };
   }
 
   const matcher = compileMatcher(query, opts.regex ?? false);
   if (!matcher) {
-    return { matches: [], total_matches: 0, truncated: false };
+    return { matches: [], total_matches: 0, hidden_count: 0, truncated: false };
   }
 
   const matches: FindTextMatch[] = [];
   const seenAnchors = new WeakSet<Element>();
   let total = 0;
+  let hidden = 0;
 
   for (const textNode of walkTextNodesDeep(scope)) {
     const text = textNode.textContent ?? "";
@@ -108,7 +113,10 @@ export function findText(
     if (!anchor) continue;
     if (seenAnchors.has(anchor)) continue;
     seenAnchors.add(anchor);
-    if (visibleOnly && !isVisible(anchor, doc)) continue;
+    if (visibleOnly && !isVisible(anchor, doc)) {
+      hidden++;
+      continue;
+    }
 
     if (matches.length >= max) continue;
 
@@ -126,6 +134,7 @@ export function findText(
   return {
     matches,
     total_matches: total,
+    hidden_count: hidden,
     truncated: total > matches.length,
   };
 }
@@ -356,42 +365,61 @@ export interface WaitForTextResult {
   selector?: string;
   text?: string;
   context?: string;
+  /** When `query` was an array, the specific entry that matched. */
+  matched_query?: string;
+  /** Zero-based index into the input array when `query` was an array. */
+  matched_index?: number;
   elapsed_ms: number;
+  /** On timeout, the trailing slice of the scope's text content (best-effort,
+   *  capped) so callers can see "what was visible when the wait gave up". */
+  last_text?: string;
+  /** Set when the initial check matched <50ms in and the agent likely caught
+   *  stale DOM from a prior step. Suggests passing `since: "now"`. */
+  initial_match_warning?: string;
 }
 
 /**
- * Wait for `query` to appear in the DOM. Resolves on the first match or
- * when `timeout_ms` elapses. Uses a MutationObserver — no polling. The
- * initial check fires synchronously before the observer attaches so
- * already-present text resolves immediately.
+ * Wait for `query` (a single string OR an array of strings — any-of mode) to
+ * appear in the DOM. Resolves on the first match or when `timeout_ms`
+ * elapses. Uses a MutationObserver, no polling. The initial check fires
+ * synchronously before the observer attaches so already-present text
+ * resolves immediately. On timeout, the result carries `last_text`, the
+ * trailing slice of the scope's content, so callers can see what state the
+ * scope was actually in when the wait gave up.
  */
 export function waitForText(
-  query: string,
+  query: string | string[],
   opts: WaitForTextOpts = {},
   doc: Document = document
 ): Promise<WaitForTextResult> {
   const timeoutMs = Math.max(100, opts.timeout_ms ?? 10_000);
   const start = performance.now();
+  const queries = Array.isArray(query) ? query : [query];
+  const initialMatchThresholdMs = 50;
 
-  const check = (): FindTextMatch | null => {
-    const r = findText(
-      query,
-      {
-        max: 1,
-        scope_selector: opts.scope_selector,
-        regex: opts.regex,
-        visible_only: true,
-        context_chars: 60,
-      },
-      doc
-    );
-    return r.matches[0] ?? null;
+  const check = (): { match: FindTextMatch; query: string; index: number } | null => {
+    for (let i = 0; i < queries.length; i++) {
+      const q = queries[i];
+      const r = findText(
+        q,
+        {
+          max: 1,
+          scope_selector: opts.scope_selector,
+          regex: opts.regex,
+          visible_only: true,
+          context_chars: 60,
+        },
+        doc
+      );
+      if (r.matches[0]) return { match: r.matches[0], query: q, index: i };
+    }
+    return null;
   };
 
   const sinceNow = opts.since === "now";
 
   return new Promise<WaitForTextResult>((resolve) => {
-    // When since="now" is set the initial-check short-circuit is skipped —
+    // When since="now" is set the initial-check short-circuit is skipped,
     // callers explicitly want to wait for a NEW mutation, not match against
     // already-present text. Used to defeat the "stacked instructions still
     // in DOM after the route changed" footgun on SPAs that keep all
@@ -399,12 +427,20 @@ export function waitForText(
     if (!sinceNow) {
       const initial = check();
       if (initial) {
+        const elapsed = Math.round(performance.now() - start);
+        const warning =
+          elapsed < initialMatchThresholdMs
+            ? `matched on initial check (elapsed_ms=${elapsed}, no mutation observed). If the page kept this text in the DOM from a prior step, pass since: "now" to gate on a new mutation.`
+            : undefined;
         resolve({
           found: true,
-          selector: initial.selector,
-          text: initial.text,
-          context: initial.context,
-          elapsed_ms: Math.round(performance.now() - start),
+          selector: initial.match.selector,
+          text: initial.match.text,
+          context: initial.match.context,
+          matched_query: queries.length > 1 ? initial.query : undefined,
+          matched_index: queries.length > 1 ? initial.index : undefined,
+          elapsed_ms: elapsed,
+          initial_match_warning: warning,
         });
         return;
       }
@@ -413,7 +449,7 @@ export function waitForText(
     let scope: Element | Document | null = doc;
     if (opts.scope_selector) {
       // Pierce open + closed shadow roots so the wait can observe inside
-      // Radix portals / Stencil web components — matches findText's scope
+      // Radix portals / Stencil web components, matches findText's scope
       // behavior so a caller can wait on a section previously located via
       // find_text.
       scope = queryAllDeep(doc, opts.scope_selector)[0] ?? null;
@@ -430,7 +466,7 @@ export function waitForText(
     let seenMutation = false;
     const observer = new MutationObserver((records) => {
       // since="now" gates resolution on at least one meaningful record. A
-      // pure attribute-only mutation isn't enough — we only want childList
+      // pure attribute-only mutation isn't enough, we only want childList
       // additions/removals or characterData changes that could actually
       // bring new text into the DOM.
       if (sinceNow && !seenMutation) {
@@ -448,18 +484,33 @@ export function waitForText(
         clearTimeout(timer);
         resolve({
           found: true,
-          selector: m.selector,
-          text: m.text,
-          context: m.context,
+          selector: m.match.selector,
+          text: m.match.text,
+          context: m.match.context,
+          matched_query: queries.length > 1 ? m.query : undefined,
+          matched_index: queries.length > 1 ? m.index : undefined,
           elapsed_ms: Math.round(performance.now() - start),
         });
       }
     });
     const timer = setTimeout(() => {
       observer.disconnect();
+      // Capture the trailing slice of the scope's text so the caller learns
+      // what state the page was actually in when the wait gave up. Caps at
+      // 240 chars — enough for "Currently visible: 'Starting up... 47%'"
+      // without bloating the response.
+      let lastText: string | undefined;
+      try {
+        const target = scope instanceof Document ? (scope.body ?? scope.documentElement) : scope;
+        if (target) {
+          const txt = (target.textContent ?? "").replace(/\s+/g, " ").trim();
+          lastText = txt.length > 240 ? txt.slice(-240) : txt;
+        }
+      } catch { /* ignore */ }
       resolve({
         found: false,
         elapsed_ms: Math.round(performance.now() - start),
+        last_text: lastText,
       });
     }, timeoutMs);
     observer.observe(observeTarget, {

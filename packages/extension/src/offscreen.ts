@@ -119,3 +119,26 @@ function publishLivePorts() {
     // Background may be starting up, ignore
   });
 }
+
+// Progress heartbeats: background dispatches "chromeflow-progress" messages
+// to the offscreen during long-running handlers (type_text, set_file_input).
+// We forward them straight to the right WS so the MCP server's request
+// timer resets. Fire-and-forget — no response, no waiting.
+chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg && msg.source === "chromeflow-progress" && typeof msg.port === "number") {
+    const conn = connections.find((c) => c.port === msg.port);
+    if (conn?.ws && conn.connected) {
+      try {
+        conn.ws.send(JSON.stringify({
+          type: "progress",
+          requestId: msg.requestId,
+          phase: msg.phase,
+          detail: msg.detail,
+        }));
+      } catch { /* WS may have closed mid-send; bridge will fire its own timeout */ }
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+  return false;
+});
