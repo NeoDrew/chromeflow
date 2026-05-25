@@ -24831,6 +24831,11 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
 
 \u26A0 anti_bot_detected: "${r.anti_bot_detected}" \u2014 the page returned a known block / challenge response. Page content is unlikely to be the intended target. Don't try to interact with it; navigate elsewhere or surface to the user.`;
       }
+      if (r.dismissed_beforeunload) {
+        text += `
+
+\u2139 dismissed_beforeunload: true \u2014 the previous page had unsaved content (typed text in a composer, form draft, etc.) and Chrome's "Are you sure you want to leave?" dialog was auto-dismissed so navigation could proceed. If that draft was load-bearing, navigate back and re-capture before continuing.`;
+      }
       return { content: [{ type: "text", text }] };
     }
   );
@@ -26055,7 +26060,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // ../mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.10.1" : "dev";
+var PACKAGE_VERSION = true ? "0.10.2" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

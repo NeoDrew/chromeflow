@@ -946,6 +946,49 @@ async function handleMcpMessage(msg: {
         throw new Error(blockNav.reason!);
       }
       const background = msg.background === true;
+
+      // beforeunload protection: when navigating away from a same-tab page
+      // that has unsaved content, Chrome's native "Are you sure you want to
+      // leave?" dialog blocks navigation. We attach a CDP listener that
+      // auto-accepts the dialog (i.e. "Leave") so navigation goes through.
+      // The `dismissed_beforeunload` field in the response reports when this
+      // fired so the caller knows the page HAD unsaved content (and can
+      // choose to navigate back + recover if it cares).
+      let dismissedBeforeunload = false;
+      let beforeunloadHandler: ((source: chrome.debugger.Debuggee, method: string, params?: object) => void) | null = null;
+      let attachedForBeforeunload = false;
+      let preNavActiveTabId: number | undefined;
+      if (!msg.newTab) {
+        const preActive = await getActiveTab(port);
+        if (preActive.id && isScriptableUrl(preActive.url)) {
+          preNavActiveTabId = preActive.id;
+          try {
+            await (chrome.debugger as unknown as { attach: (t: { tabId: number }, v: string) => Promise<void> })
+              .attach({ tabId: preActive.id }, "1.3");
+            attachedForBeforeunload = true;
+            await (chrome.debugger as unknown as { sendCommand: (t: { tabId: number }, m: string) => Promise<unknown> })
+              .sendCommand({ tabId: preActive.id }, "Page.enable");
+            const protectTabId = preActive.id;
+            beforeunloadHandler = (source, method, params) => {
+              if (source.tabId !== protectTabId) return;
+              const p = params as { type?: string } | undefined;
+              if (method === "Page.javascriptDialogOpening" && p?.type === "beforeunload") {
+                (chrome.debugger as unknown as { sendCommand: (t: { tabId: number }, m: string, args?: object) => Promise<unknown> })
+                  .sendCommand({ tabId: protectTabId }, "Page.handleJavaScriptDialog", { accept: true })
+                  .catch(() => {});
+                dismissedBeforeunload = true;
+              }
+            };
+            chrome.debugger.onEvent.addListener(beforeunloadHandler);
+          } catch {
+            // Debugger attach failed (already attached, no permission, etc.).
+            // Navigation will proceed without beforeunload protection — the
+            // dialog will block if the page has unsaved content. Caller can
+            // retry; rare in practice.
+          }
+        }
+      }
+
       if (msg.newTab) {
         // Ensure an assignment exists BEFORE creating the tab — otherwise
         // chrome.tabs.create with no windowId drops the tab into whatever
@@ -994,6 +1037,21 @@ async function handleMcpMessage(msg: {
         chrome.tabs.onUpdated.addListener(listener);
         setTimeout(resolve, 15000);
       });
+
+      // Cleanup beforeunload protection now that navigation has settled.
+      // We detach the debugger here (rather than holding it across the
+      // settle check / anti-bot detection) so other handlers (click_element,
+      // type_text) can attach freely without waiting.
+      if (beforeunloadHandler) {
+        chrome.debugger.onEvent.removeListener(beforeunloadHandler);
+        beforeunloadHandler = null;
+      }
+      if (attachedForBeforeunload && preNavActiveTabId !== undefined) {
+        try {
+          await (chrome.debugger as unknown as { detach: (t: { tabId: number }) => Promise<void> })
+            .detach({ tabId: preNavActiveTabId });
+        } catch { /* may already be detached after navigation */ }
+      }
 
       // Settle check — beyond chrome.tabs status=complete, verify the page
       // is interactive (readyState=complete) AND no spinner/loading-state UI
@@ -1121,9 +1179,15 @@ async function handleMcpMessage(msg: {
           expect_selector_appeared: expectSelectorAppeared,
           current_url: currentUrl,
           anti_bot_detected: antiBotDetected,
+          dismissed_beforeunload: dismissedBeforeunload,
         };
       }
-      return { type: "action_done", current_url: currentUrl, anti_bot_detected: antiBotDetected };
+      return {
+        type: "action_done",
+        current_url: currentUrl,
+        anti_bot_detected: antiBotDetected,
+        dismissed_beforeunload: dismissedBeforeunload,
+      };
     }
 
     case "switch_to_tab": {
