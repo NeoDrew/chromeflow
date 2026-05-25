@@ -44,6 +44,7 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
         spinner_selector?: string | null;
         expect_selector_appeared?: boolean | null;
         current_url?: string;
+        anti_bot_detected?: string | null;
       };
       const newTabBit = new_tab ? (background ? " (new background tab)" : " (new tab)") : "";
       let text = `Navigated to ${url}${newTabBit}`;
@@ -52,6 +53,9 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
       }
       if (expect_selector && r.expect_selector_appeared === false) {
         text += `\n\n⚠ expect_selector "${expect_selector}" never appeared within the 6s settle window. The page may be partially loaded or stuck.`;
+      }
+      if (r.anti_bot_detected) {
+        text += `\n\n⚠ anti_bot_detected: "${r.anti_bot_detected}" — the page returned a known block / challenge response. Page content is unlikely to be the intended target. Don't try to interact with it; navigate elsewhere or surface to the user.`;
       }
       return { content: [{ type: "text", text }] };
     }
