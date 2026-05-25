@@ -19,8 +19,8 @@ The core differentiator is the click + keystroke pipeline: a humanlike
 CDP bezier sequence with `pointerType: "mouse"` (firing PointerEvent
 isPrimary=true alongside MouseEvent), settle-hover micro-tremor,
 post-click jitter, and isTrusted=true keystrokes. This is what defeats
-anti-bot checks on Reddit, X / Twitter, and similar handlers, and similar
-isTrusted-strict React UIs.
+anti-bot checks on Reddit, X / Twitter, and similar isTrusted-strict
+React UIs.
 
 ## Repository layout
 

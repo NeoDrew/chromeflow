@@ -4,7 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Chromeflow use cases — what AI agents can actually do in your browser</title>
-<meta name="description" content="Real workflows AI coding agents handle with Chromeflow: setting up Stripe products and capturing the secret key, downloading authenticated Canvas attachments, walking through OAuth OAuth login flows, capturing API keys directly to .env. Tangible end-to-end examples, not marketing copy." />
+<meta name="description" content="Real workflows AI coding agents handle with Chromeflow: setting up Stripe products and capturing the secret key, downloading authenticated Canvas attachments, capturing API keys directly to .env. Tangible end-to-end examples, not marketing copy." />
 <meta name="keywords" content="chromeflow use cases, AI agent workflows, Claude Code browser automation, Codex CLI Chrome use cases, Stripe automation AI, Canvas attachment AI agent, OAuth AI agent, capture API keys .env" />
 <meta name="theme-color" content="#e85d2c" />
 <link rel="canonical" href="https://chromeflow.run/use-cases" />
@@ -29,9 +29,9 @@
   "@context": "https://schema.org",
   "@type": "ItemList",
   "name": "Chromeflow use cases",
-  "description": "Real workflows AI coding agents handle with chromeflow: Stripe, Canvas, OAuth login flows, API-key capture.",
+  "description": "Real workflows AI coding agents handle with chromeflow: Stripe, Canvas, API-key capture.",
   "url": "https://chromeflow.run/use-cases",
-  "numberOfItems": 4,
+  "numberOfItems": 3,
   "itemListElement": [
     {
       "@type": "ListItem",
@@ -50,13 +50,6 @@
     {
       "@type": "ListItem",
       "position": 3,
-      "url": "https://chromeflow.run/use-cases/oauth",
-      "name": "OAuth OAuth login flow automation",
-      "description": "Auto-fill OAuth logins, handle the page's anti-bot countdown, detect completion. The recurring agent-auth dance, automated."
-    },
-    {
-      "@type": "ListItem",
-      "position": 4,
       "url": "https://chromeflow.run/use-cases/api-keys",
       "name": "Universal API-key capture to .env",
       "description": "The reveal-and-copy dance, automated. Works for Stripe, Supabase, OpenAI, AWS, SendGrid, Twilio."
@@ -146,12 +139,6 @@
     <div class="meta">~2 min · uses <code>fetch_url</code>, <code>download_file</code>, <code>read_attachment</code></div>
   </a>
 
-  <a class="card" href="/use-cases/oauth">
-    <h3>Walk through an OAuth OAuth login flow</h3>
-    <p>Tools like the MCP Registry publisher, various CLIs, and many CI systems use OAuth login login. Chromeflow auto-fills the code, highlights the Authorize button (which page anti-bot reserves for a real human click), and detects completion.</p>
-    <div class="meta">~30 sec · uses <code>fill_input</code>, <code>highlight_region</code>, <code>wait_for_click</code></div>
-  </a>
-
   <a class="card" href="/use-cases/api-keys">
     <h3>Capture any API key directly to <code>.env</code></h3>
     <p>The pattern that applies to Stripe, Supabase, OpenAI, Anthropic, AWS, SendGrid, Twilio — every SaaS dashboard where the key is revealed once and you have to grab it before navigating away. Agent reveals, captures, writes, confirms.</p>
@@ -160,7 +147,7 @@
 </div>
 
 <h3 style="margin-top: 48px; font-size: 22px;">What ties them all together</h3>
-<p>All four workflows have the same shape: <strong>they live behind a login</strong>. Playwright, Browser Use, and Puppeteer launch a fresh-profile browser with no inherited sessions, so each of these tasks would start with re-engineering the login (and silently fail at 2FA). Chromeflow drives your real Chrome where you're already signed in — so the agent's first tool call is the actual work, not the auth dance.</p>
+<p>All three workflows have the same shape: <strong>they live behind a login</strong>. Playwright, Browser Use, and Puppeteer launch a fresh-profile browser with no inherited sessions, so each of these tasks would start with re-engineering the login (and silently fail at 2FA). Chromeflow drives your real Chrome where you're already signed in — so the agent's first tool call is the actual work, not the auth dance.</p>
 
 <p>If your agent's job lives behind a login, see <a href="/compare">how Chromeflow compares to Playwright, Browser Use, and Puppeteer</a>. If you're already convinced, install in two commands from the <a href="/">homepage</a>.</p>
 

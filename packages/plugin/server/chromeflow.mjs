@@ -25651,7 +25651,7 @@ Scope matching with \`within_selector\` or \`near_text\` restricts where matches
 
 Shadow DOM (open AND closed) is pierced by default via chrome.dom.openOrClosedShadowRoot \u2014 Reddit faceplate-* / r-post-form-submit-button / web-component-heavy SPAs no longer need manual deepFind recipes.
 
-ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit, X / Twitter, OAuth login, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry \u2014 pre-fill the form, then highlight the submit button and call wait_for_click so a real human gesture fires the submission.`,
+ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit, X / Twitter, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry \u2014 pre-fill the form, then highlight the submit button and call wait_for_click so a real human gesture fires the submission.`,
     {
       textHint: external_exports.string().optional().describe(
         "The visible label of the button or link (e.g. 'Save product', 'Continue', 'Add a product', 'Create'). Exactly one of textHint or selector must be set."

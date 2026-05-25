@@ -17,7 +17,6 @@ validated against the following platforms (as of 0.10.0):
 | Reddit `faceplate-textarea-input` (composer expand) | CDP click opens the composer; previously required real user gesture |
 | Reddit `#comment-composer-submit-button` (comment submit) | Pre-fill body via `type_text(into_selector="div[name=body]", clear_first=true)`, then highlight + `wait_for_click` (still requires real gesture) |
 | X / Twitter `[data-testid="tweetTextarea_0"]` | `type_text` with isTrusted=true CDP keystrokes lands; submit still needs real gesture |
-| OAuth login flow | `click_element` on the verify button needs human gesture; pre-filling the code via `fill_input` works |
 | React-controlled radio/checkbox forms (Radix UI, Headless UI) | `click_element` auto-handles the React fiber `__reactProps$.onClick` path when CDP click silently rejected |
 | Forms whose Submit button is behind a `[role=dialog]` portal | `click_element("Submit", in_dialog=true)` scopes correctly |
 | Closed-shadow-root inputs (Stencil/Lit/Radix portals) | `fill_input(selector=...)` reaches them via content-script tagging |
@@ -71,7 +70,7 @@ click_element("Submit")
 │   │   wait_for_click()
 │   │
 │   │  This is the canonical path for Reddit submit, X tweet submit,
-│   │  and similar handlers, mcp.so, any reCAPTCHA-protected form.
+│   │  mcp.so, any reCAPTCHA-protected form.
 │   │
 │   └── DO NOT retry the same click_element. Re-targeting won't help.
 │

@@ -8,7 +8,7 @@ description: >
   React-heavy forms with TipTap / ProseMirror / Stripe contenteditable
   inputs, working with closed shadow DOM (Radix portals, Stencil, Lit web
   components), bypassing isTrusted-strict anti-bot detection (Reddit
-  faceplate-*, X / Twitter composer, and similar handlers, LinkedIn,
+  faceplate-*, X / Twitter composer, LinkedIn,
   behavioural fingerprinters), navigating dashboards, capturing API keys
   from settings pages, uploading files through custom drag-zone uploaders,
   parallel multi-tab automation, or any browser step blocking code work.
@@ -42,8 +42,8 @@ Use chromeflow automatically when a task needs any of:
 - Filling forms behind modern React frameworks (TipTap, ProseMirror,
   CodeMirror, Monaco, Stripe contenteditable)
 - Driving sites with closed shadow DOM (Radix portals, Stencil, Lit)
-- Driving sites with anti-bot detection (Reddit, X, and similar handlers,
-  LinkedIn, Akamai-protected dashboards)
+- Driving sites with anti-bot detection (Reddit, X, LinkedIn,
+  Akamai-protected dashboards)
 - Any browser-based step blocking code work
 
 Do NOT ask "should I open the browser?" — just do it. The user expects
@@ -67,7 +67,7 @@ seamless handoff.
    changes.** Never poll with repeated `take_screenshot`.
 
 4. **Form submits on anti-bot platforms require a real human gesture.**
-   Reddit, X / Twitter, and similar handlers, mcp.so all silently reject
+   Reddit, X / Twitter, mcp.so all silently reject
    synthetic submit clicks. For these platforms: pre-fill the form
    with `fill_form` / `fill_input`, then `highlight_region` the submit
    button and `wait_for_click()`. See `references/anti-bot.md` for the
@@ -139,8 +139,8 @@ After a secret key is revealed:
 
 When the simple flow isn't enough, load the relevant `references/<topic>.md`:
 
-- **`references/anti-bot.md`** — isTrusted-strict sites (Reddit, X, GitHub
-  OAuth login). CDP click sequence, silent-rejection decision tree,
+- **`references/anti-bot.md`** — isTrusted-strict sites (Reddit, X,
+  LinkedIn). CDP click sequence, silent-rejection decision tree,
   `expect_submit`, `try_fiber`, `via: "fiber"`, validated-against list.
 - **`references/shadow-dom.md`** — Closed shadow DOM (Radix, Stencil, Lit).
   Why `execute_script` returns empty on pages you can clearly see, the
@@ -174,7 +174,7 @@ Auto-detected; uses execCommand insertText. If it fails,
 `type_text(into_selector=".ProseMirror", clear_first=true, text=…)`
 also auto-recovers from TipTap silent-drop.
 
-**Anti-bot submit (Reddit, X, and similar handlers):**
+**Anti-bot submit (Reddit, X, similar isTrusted-strict forms):**
 ```
 get_form_fields()
 fill_form([{label: ..., value: ...}])

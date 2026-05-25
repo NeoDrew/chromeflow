@@ -7,8 +7,8 @@ happened. Read the response, don't guess.
 
 The click dispatched but the 1500ms activity probe saw zero DOM /
 focus / URL / value / checked / alert / toast / modal change. The site
-silently rejected the synthetic click — Reddit submit, X submit, GitHub
-OAuth login, reCAPTCHA-protected forms all do this.
+silently rejected the synthetic click — Reddit submit, X submit, and
+reCAPTCHA-protected forms all do this.
 
 **Recovery:**
 1. Try `try_fiber: true` once. If `fiber_attempted: true` AND

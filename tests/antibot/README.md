@@ -22,7 +22,6 @@ the implementation has stayed correct.
 | Reddit composer expand | `click_element` on the textarea-input wrapper opens the composer | `platforms/reddit-composer-expand.md` |
 | Reddit comment submit | Pre-fill + highlight + `wait_for_click` lands a comment | `platforms/reddit-comment-submit.md` |
 | X / Twitter tweet input | `type_text(into_selector="[data-testid='tweetTextarea_0']")` lands text | `platforms/x-tweet-input.md` |
-| OAuth login flow | `fill_input` lands the code; verify needs human gesture | `platforms/oauth-login.md` |
 | React Radix portal dialog | `click_element(in_dialog=true)` scopes correctly | `platforms/radix-dialog-scoping.md` |
 | Closed shadow-root input | `fill_input(selector=...)` reaches inputs inside closed roots | `platforms/closed-shadow-input.md` |
 | TipTap silent-drop recovery | Post-type verify + execCommand fallback on TipTap editors | `platforms/tiptap-silent-drop.md` |
@@ -104,7 +103,7 @@ target platforms PASS or SKIP (no FAILs). Capture the JSON summary
 and reference it in the release notes:
 
 > "Validated against {reddit-composer, x-tweet-input,
->  oauth-login, radix-dialog-scoping, closed-shadow-input,
+>  radix-dialog-scoping, closed-shadow-input,
 >  tiptap-silent-drop} on chromeflow N.N.N (last-run.json)."
 
 If a platform FAILs, do not ship the release without either fixing

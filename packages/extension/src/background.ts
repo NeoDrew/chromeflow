@@ -2202,7 +2202,7 @@ async function handleMcpMessage(msg: {
           return {
             type: "click_element_response",
             success: false,
-            message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection — isTrusted-strict React UIs, Reddit submit, X submit, and similar handlers all do this even though the synthetic click reports success. Switch to highlight_region + wait_for_click so the user's real gesture fires the action, or retry with try_fiber=true to walk __reactProps$.onClick directly on React-heavy SPAs. Until_* clauses are skipped here since the click never registered.`,
+            message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection — isTrusted-strict React UIs and similar form validators do this even though the synthetic click reports success. Switch to highlight_region + wait_for_click so the user's real gesture fires the action, or retry with try_fiber=true to walk __reactProps$.onClick directly on React-heavy SPAs. Until_* clauses are skipped here since the click never registered.`,
             before_url,
             after_url: probe.after_url,
             navigated: false,
@@ -2304,7 +2304,7 @@ async function handleMcpMessage(msg: {
       } else if (expectSubmit) {
         // expect_submit: poll for any anti-bot-friendly submit signal within
         // 4s. Catches the "synthetic click silently rejected" case on Reddit /
-        // X / and similar handlers without needing a specific until_* destination.
+        // X submit without needing a specific until_* destination.
         const start = Date.now();
         while (Date.now() - start < 4000) {
           const [t] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
@@ -2335,7 +2335,7 @@ async function handleMcpMessage(msg: {
         if (!untilResult) {
           untilResult = {
             ok: false,
-            reason: `submit silently rejected (likely anti-bot): no URL change, toast, alert, or modal appeared within 4s. Synthetic clicks fail on Reddit / X / and similar handlers / mcp.so even though isTrusted passes — pre-fill the form, then highlight + wait_for_click so a real human gesture fires the submit.`,
+            reason: `submit silently rejected (likely anti-bot): no URL change, toast, alert, or modal appeared within 4s. Synthetic clicks fail on Reddit / X / mcp.so even though isTrusted passes — pre-fill the form, then highlight + wait_for_click so a real human gesture fires the submit.`,
           };
         }
       } else {
