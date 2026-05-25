@@ -397,7 +397,9 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
 
   server.tool(
     "type_text",
-    `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). Pass \`into_selector\` to focus the target before typing (shadow-piercing CSS) — combined with \`clear_first: true\`, this collapses the old "wait_for_click → execute_script selectAll → type_text" pattern into a single call. Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.`,
+    `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). Pass \`into_selector\` to focus the target before typing (shadow-piercing CSS) — combined with \`clear_first: true\`, this collapses the old "wait_for_click → execute_script selectAll → type_text" pattern into a single call. Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.
+
+**TipTap / ProseMirror auto-recovery**: when \`into_selector\` targets a contenteditable inside a \`.tiptap\` / \`.ProseMirror\` / \`[data-tiptap-editor]\` ancestor, type_text verifies post-type that the text actually landed. If tiptap's internal state machine silently dropped the CDP keystrokes (a known failure mode where the editor reverts to placeholder a few seconds later), type_text automatically re-fills via \`document.execCommand('insertText', ...)\` which tiptap accepts. The response message records "TipTap/ProseMirror silently dropped..., recovered via execCommand insertText" when this fired.`,
     {
       text: z.string().describe("The text to type into the focused element"),
       into_selector: z

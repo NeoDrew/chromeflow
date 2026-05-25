@@ -40,6 +40,11 @@ export interface FindTextOpts {
   regex?: boolean;
   visible_only?: boolean;
   context_chars?: number;
+  /** When true, treat the query as a whole-word match. Common English words
+   *  like "Live", "New", "Done", "Confirm" otherwise substring-match against
+   *  pre-rendered persona / instructional content (e.g. "delivery apps" for
+   *  query "Live") and trip false positives on wait_for. */
+  whole_word?: boolean;
 }
 
 const CLICKABLE_TAGS = new Set(["A", "BUTTON"]);
@@ -91,7 +96,7 @@ export function findText(
     return { matches: [], total_matches: 0, hidden_count: 0, truncated: false };
   }
 
-  const matcher = compileMatcher(query, opts.regex ?? false);
+  const matcher = compileMatcher(query, opts.regex ?? false, opts.whole_word ?? false);
   if (!matcher) {
     return { matches: [], total_matches: 0, hidden_count: 0, truncated: false };
   }
@@ -358,6 +363,13 @@ export interface WaitForTextOpts {
    * findText check short-circuits the wait.
    */
   since?: "now";
+  /**
+   * When true, gate matches on word boundaries (\b...\b) so common English
+   * words don't substring-match unrelated content. Prevents the "wait for
+   * 'Live' matched 'delivery'" false positive on pages with heavy persona
+   * data above the status panel.
+   */
+  whole_word?: boolean;
 }
 
 export interface WaitForTextResult {
@@ -408,6 +420,7 @@ export function waitForText(
           regex: opts.regex,
           visible_only: true,
           context_chars: 60,
+          whole_word: opts.whole_word,
         },
         doc
       );
@@ -525,12 +538,32 @@ export function waitForText(
 
 type Matcher = (text: string) => { matched: string; start: number; end: number } | null;
 
-function compileMatcher(query: string, regex: boolean): Matcher | null {
+function compileMatcher(query: string, regex: boolean, wholeWord: boolean = false): Matcher | null {
   if (!query) return null;
   if (regex) {
+    // Wrap the user's regex in word boundaries when whole_word is set. The
+    // non-capturing group lets pipes/alternation inside `query` still work.
+    const source = wholeWord ? `\\b(?:${query})\\b` : query;
     let re: RegExp;
     try {
-      re = new RegExp(query, "i");
+      re = new RegExp(source, "i");
+    } catch {
+      return null;
+    }
+    return (text) => {
+      const m = text.match(re);
+      if (!m || m.index === undefined) return null;
+      return { matched: m[0], start: m.index, end: m.index + m[0].length };
+    };
+  }
+  if (wholeWord) {
+    // Whole-word substring: escape regex metacharacters in the user's query,
+    // then wrap in word boundaries. Eliminates common English false positives
+    // (Live → "delivery", Done → "abandoned", Confirm → "discomfort").
+    const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let re: RegExp;
+    try {
+      re = new RegExp(`\\b${escaped}\\b`, "i");
     } catch {
       return null;
     }

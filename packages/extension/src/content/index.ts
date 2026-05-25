@@ -498,6 +498,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           regex: msg.regex as boolean | undefined,
           visible_only: msg.visible_only as boolean | undefined,
           context_chars: msg.context_chars as number | undefined,
+          whole_word: msg.whole_word as boolean | undefined,
         },
         doc
       );
@@ -550,6 +551,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           scope_selector: msg.scope_selector as string | undefined,
           regex: msg.regex as boolean | undefined,
           since: msg.since as "now" | undefined,
+          whole_word: msg.whole_word as boolean | undefined,
         },
         doc
       );
