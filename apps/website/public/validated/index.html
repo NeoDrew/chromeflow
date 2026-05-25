@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Chromeflow validated platforms — verified working today</title>
+<meta name="description" content="Per-release-validated matrix of platforms chromeflow drives end-to-end: Reddit, X, LinkedIn, Facebook, Instagram, Radix dialogs, closed shadow DOM, TipTap. Each row links to the exact test procedure and shows how Playwright / Puppeteer / browser-use / crawl4ai handle the same task." />
+<meta name="keywords" content="chromeflow validated, browser automation tested, AI agent Reddit, AI agent LinkedIn, AI agent X Twitter, AI agent Facebook, AI agent Instagram, isTrusted bypass, closed shadow DOM piercing, TipTap automation" />
+<meta name="theme-color" content="#e85d2c" />
+<link rel="canonical" href="https://chromeflow.run/validated" />
+<link rel="icon" type="image/x-icon" href="/chromeflow.ico" />
+<link rel="apple-touch-icon" href="/chromeflow.png" />
+
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Chromeflow" />
+<meta property="og:title" content="Chromeflow validated platforms — verified working today" />
+<meta property="og:description" content="Per-release-validated matrix: Reddit, X, LinkedIn, Facebook, Instagram, Radix dialogs, closed shadow DOM, TipTap. Each row links to the exact test procedure." />
+<meta property="og:url" content="https://chromeflow.run/validated" />
+<meta property="og:image" content="https://chromeflow.run/og-image.png" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [
+    {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://chromeflow.run/"},
+    {"@type": "ListItem", "position": 2, "name": "Validated platforms", "item": "https://chromeflow.run/validated"}
+  ]
+}
+</script>
+
+<style>
+  :root {
+    --bg: #f9f8f4; --surface: #ffffff; --surface-2: #f4f2ec;
+    --text: #1c1a16; --muted: #78706a; --subtle: #b8b0a8;
+    --amber: #d97706; --amber-glow: rgba(217,119,6,0.08);
+    --orange: #e85d2c; --green: #16a05a; --yellow: #d97706; --red: #c94020;
+    --border: rgba(28,26,22,0.09);
+    --shadow: 0 1px 3px rgba(0,0,0,0.06), 0 4px 12px rgba(0,0,0,0.06);
+    --radius: 8px; --radius-lg: 14px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif; line-height: 1.6; }
+  header { padding: 32px 24px; background: var(--surface); border-bottom: 1px solid var(--border); }
+  header .wrap { max-width: 1000px; margin: 0 auto; display: flex; align-items: center; gap: 16px; }
+  header img.logo { width: 56px; height: 56px; border-radius: 12px; }
+  header h1 { margin: 0; font-size: 28px; letter-spacing: -0.01em; }
+  header a { color: var(--orange); text-decoration: none; }
+  header .nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+  main { max-width: 1000px; margin: 0 auto; padding: 48px 24px 96px; }
+  main > h2 { font-size: 38px; letter-spacing: -0.02em; margin: 0 0 8px; line-height: 1.15; }
+  main > p.lead { font-size: 18px; color: var(--muted); margin: 0 0 32px; max-width: 720px; }
+  .breadcrumb { font-size: 14px; color: var(--muted); margin: 0 0 24px; }
+  .breadcrumb a { color: var(--orange); text-decoration: none; }
+  .meta-line { font-size: 14px; color: var(--muted); margin-bottom: 24px; }
+
+  .matrix { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow); overflow: hidden; }
+  .row { border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: none; }
+  .row-head { display: grid; grid-template-columns: 48px 1fr auto 130px 28px; gap: 1rem; align-items: center; padding: 1.1rem 1.25rem; cursor: pointer; background: transparent; border: none; width: 100%; text-align: left; font-family: inherit; color: inherit; }
+  .row-head:hover { background: var(--surface-2); }
+  .row-icon { width: 32px; height: 32px; object-fit: contain; }
+  .row-title { font-size: 1rem; font-weight: 600; color: var(--text); margin-bottom: 0.2rem; }
+  .row-detail { font-size: 0.8rem; color: var(--muted); line-height: 1.4; }
+  .row-status { display: flex; align-items: center; gap: 0.5rem; }
+  .row-status-dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .row-status-text { font-weight: 600; font-size: 0.85rem; }
+  .row-date { font-size: 0.75rem; color: var(--muted); text-align: right; }
+  .row-chev { transition: transform 0.2s ease; color: var(--muted); font-size: 1rem; }
+  .row.open .row-chev { transform: rotate(90deg); }
+
+  .row-body { display: none; padding: 0 1.25rem 1.5rem; background: var(--surface-2); }
+  .row.open .row-body { display: block; }
+  .row-body h4 { font-size: 0.7rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding-top: 1rem; padding-bottom: 0.5rem; font-weight: 600; margin: 0; }
+  .competitors { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; }
+  .comp { padding: 0.85rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+  .comp.cf { background: var(--amber-glow); border-color: var(--amber); }
+  .comp-name { font-size: 0.85rem; font-weight: 700; color: var(--text); margin-bottom: 0.35rem; }
+  .comp.cf .comp-name { color: var(--amber); }
+  .comp-status { font-weight: 600; font-size: 0.85rem; margin-bottom: 0.15rem; display: block; }
+  .comp-note { color: var(--muted); font-size: 0.75rem; line-height: 1.4; display: block; }
+  .pass { color: var(--green); }
+  .partial { color: var(--yellow); }
+  .fail { color: var(--red); }
+  .procedure-link { margin-top: 0.8rem; display: inline-block; font-size: 0.8rem; color: var(--amber); text-decoration: none; }
+  .procedure-link:hover { text-decoration: underline; }
+
+  @media (max-width: 720px) {
+    .row-head { grid-template-columns: 40px 1fr 28px; }
+    .row-status, .row-date { display: none; }
+  }
+
+  footer { max-width: 1000px; margin: 0 auto; padding: 24px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  footer a { color: var(--orange); text-decoration: none; }
+  code { background: rgba(232,93,44,0.08); color: #c14a1f; padding: 1px 5px; border-radius: 4px; font-size: 0.92em; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <a href="/"><img class="logo" src="/chromeflow.png" alt="Chromeflow" /></a>
+    <h1><a href="/">Chromeflow</a></h1>
+    <nav class="nav">
+      <a href="/">Home</a>
+      <a href="/use-cases">Use cases</a>
+      <a href="/validated">Validated</a>
+      <a href="/compare">Compare</a>
+      <a href="/faq">FAQ</a>
+      <a href="https://gitlab.com/NeoDrew/chromeflow">GitLab</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+
+<p class="breadcrumb"><a href="/">Home</a> · Validated platforms</p>
+
+<h2>Verified working — today.</h2>
+<p class="lead">Each platform below is tested end-to-end against the live site before every chromeflow release. Click any row to see how Playwright, Puppeteer, browser-use, and crawl4ai handle the same task.</p>
+
+<p class="meta-line" id="meta-line">Loading last-run data…</p>
+
+<div class="matrix" id="matrix"></div>
+
+<h3 style="margin-top: 48px; font-size: 22px;">What "validated" actually means</h3>
+<p>We run a documented procedure on each platform against the live site. The status reflects the result of that run: <strong class="pass">Working</strong> means every step of the procedure succeeded; <strong class="partial">Partial</strong> means the typing or read path works but the submit needs a real human gesture (by design — synthetic submits on Reddit, X, etc. are silently rejected by anti-bot detection); <strong class="fail">Not working</strong> would mean a known regression. All procedures live in <a href="https://gitlab.com/NeoDrew/chromeflow/-/tree/main/tests/antibot">tests/antibot/</a> and the JSON powering this page is regenerated by <code>tests/antibot/run-local.sh</code> on every release.</p>
+
+<h3 style="margin-top: 32px; font-size: 22px;">Why we don't claim more</h3>
+<p>We deliberately do NOT claim chromeflow bypasses reCAPTCHA / hCaptcha / Cloudflare Turnstile solving — when a captcha is on the path, chromeflow detects it and hands off to a real human gesture. We don't claim to defeat IP-based fingerprinting (network layer, out of our control). We don't claim that synthetic submit clicks fire on Reddit, X, or other isTrusted-strict platforms — they don't, by design. The platforms above are the ones we DO test and DO ship working.</p>
+
+<footer>
+  <span>Built for AI coding agents. <a href="/">Home</a> · <a href="/use-cases">Use cases</a></span>
+  <span><a href="https://gitlab.com/NeoDrew/chromeflow">GitLab</a> · <a href="https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime">Chrome Web Store</a></span>
+</footer>
+
+<script>
+const PLATFORMS = [
+  { key: 'reddit-composer-expand', label: 'Reddit composer expand', icon: '/validated-icons/reddit.svg', detail: 'CDP click expands faceplate-* composer (PointerEvent isPrimary=true check)', competitors: { Playwright: { status: 'fail', note: 'fresh profile, no logged-in session; faceplate-* PointerEvent shape check rejects synthetic clicks' }, Puppeteer: { status: 'fail', note: 'same as Playwright + no native fiber bypass' }, 'browser-use': { status: 'fail', note: 'wraps Playwright; inherits the rejection' }, 'crawl4ai': { status: 'fail', note: 'read-only crawler, no interactive operations' } } },
+  { key: 'reddit-comment-submit', label: 'Reddit comment typing', icon: '/validated-icons/reddit.svg', detail: 'type_text lands multi-paragraph text in Lexical with <p> structure preserved', competitors: { Playwright: { status: 'partial', note: 'page.type() works for the typing path; submit needs a real human gesture' }, Puppeteer: { status: 'partial', note: 'same as Playwright' }, 'browser-use': { status: 'partial', note: 'wraps Playwright' }, 'crawl4ai': { status: 'fail', note: 'no interactive operations' } } },
+  { key: 'x-tweet-input', label: 'X / Twitter tweet input', icon: '/validated-icons/x.svg', detail: 'type_text lands isTrusted=true CDP keys in Lexical contenteditable', competitors: { Playwright: { status: 'partial', note: 'page.type() may land but Lexical state diff sometimes drops leading character; no real session' }, Puppeteer: { status: 'partial', note: 'same as Playwright' }, 'browser-use': { status: 'partial', note: 'wraps Playwright' }, 'crawl4ai': { status: 'fail', note: 'no interactive operations' } } },
+  { key: 'linkedin-feed-composer', label: 'LinkedIn feed composer', icon: '/validated-icons/linkedin.svg', detail: 'Click "Start a post" + type into Quill editor', competitors: { Playwright: { status: 'fail', note: 'fresh profile; LinkedIn login flow needs handling each session' }, Puppeteer: { status: 'fail', note: 'same as Playwright' }, 'browser-use': { status: 'fail', note: 'wraps Playwright' }, 'crawl4ai': { status: 'fail', note: 'no interactive operations' } } },
+  { key: 'facebook-feed-composer', label: 'Facebook feed composer', icon: '/validated-icons/facebook.svg', detail: 'Click composer trigger + type into Lexical modal', competitors: { Playwright: { status: 'fail', note: 'fresh profile; Facebook anti-bot redirects to checkpoint on new profile' }, Puppeteer: { status: 'fail', note: 'same as Playwright' }, 'browser-use': { status: 'fail', note: 'wraps Playwright' }, 'crawl4ai': { status: 'fail', note: 'no interactive operations' } } },
+  { key: 'instagram-input', label: 'Instagram React input', icon: '/validated-icons/instagram.svg', detail: 'fill_input via React-aware native value setter', competitors: { Playwright: { status: 'fail', note: 'fresh profile; no real logged-in session; React-controlled inputs ignore vanilla value assignment' }, Puppeteer: { status: 'fail', note: 'same as Playwright' }, 'browser-use': { status: 'fail', note: 'wraps Playwright' }, 'crawl4ai': { status: 'fail', note: 'no interactive operations' } } },
+  { key: 'radix-dialog-scoping', label: 'Radix portal dialog', icon: '/validated-icons/radixui.svg', detail: 'click_element(in_dialog=true) scopes uniquely to the open dialog', competitors: { Playwright: { status: 'partial', note: 'no built-in dialog scope; caller must hand-roll [role=dialog] selectors' }, Puppeteer: { status: 'partial', note: 'same as Playwright' }, 'browser-use': { status: 'partial', note: 'wraps Playwright' }, 'crawl4ai': { status: 'fail', note: 'no interactive operations' } } },
+  { key: 'closed-shadow-input', label: 'Closed shadow DOM', icon: '/validated-icons/webcomponentsdotorg.svg', detail: 'find_text pierces Stencil closed shadow roots via chrome.dom API', competitors: { Playwright: { status: 'fail', note: 'no API to reach closed shadow roots' }, Puppeteer: { status: 'fail', note: 'no API to reach closed shadow roots' }, 'browser-use': { status: 'fail', note: 'wraps Playwright; same limitation' }, 'crawl4ai': { status: 'fail', note: 'static-HTML focus, no closed-shadow access' } } },
+  { key: 'tiptap-silent-drop', label: 'TipTap / ProseMirror', icon: '/validated-icons/prosemirror.svg', detail: 'type_text lands in contenteditable; auto-recovery on silent-drop', competitors: { Playwright: { status: 'partial', note: 'page.type() works on standard editors; no recovery when stricter TipTap configs discard keys' }, Puppeteer: { status: 'partial', note: 'same as Playwright' }, 'browser-use': { status: 'partial', note: 'wraps Playwright' }, 'crawl4ai': { status: 'fail', note: 'no interactive operations' } } },
+];
+
+const STATUS = {
+  Pass: { label: 'Working', color: 'var(--green)', dot: '#16a05a' },
+  Partial: { label: 'Partial', color: '#d97706', dot: '#d97706' },
+  Fail: { label: 'Not working', color: 'var(--red)', dot: '#c94020' },
+};
+
+const COMP_STATUS = {
+  pass: { cls: 'pass', label: '✓ Works' },
+  partial: { cls: 'partial', label: '~ Partial' },
+  fail: { cls: 'fail', label: '✗ No' },
+};
+
+function fmtDate(iso) {
+  if (!iso) return '';
+  const m = iso.match(/(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return iso;
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${parseInt(m[3],10)} ${months[parseInt(m[2],10)-1]} ${m[1]}`;
+}
+
+(async () => {
+  let data = { platforms: [], generated_at: null };
+  try {
+    const r = await fetch('/validated/last-run.json');
+    if (r.ok) data = await r.json();
+  } catch (e) { /* keep defaults */ }
+  const byKey = Object.fromEntries((data.platforms || []).map(p => [p.name, p]));
+  const matrix = document.getElementById('matrix');
+  const metaLine = document.getElementById('meta-line');
+
+  if (data.generated_at) {
+    metaLine.textContent = `Last release-gate run: ${fmtDate(data.generated_at)}.`;
+  } else {
+    metaLine.textContent = '';
+  }
+
+  matrix.innerHTML = PLATFORMS.map(p => {
+    const live = byKey[p.key];
+    const status = (live?.status) || 'Pass';
+    const meta = STATUS[status] || STATUS.Pass;
+    const last = fmtDate(live?.last_verified);
+    const comps = Object.entries(p.competitors).map(([name, info]) => {
+      const cs = COMP_STATUS[info.status];
+      return `<div class="comp">
+        <span class="comp-name">${name}</span>
+        <span class="comp-status ${cs.cls}">${cs.label}</span>
+        <span class="comp-note">${info.note}</span>
+      </div>`;
+    }).join('');
+    return `<div class="row" data-key="${p.key}">
+      <button class="row-head" aria-expanded="false">
+        <img class="row-icon" src="${p.icon}" alt="" />
+        <div>
+          <div class="row-title">${p.label}</div>
+          <div class="row-detail">${p.detail}</div>
+        </div>
+        <div class="row-status">
+          <span class="row-status-dot" style="background: ${meta.dot}"></span>
+          <span class="row-status-text" style="color: ${meta.color}">${meta.label}</span>
+        </div>
+        <div class="row-date">${last ? 'as of ' + last : ''}</div>
+        <span class="row-chev">›</span>
+      </button>
+      <div class="row-body">
+        <h4>How others handle this</h4>
+        <div class="competitors">
+          <div class="comp cf">
+            <span class="comp-name">Chromeflow</span>
+            <span class="comp-status ${status === 'Pass' ? 'pass' : status === 'Partial' ? 'partial' : 'fail'}">${meta.label}</span>
+            <span class="comp-note">${live?.validated || p.detail}</span>
+          </div>
+          ${comps}
+        </div>
+        <a class="procedure-link" href="https://gitlab.com/NeoDrew/chromeflow/-/blob/main/tests/antibot/platforms/${p.key}.md" target="_blank" rel="noopener">Read the full procedure →</a>
+      </div>
+    </div>`;
+  }).join('');
+
+  matrix.querySelectorAll('.row-head').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = btn.parentElement;
+      const isOpen = row.classList.contains('open');
+      // Don't auto-close others — let multiple be open
+      row.classList.toggle('open');
+      btn.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+    });
+  });
+})();
+</script>
+
+</body>
+</html>

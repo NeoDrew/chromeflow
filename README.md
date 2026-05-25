@@ -45,6 +45,26 @@ Chromeflow works in **your actual Chrome browser**, where you're already logged 
 | **Integration** | MCP server for Claude Code & Codex CLI | Standalone, not agent-aware |
 | **Credential capture** | Reads API keys → writes to `.env` | Not designed for this |
 
+## Validated platforms 🟢
+
+Tested end-to-end against the live platform before every release. Procedures live in [`tests/antibot/platforms/`](https://gitlab.com/NeoDrew/chromeflow/-/tree/main/tests/antibot/platforms); the validated-against page at [chromeflow.run/validated](https://chromeflow.run/validated) auto-updates from [`tests/antibot/last-run.json`](https://gitlab.com/NeoDrew/chromeflow/-/blob/main/tests/antibot/last-run.json) on each run.
+
+| Platform | What's validated | Status |
+|---|---|---|
+| <img src="apps/website/public/validated-icons/reddit.svg" width="14" /> Reddit composer expand | CDP click expands faceplate-* composer (PointerEvent isPrimary=true) | 🟢 Working (2026-05-25) |
+| <img src="apps/website/public/validated-icons/reddit.svg" width="14" /> Reddit comment typing | `type_text` lands multi-paragraph text in Lexical with `<p>` structure preserved | 🟢 Working (2026-05-25) |
+| <img src="apps/website/public/validated-icons/x.svg" width="14" /> X / Twitter tweet input | `type_text` lands isTrusted=true CDP keys in Lexical | 🟢 Working (2026-05-25) |
+| <img src="apps/website/public/validated-icons/linkedin.svg" width="14" /> LinkedIn feed composer | `click_element("Start a post")` + `type_text` into Quill editor | 🟢 Working (2026-05-25) |
+| <img src="apps/website/public/validated-icons/facebook.svg" width="14" /> Facebook feed composer | Click composer trigger + `type_text` into Lexical modal | 🟢 Working (2026-05-25) |
+| <img src="apps/website/public/validated-icons/instagram.svg" width="14" /> Instagram React input | `fill_input` via React-aware native value setter | 🟢 Working (2026-05-25) |
+| <img src="apps/website/public/validated-icons/radixui.svg" width="14" /> Radix portal dialog | `click_element(in_dialog=true)` scopes uniquely to the open dialog | 🟢 Working (2026-05-25) |
+| <img src="apps/website/public/validated-icons/webcomponentsdotorg.svg" width="14" /> Closed shadow DOM | `find_text` pierces Stencil closed shadow roots via `chrome.dom` API | 🟢 Working (2026-05-25) |
+| <img src="apps/website/public/validated-icons/prosemirror.svg" width="14" /> TipTap / ProseMirror | `type_text` lands in contenteditable; auto-recovery on silent-drop | 🟢 Working (2026-05-25) |
+
+**Submit handoff (by design).** Reddit, X, LinkedIn, Facebook, Instagram all gate their submit buttons on a real isTrusted human gesture as part of their anti-bot stack. Chromeflow lands the **typing** path (which is what an agent actually needs) and then uses `highlight_region` + `wait_for_click` so the user clicks Submit themselves. We do not claim to bypass captcha-solving, IP-based fingerprinting, or server-side fraud scoring.
+
+**Why this is the moat.** Playwright, Puppeteer, browser-use, crawl4ai all launch a fresh logged-out browser. They can't see your sessions, and the isTrusted-strict checks on these platforms reject their vanilla CDP clicks. Chromeflow runs in your real logged-in Chrome with a humanlike bezier + PointerEvent isPrimary=true click sequence; the validated-against table above shows what that gets you in practice. See [`/validated`](https://chromeflow.run/validated) for the side-by-side comparison.
+
 ## How it works
 
 Chromeflow is two things that work together:
