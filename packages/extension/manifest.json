@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chromeflow",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "Guided web assistance for Claude Code and Codex CLI",
   "permissions": [
     "tabs",

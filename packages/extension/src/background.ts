@@ -432,6 +432,67 @@ function phaseRace<T>(label: string, ms: number, p: Promise<T>): Promise<T> {
 }
 
 /**
+ * Attach a CDP listener that auto-accepts Chrome's native "Leave site?" /
+ * "Reload site?" beforeunload dialog on the given tab. Returns a `release`
+ * callback that detaches the listener and reports whether a dialog was
+ * dismissed during the protected window.
+ *
+ * Used by navigate, close_tab, and close_other_tabs so the agent doesn't
+ * hang at the WS timeout when the target tab has unsaved form state. The
+ * `dismissed_beforeunload` field in the tool response tells the caller
+ * that the page HAD unsaved content (so they can navigate back + recover
+ * if it mattered).
+ *
+ * Best-effort: if the debugger attach fails (already attached, no
+ * permission, non-scriptable URL), the dialog will block as before and
+ * dismissed stays false. Caller can detect that via the response field.
+ */
+async function setupBeforeunloadAutoDismiss(tabId: number): Promise<{
+  release: () => Promise<{ dismissed: boolean }>;
+}> {
+  let dismissed = false;
+  let attached = false;
+  let handler:
+    | ((source: chrome.debugger.Debuggee, method: string, params?: object) => void)
+    | null = null;
+  try {
+    await (chrome.debugger as unknown as { attach: (t: { tabId: number }, v: string) => Promise<void> })
+      .attach({ tabId }, "1.3");
+    attached = true;
+    await (chrome.debugger as unknown as { sendCommand: (t: { tabId: number }, m: string) => Promise<unknown> })
+      .sendCommand({ tabId }, "Page.enable");
+    handler = (source, method, params) => {
+      if (source.tabId !== tabId) return;
+      const p = params as { type?: string } | undefined;
+      if (method === "Page.javascriptDialogOpening" && p?.type === "beforeunload") {
+        (chrome.debugger as unknown as { sendCommand: (t: { tabId: number }, m: string, args?: object) => Promise<unknown> })
+          .sendCommand({ tabId }, "Page.handleJavaScriptDialog", { accept: true })
+          .catch(() => {});
+        dismissed = true;
+      }
+    };
+    chrome.debugger.onEvent.addListener(handler);
+  } catch {
+    // Debugger attach failed. Navigation/close proceeds without protection.
+  }
+  return {
+    release: async () => {
+      if (handler) {
+        chrome.debugger.onEvent.removeListener(handler);
+        handler = null;
+      }
+      if (attached) {
+        try {
+          await (chrome.debugger as unknown as { detach: (t: { tabId: number }) => Promise<void> })
+            .detach({ tabId });
+        } catch { /* may already be detached after tab close / navigation */ }
+      }
+      return { dismissed };
+    },
+  };
+}
+
+/**
  * Run the full human-like CDP mouse-click sequence at (x, y): bezier
  * approach path, settle-hover micro-tremor, press, release, post-click
  * micro-move. Reused by click_element (where coordinates come from the
@@ -447,6 +508,41 @@ function phaseRace<T>(label: string, ms: number, p: Promise<T>): Promise<T> {
  * bezier path and settle hover, this passes every behavioral check we've
  * seen short of OS-level input.
  */
+/**
+ * Fallback click using CDP's high-level synthesizeTapGesture. Unlike
+ * Input.dispatchMouseEvent (where the auto-generated `click` event has
+ * isPrimary=false even when the source pointerdown/pointerup were
+ * isPrimary=true), synthesizeTapGesture produces a fuller pointer chain
+ * where the click event carries isPrimary=true.
+ *
+ * This is the fallback that handles Reddit's faceplate-* Lit web
+ * components: their click handlers gate on
+ * `event.isTrusted && event.isPrimary` on the click event itself, which
+ * dispatchHumanMouseClick passes for isTrusted but fails for isPrimary.
+ * The most visible casualty is the new-post flair button — pre-0.10.3
+ * synthetic clicks silently_rejected even though the pointer events were
+ * landing correctly. Used only when the primary CDP click probe shows
+ * zero activity, so well-behaved targets aren't double-clicked.
+ */
+async function dispatchTapGesture(
+  tabId: number,
+  cx: number,
+  cy: number,
+): Promise<void> {
+  await withDebugger(tabId, async () => {
+    const dbg = chrome.debugger as unknown as {
+      sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
+    };
+    await dbg.sendCommand({ tabId }, "Input.synthesizeTapGesture", {
+      x: cx,
+      y: cy,
+      duration: 50,
+      tapCount: 1,
+      gestureSourceType: "mouse",
+    });
+  });
+}
+
 async function dispatchHumanMouseClick(
   tabId: number,
   cx: number,
@@ -516,10 +612,60 @@ async function dispatchHumanMouseClick(
   });
 }
 
+/**
+ * Snapshot the shadow-pierce visible-element count for `tabId` BEFORE
+ * a click is dispatched. The activity probe needs a baseline that pre-
+ * dates any state change the click might trigger; if we baseline inside
+ * the probe (post-click), Lit / Stencil renders that complete synchronously
+ * during click dispatch end up already-counted and the delta reads 0
+ * (Reddit's flair picker is the canonical case — open synchronously,
+ * adds ~78 visible elements, post-click baseline matches post-render
+ * state and the probe falsely reports silently_rejected).
+ */
+async function snapshotVisibleCount(tabId: number): Promise<number | null> {
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        function getShadowRoot(el: Element): ShadowRoot | null {
+          const cdom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+          if (cdom?.openOrClosedShadowRoot) {
+            try {
+              const sr = cdom.openOrClosedShadowRoot(el);
+              if (sr) return sr;
+            } catch { /* fall through */ }
+          }
+          return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+        }
+        let count = 0;
+        const seenRoots = new WeakSet<ShadowRoot>();
+        function walk(root: Document | ShadowRoot) {
+          const all = root.querySelectorAll("*");
+          for (const el of Array.from(all)) {
+            if ((el as HTMLElement).offsetParent !== null) count++;
+            const sr = getShadowRoot(el);
+            if (sr && !seenRoots.has(sr)) {
+              seenRoots.add(sr);
+              walk(sr);
+            }
+          }
+        }
+        walk(document);
+        return count;
+      },
+    });
+    const val = r[0]?.result;
+    return typeof val === "number" ? val : null;
+  } catch {
+    return null;
+  }
+}
+
 async function runActivityProbe(
   tabId: number,
   beforeUrl: string,
-  windowMs: number = 1500
+  windowMs: number = 1500,
+  externalBaseline: number | null = null,
 ): Promise<ActivityProbeResult> {
   const empty: ActivityProbeResult = {
     activity: true,
@@ -532,7 +678,7 @@ async function runActivityProbe(
   try {
     const r = await chrome.scripting.executeScript({
       target: { tabId },
-      func: (windowMs: number, beforeUrl: string) => {
+      func: (windowMs: number, beforeUrl: string, externalBaseline: number | null) => {
         return new Promise<ActivityProbeResult>((resolve) => {
           function getShadowRoot(el: Element): ShadowRoot | null {
             const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
@@ -582,9 +728,46 @@ async function runActivityProbe(
                 c('[aria-modal="true"]'),
             };
           }
+          // Shadow-piercing VISIBLE element count. The plain MutationObserver
+          // does NOT pierce shadow DOM, so when a Lit / Stencil / Radix
+          // component swaps visibility on pre-rendered content (e.g.
+          // Reddit's r-post-flairs-modal flair picker — the whole
+          // FACEPLATE-FORM tree is rendered up-front and shown/hidden via
+          // CSS classes on shadow children when the trigger is clicked),
+          // the observer reports zero mutations and the click looks
+          // silently_rejected even though it worked.
+          //
+          // We snapshot the count of visible elements (offsetParent !==
+          // null filters out display:none and detached subtrees) walking
+          // through every shadow root via chrome.dom.openOrClosedShadowRoot,
+          // and re-check during the probe window as a fallback signal.
+          function deepVisibleCount(): number {
+            let count = 0;
+            const seenRoots = new WeakSet<ShadowRoot>();
+            function walk(root: Document | ShadowRoot) {
+              const all = root.querySelectorAll("*");
+              for (const el of Array.from(all)) {
+                const htmlEl = el as HTMLElement;
+                if (htmlEl.offsetParent !== null) count++;
+                const sr = getShadowRoot(el);
+                if (sr && !seenRoots.has(sr)) {
+                  seenRoots.add(sr);
+                  walk(sr);
+                }
+              }
+            }
+            walk(document);
+            return count;
+          }
           const focusedBefore = getFocused();
           const focusedKeyBefore = focusedBefore ? JSON.stringify(focusedBefore) : "";
           const signalsBefore = getSignalCounts();
+          // Prefer caller-supplied pre-click baseline. If absent, fall
+          // back to taking it now (sufficient for most callers; only
+          // synchronous-render Lit components require the pre-click path).
+          const deepCountBefore = typeof externalBaseline === "number"
+            ? externalBaseline
+            : deepVisibleCount();
           let mutationCount = 0;
           const observer = new MutationObserver((records) => {
             mutationCount += records.length;
@@ -612,6 +795,18 @@ async function runActivityProbe(
             if (c.alert > signalsBefore.alert) return { activity: true, reason: "alert/aria-live element appeared", url_changed: false };
             if (c.toast > signalsBefore.toast) return { activity: true, reason: "toast / notification appeared", url_changed: false };
             if (c.modal > signalsBefore.modal) return { activity: true, reason: "modal / [role=dialog] appeared", url_changed: false };
+            // Shadow-pierce VISIBLE-element count check (catches Lit /
+            // Stencil / Radix shows that flip visibility on pre-rendered
+            // shadow-DOM content, which MutationObserver misses entirely
+            // because no nodes are added — only CSS visibility changes).
+            // Threshold >= 5 to filter background tickers / single-node
+            // spinners. Reddit's flair picker exposes ~78 newly-visible
+            // elements when opened.
+            const deepCountNow = deepVisibleCount();
+            const delta = deepCountNow - deepCountBefore;
+            if (delta >= 5) {
+              return { activity: true, reason: `shadow-pierce visible-element count grew by ${delta}`, url_changed: false };
+            }
             return { activity: false, reason: "", url_changed: false };
           }
           const start = Date.now();
@@ -634,7 +829,7 @@ async function runActivityProbe(
           tick();
         });
       },
-      args: [windowMs, beforeUrl],
+      args: [windowMs, beforeUrl, externalBaseline],
       // Default ISOLATED world — chrome.dom.openOrClosedShadowRoot is only
       // available in extension content-script contexts, not in the page's
       // MAIN world. ISOLATED still shares the live DOM so MutationObserver
@@ -949,43 +1144,16 @@ async function handleMcpMessage(msg: {
 
       // beforeunload protection: when navigating away from a same-tab page
       // that has unsaved content, Chrome's native "Are you sure you want to
-      // leave?" dialog blocks navigation. We attach a CDP listener that
-      // auto-accepts the dialog (i.e. "Leave") so navigation goes through.
-      // The `dismissed_beforeunload` field in the response reports when this
-      // fired so the caller knows the page HAD unsaved content (and can
-      // choose to navigate back + recover if it cares).
-      let dismissedBeforeunload = false;
-      let beforeunloadHandler: ((source: chrome.debugger.Debuggee, method: string, params?: object) => void) | null = null;
-      let attachedForBeforeunload = false;
-      let preNavActiveTabId: number | undefined;
+      // leave?" dialog blocks navigation. setupBeforeunloadAutoDismiss
+      // attaches a CDP listener that auto-accepts the dialog (i.e. "Leave")
+      // so navigation goes through. dismissed_beforeunload in the response
+      // reports when it fired so the caller knows the page HAD unsaved
+      // content (and can choose to navigate back + recover if it cares).
+      let beforeunloadCtx: Awaited<ReturnType<typeof setupBeforeunloadAutoDismiss>> | null = null;
       if (!msg.newTab) {
         const preActive = await getActiveTab(port);
         if (preActive.id && isScriptableUrl(preActive.url)) {
-          preNavActiveTabId = preActive.id;
-          try {
-            await (chrome.debugger as unknown as { attach: (t: { tabId: number }, v: string) => Promise<void> })
-              .attach({ tabId: preActive.id }, "1.3");
-            attachedForBeforeunload = true;
-            await (chrome.debugger as unknown as { sendCommand: (t: { tabId: number }, m: string) => Promise<unknown> })
-              .sendCommand({ tabId: preActive.id }, "Page.enable");
-            const protectTabId = preActive.id;
-            beforeunloadHandler = (source, method, params) => {
-              if (source.tabId !== protectTabId) return;
-              const p = params as { type?: string } | undefined;
-              if (method === "Page.javascriptDialogOpening" && p?.type === "beforeunload") {
-                (chrome.debugger as unknown as { sendCommand: (t: { tabId: number }, m: string, args?: object) => Promise<unknown> })
-                  .sendCommand({ tabId: protectTabId }, "Page.handleJavaScriptDialog", { accept: true })
-                  .catch(() => {});
-                dismissedBeforeunload = true;
-              }
-            };
-            chrome.debugger.onEvent.addListener(beforeunloadHandler);
-          } catch {
-            // Debugger attach failed (already attached, no permission, etc.).
-            // Navigation will proceed without beforeunload protection — the
-            // dialog will block if the page has unsaved content. Caller can
-            // retry; rare in practice.
-          }
+          beforeunloadCtx = await setupBeforeunloadAutoDismiss(preActive.id);
         }
       }
 
@@ -1042,16 +1210,9 @@ async function handleMcpMessage(msg: {
       // We detach the debugger here (rather than holding it across the
       // settle check / anti-bot detection) so other handlers (click_element,
       // type_text) can attach freely without waiting.
-      if (beforeunloadHandler) {
-        chrome.debugger.onEvent.removeListener(beforeunloadHandler);
-        beforeunloadHandler = null;
-      }
-      if (attachedForBeforeunload && preNavActiveTabId !== undefined) {
-        try {
-          await (chrome.debugger as unknown as { detach: (t: { tabId: number }) => Promise<void> })
-            .detach({ tabId: preNavActiveTabId });
-        } catch { /* may already be detached after navigation */ }
-      }
+      const dismissedBeforeunload = beforeunloadCtx
+        ? (await beforeunloadCtx.release()).dismissed
+        : false;
 
       // Settle check — beyond chrome.tabs status=complete, verify the page
       // is interactive (readyState=complete) AND no spinner/loading-state UI
@@ -1270,8 +1431,17 @@ async function handleMcpMessage(msg: {
         return { type: "action_done", message: `No tab matching "${query ?? "(active)"}". Open tabs:\n${list}` };
       }
       const snapshot = { index: allTabs.indexOf(target) + 1, title: target.title ?? "", url: target.url ?? "" };
+      // Attach the beforeunload auto-dismiss BEFORE chrome.tabs.remove, so the
+      // dialog gets accepted automatically if the target tab has unsaved
+      // form state (Reddit composer with typed text is the canonical trigger).
+      // Without this, chrome.tabs.remove blocks on the native Leave site
+      // dialog and the WS bridge times out at 30s.
+      const closeCtx = isScriptableUrl(target.url)
+        ? await setupBeforeunloadAutoDismiss(target.id)
+        : null;
       await chrome.tabs.remove(target.id);
-      return { type: "action_done", closed: [snapshot] };
+      const closeDismissed = closeCtx ? (await closeCtx.release()).dismissed : false;
+      return { type: "action_done", closed: [snapshot], dismissed_beforeunload: closeDismissed };
     }
 
     case "close_other_tabs": {
@@ -1306,8 +1476,31 @@ async function handleMcpMessage(msg: {
       const closedSnapshot = toClose.map(t => ({ index: allTabs.indexOf(t) + 1, title: t.title ?? "", url: t.url ?? "" }));
       const keptSnapshot = kept.map(t => ({ index: allTabs.indexOf(t) + 1, title: t.title ?? "", url: t.url ?? "" }));
       const closeIds = toClose.map(t => t.id).filter((id): id is number => id !== undefined);
+      // Attach beforeunload auto-dismiss to every closing tab in parallel so
+      // none of them hang on a native Leave site dialog (typically Reddit /
+      // Gmail / Discord composers with unsaved text). Non-scriptable URLs
+      // (chrome://, about:, file:// without permission) can't have a dialog
+      // anyway, so we skip them.
+      const protections = await Promise.all(
+        toClose
+          .filter(t => t.id !== undefined && isScriptableUrl(t.url))
+          .map(async t => ({ tabId: t.id!, ctx: await setupBeforeunloadAutoDismiss(t.id!) }))
+      );
       if (closeIds.length > 0) await chrome.tabs.remove(closeIds);
-      return { type: "action_done", closed: closedSnapshot, kept: keptSnapshot };
+      const dismissedTabIndexes: number[] = [];
+      for (const p of protections) {
+        const r = await p.ctx.release();
+        if (r.dismissed) {
+          const idx = toClose.findIndex(t => t.id === p.tabId);
+          if (idx >= 0) dismissedTabIndexes.push(closedSnapshot[idx].index);
+        }
+      }
+      return {
+        type: "action_done",
+        closed: closedSnapshot,
+        kept: keptSnapshot,
+        dismissed_beforeunload_tabs: dismissedTabIndexes,
+      };
     }
 
     case "screenshot": {
@@ -2173,6 +2366,14 @@ async function handleMcpMessage(msg: {
       // via === "fiber" returned early above, so by here via is "auto" or "cdp"
       // and CDP is always allowed when canCdp is true.
       const canCdp = isScriptableUrl(tab.url) && typeof prep.x === "number" && typeof prep.y === "number";
+      // Snapshot the shadow-pierce visible-element count BEFORE dispatching
+      // the click, so the activity probe has a baseline that pre-dates any
+      // synchronous Lit / Stencil render the click might trigger. See
+      // snapshotVisibleCount jsdoc for why this can't be deferred to inside
+      // the probe.
+      const preClickVisibleCount = canCdp && tab.id
+        ? await snapshotVisibleCount(tab.id).catch(() => null)
+        : null;
       let cdpPhaseError: string | null = null;
       if (canCdp) {
         try {
@@ -2258,7 +2459,7 @@ async function handleMcpMessage(msg: {
       // MAIN-world JS is blocked by a long synchronous handler) reports the
       // phase instead of running to the WS cap.
       const probe = isScriptableUrl(tab.url) && tab.id
-        ? await phaseRace("activity_probe", 3500, runActivityProbe(tab.id, before_url, 1500)).catch((e) => {
+        ? await phaseRace("activity_probe", 3500, runActivityProbe(tab.id, before_url, 1500, preClickVisibleCount)).catch((e) => {
             const err = e as Error & { phase?: string };
             return {
               activity: true,
@@ -2270,6 +2471,121 @@ async function handleMcpMessage(msg: {
             } as ActivityProbeResult;
           })
         : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
+
+      if (!probe.activity) {
+        // First-line automatic fallback when the primary CDP click had
+        // valid coordinates: re-dispatch as a CDP synthesizeTapGesture.
+        // This is also isTrusted=true (same trust level as the primary)
+        // but the auto-generated click event carries isPrimary=true on
+        // the click stage — dispatchHumanMouseClick's click stage gets
+        // isPrimary=false because Chromium derives the click from the
+        // already-released pointer. Reddit's faceplate-* Lit components
+        // gate on `event.isTrusted && event.isPrimary` on the click event
+        // (most visibly the new-post flair button), and that combination
+        // is exactly what the tap gesture satisfies.
+        if (
+          canCdp &&
+          typeof prep.x === "number" &&
+          typeof prep.y === "number" &&
+          tab.id
+        ) {
+          try {
+            await phaseRace(
+              "tap_gesture_fallback",
+              3500,
+              dispatchTapGesture(tabId, Math.round(prep.x), Math.round(prep.y)),
+            );
+            const probeTap = await phaseRace(
+              "activity_probe_tap_fallback",
+              3500,
+              runActivityProbe(tab.id, before_url, 1500, preClickVisibleCount),
+            ).catch((e) => {
+              const err = e as Error & { phase?: string };
+              return {
+                activity: true,
+                reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
+                mutation_count: 0,
+                url_changed: false,
+                after_url: before_url,
+                focused_after: null,
+              } as ActivityProbeResult;
+            });
+            if (probeTap.activity) {
+              postNote += ` (fired via CDP synthesizeTapGesture after dispatchMouseEvent silently_rejected)`;
+              probe.activity = true;
+              probe.after_url = probeTap.after_url;
+              probe.focused_after = probeTap.focused_after;
+              probe.mutation_count = probeTap.mutation_count;
+              probe.url_changed = probeTap.url_changed;
+            }
+          } catch {
+            // synthesizeTapGesture failed (older Chrome, debugger detached).
+            // Fall through to the DOM .click() path below.
+          }
+        }
+      }
+
+      if (!probe.activity) {
+        // Second-line automatic fallback (only when the primary CDP path ran):
+        // re-dispatch the click via the content-script's `.click()` method,
+        // which loses isTrusted=true but catches a class of handlers the CDP
+        // click misses — HTML Popover API triggers (button[popovertarget]
+        // toggling <r-post-flairs-modal> on Reddit's new-post composer),
+        // <faceplate-*> Lit web components that bind via addEventListener
+        // without isTrusted gating, and onclick handlers attached on hosts
+        // whose pointer-events:none parents ate the coordinate-based event.
+        //
+        // Outer `if (!probe.activity)` already gates on confident inactivity
+        // — if the CDP click had taken effect, mutations/focus/url change
+        // would have flipped activity true and we wouldn't be here. So
+        // double-firing isn't a real risk; gate only on CDP having been
+        // the primary path so the content-script .click() hasn't already
+        // run (cdpPhaseError + non-scriptable url paths run it pre-probe).
+        // Sites that gate strictly on isTrusted (Reddit comment submit
+        // pre-0.9.12, X submit) will still silently_reject here — those
+        // need highlight_region + wait_for_click, and the response keeps
+        // surfacing silently_rejected so the agent knows to escalate.
+        if (
+          usedCdp &&
+          isScriptableUrl(tab.url) &&
+          tab.id
+        ) {
+          const domResult = await phaseRace(
+            "dom_click_fallback",
+            3500,
+            forwardToContentScript(tab, msg),
+          ).catch(() => null) as { success: boolean; message: string } | null;
+
+          if (domResult?.success) {
+            const probeDom = await phaseRace(
+              "activity_probe_dom_fallback",
+              3500,
+              runActivityProbe(tab.id, before_url, 1500, preClickVisibleCount),
+            ).catch((e) => {
+              const err = e as Error & { phase?: string };
+              return {
+                activity: true,
+                reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
+                mutation_count: 0,
+                url_changed: false,
+                after_url: before_url,
+                focused_after: null,
+              } as ActivityProbeResult;
+            });
+
+            if (probeDom.activity) {
+              postNote += ` (fired via DOM .click() fallback after CDP silently_rejected)`;
+              // Refresh probe with the post-fallback state so the until_*
+              // poll below sees the right after_url / focused_after.
+              probe.activity = true;
+              probe.after_url = probeDom.after_url;
+              probe.focused_after = probeDom.focused_after;
+              probe.mutation_count = probeDom.mutation_count;
+              probe.url_changed = probeDom.url_changed;
+            }
+          }
+        }
+      }
 
       if (!probe.activity) {
         // Opt-in last resort: walk the React fiber tree from the matched
@@ -2297,7 +2613,7 @@ async function handleMcpMessage(msg: {
           // the second probe sees it and we fall through to the rest of the
           // click flow (until_*, expect_submit, etc).
           const probe2 = isScriptableUrl(tab.url) && tab.id
-            ? await phaseRace("activity_probe_2", 3500, runActivityProbe(tab.id, before_url, 1500)).catch((e) => {
+            ? await phaseRace("activity_probe_2", 3500, runActivityProbe(tab.id, before_url, 1500, preClickVisibleCount)).catch((e) => {
                 const err = e as Error & { phase?: string };
                 return {
                   activity: true,
