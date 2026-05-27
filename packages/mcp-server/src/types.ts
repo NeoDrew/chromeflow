@@ -26,7 +26,7 @@ export type ServerMessage =
   | { type: "read_element"; requestId: string; textHint: string }
   | { type: "clear"; requestId: string }
   // Flow control — reactive progression
-  | { type: "start_click_watch"; requestId: string; timeout: number }
+  | { type: "start_click_watch"; requestId: string; timeout: number; redispatch?: boolean }
   | { type: "fill_input"; requestId: string; textHint: string; value: string; nth?: number; exact?: boolean }
   | {
       type: "click_element";
