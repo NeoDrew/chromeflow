@@ -25169,7 +25169,8 @@ ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
 **Shadow-piercing helpers are pre-injected** into every script:
 - \`$deep(selector, root?)\` \u2014 querySelector that walks open shadow roots
 - \`$deepAll(selector, root?)\` \u2014 querySelectorAll equivalent, returns an array
-- \`shadowDocument\` \u2014 the first attached open shadow root on the page, or \`document\` if none. Useful when an SPA mounts ALL of its UI inside a single root shadow host (Outlier-style annotation dashboards): replace every \`document.querySelector*\` call with \`shadowDocument.querySelector*\` and the same code now reaches the SPA's content.
+- \`shadowDocument\` \u2014 the open shadow root with the most interactive elements (buttons, inputs, links), or \`document\` if none. Useful when an SPA mounts ALL of its UI inside a single root shadow host (Outlier-style annotation dashboards): replace every \`document.querySelector*\` call with \`shadowDocument.querySelector*\` and the same code now reaches the SPA's content. On pages with multiple shadow roots (e.g. one for CSS theme vars, one for content), this picks the content root automatically.
+- \`shadowDocuments\` \u2014 array of ALL open shadow roots on the page (in DOM order). Use when you need to search across multiple shadow roots or when the automatic pick is wrong.
 
 The helpers pierce OPEN shadow roots only \u2014 MAIN world can't reach closed roots. For closed roots, use find_text / get_page_text / click_element / fill_input which pierce both kinds via chrome.dom.openOrClosedShadowRoot.
 
@@ -25184,10 +25185,11 @@ When the page navigates mid-script, the response carries \`navigated: true\` and
       code: external_exports.string().describe(
         "JavaScript expression or multi-statement script to evaluate in the page. Top-level `return` is supported."
       ),
-      tab_query: external_exports.string().optional().describe("Run against a specific tab without changing focus. Same syntax as switch_to_tab: numeric index, URL substring, or title substring. Omit to run against the active tab.")
+      tab_query: external_exports.string().optional().describe("Run against a specific tab without changing focus. Same syntax as switch_to_tab: numeric index, URL substring, or title substring. Omit to run against the active tab."),
+      timeout_ms: external_exports.number().int().min(1e3).optional().describe('Script execution timeout in milliseconds (default 30000). When the script exceeds this limit, execution is terminated via CDP Runtime.terminateExecution and the debugger is released cleanly. Without this, a hung script locks the debugger session indefinitely and every subsequent tool call fails with "Another debugger is already attached." Increase for large DOM traversals inside shadow roots; decrease when you want fast failure on scripts that might hang.')
     },
-    async ({ code, tab_query }) => {
-      const response = await bridge.request({ type: "execute_script", code, tab_query });
+    async ({ code, tab_query, timeout_ms }) => {
+      const response = await bridge.request({ type: "execute_script", code, tab_query, timeout_ms });
       if (response.type !== "script_response") throw new Error("Unexpected response");
       const { result, alert, navigated, reauthorized } = response;
       let text = `Result: ${result}`;
@@ -25680,12 +25682,13 @@ ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit
       expect_submit: external_exports.boolean().optional().describe(`Broad anti-bot detector. After the click, watch up to 4s for ANY of: URL change, [role=alert] / [data-sonner-toast] / .toast / .notification / aria-live appearance, [role=dialog] / [aria-modal=true] appearance. Returns success=false with "submit silently rejected (likely anti-bot)" when no signal fires. Use on form submits when the until_* destination isn't known. Ignored when any until_* is set (those are more specific).`),
       within_selector: external_exports.string().optional().describe(`Limit candidate matches to this CSS selector's subtree (mirrors find_text's scope_selector). Use to scope nth-counting to one section of a long form: click_element("Approve", nth=1, within_selector="#section-b"). Returns success=false with scope_missed=true if the selector does not match.`),
       near_text: external_exports.string().optional().describe("Find the nearest container whose heading starts with this text, then scope candidates to that container's subtree. Ignored when within_selector is set. Useful when the target section has no stable CSS selector but the heading is unique."),
-      try_fiber: external_exports.boolean().optional().describe(`Opt-in last-resort fallback when silently_rejected fires. After the 1500ms activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest \`__reactProps$.onClick\` prop, and invokes it with a minimal synthetic event. Useful on React-heavy SPAs whose action buttons pass through isTrusted=true checks even on CDP events. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this \u2014 fiber-prop walking is undocumented and may misbehave on mangled production builds. Reserve for repeat silently_rejected on a known-safe React site.`),
+      try_fiber: external_exports.boolean().optional().describe(`Opt-in last-resort fallback when silently_rejected fires. After the activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest \`__reactProps$.onClick\` prop, and invokes it with a minimal synthetic event. Now shadow-DOM-aware: when the element is inside a shadow root, the fiber walk searches for React root containers inside that shadow root instead of walking the light DOM. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this; reserve for repeat silently_rejected on a known-safe React site.`),
+      activity_timeout_ms: external_exports.number().int().min(500).optional().describe(`How long the activity probe watches for DOM mutations, focus changes, URL changes, or alert/toast/modal appearance after the click (default 1500ms). The probe returns early as soon as activity is detected, so the default adds only ~100ms on successful clicks. Increase to 2500-4000ms for buttons that trigger async API calls before producing visible DOM changes (e.g. "Collect Traces" on annotation dashboards). The probe reports "silently_rejected" when zero activity is seen within this window; a higher value reduces false negatives but slows genuine rejection detection.`),
       via: external_exports.enum(["auto", "cdp", "fiber"]).optional().describe(`Click dispatch mode. "auto" (default): CDP click, then fiber fallback when try_fiber=true and the activity probe failed. "cdp": CDP click only, no fiber fallback ever. "fiber": skip the CDP bezier + activity probe entirely and invoke __reactProps$.onClick directly. Use "fiber" on React-heavy SPAs (Outlier-style dashboards) where you already know the site is fiber-only \u2014 cuts ~3 seconds of ceremony off the round trip. The fiber path is undocumented React internal access, prefer "auto" until you've confirmed the site needs it.`),
       in_dialog: external_exports.boolean().optional().describe(`Scope candidate matches to the topmost open dialog (\`[role=dialog]\`, \`[role=alertdialog]\`, or \`<dialog open>\`), highest z-index wins. Use when Radix/Headless UI dialogs portal to document.body and a generic textHint like "Cancel" would otherwise match the wrong button. Returns scope_missed=true when no dialog is open.`),
       dialog_query: external_exports.string().optional().describe(`Scope candidate matches to a specific dialog by heading or aria-label substring. Use when multiple dialogs are open and in_dialog (topmost) would pick the wrong one \u2014 e.g. click_element("Confirm", dialog_query="Delete account"). Mutually exclusive with in_dialog; dialog_query wins when both are set.`)
     },
-    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, via, in_dialog, dialog_query }) => {
+    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, via, in_dialog, dialog_query }) => {
       if (!textHint && !selector || textHint && selector) {
         return {
           content: [{ type: "text", text: "click_element requires exactly one of textHint or selector" }]
@@ -25696,7 +25699,7 @@ ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, via, in_dialog, dialog_query },
+          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, via, in_dialog, dialog_query },
           wsTimeout
         );
       } catch (err) {
@@ -26060,7 +26063,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // ../mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.10.3" : "dev";
+var PACKAGE_VERSION = true ? "0.10.4" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

@@ -495,7 +495,8 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
 **Shadow-piercing helpers are pre-injected** into every script:
 - \`$deep(selector, root?)\` — querySelector that walks open shadow roots
 - \`$deepAll(selector, root?)\` — querySelectorAll equivalent, returns an array
-- \`shadowDocument\` — the first attached open shadow root on the page, or \`document\` if none. Useful when an SPA mounts ALL of its UI inside a single root shadow host (Outlier-style annotation dashboards): replace every \`document.querySelector*\` call with \`shadowDocument.querySelector*\` and the same code now reaches the SPA's content.
+- \`shadowDocument\` — the open shadow root with the most interactive elements (buttons, inputs, links), or \`document\` if none. Useful when an SPA mounts ALL of its UI inside a single root shadow host (Outlier-style annotation dashboards): replace every \`document.querySelector*\` call with \`shadowDocument.querySelector*\` and the same code now reaches the SPA's content. On pages with multiple shadow roots (e.g. one for CSS theme vars, one for content), this picks the content root automatically.
+- \`shadowDocuments\` — array of ALL open shadow roots on the page (in DOM order). Use when you need to search across multiple shadow roots or when the automatic pick is wrong.
 
 The helpers pierce OPEN shadow roots only — MAIN world can't reach closed roots. For closed roots, use find_text / get_page_text / click_element / fill_input which pierce both kinds via chrome.dom.openOrClosedShadowRoot.
 
@@ -516,9 +517,15 @@ When the page navigates mid-script, the response carries \`navigated: true\` and
         .string()
         .optional()
         .describe('Run against a specific tab without changing focus. Same syntax as switch_to_tab: numeric index, URL substring, or title substring. Omit to run against the active tab.'),
+      timeout_ms: z
+        .number()
+        .int()
+        .min(1000)
+        .optional()
+        .describe('Script execution timeout in milliseconds (default 30000). When the script exceeds this limit, execution is terminated via CDP Runtime.terminateExecution and the debugger is released cleanly. Without this, a hung script locks the debugger session indefinitely and every subsequent tool call fails with "Another debugger is already attached." Increase for large DOM traversals inside shadow roots; decrease when you want fast failure on scripts that might hang.'),
     },
-    async ({ code, tab_query }) => {
-      const response = await bridge.request({ type: "execute_script", code, tab_query });
+    async ({ code, tab_query, timeout_ms }) => {
+      const response = await bridge.request({ type: "execute_script", code, tab_query, timeout_ms });
       if (response.type !== "script_response") throw new Error("Unexpected response");
       const { result, alert, navigated, reauthorized } = response as { result: string; alert?: string | null; navigated?: boolean; reauthorized?: boolean };
       let text = `Result: ${result}`;

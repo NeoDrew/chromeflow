@@ -1958,12 +1958,25 @@ async function handleMcpMessage(msg: {
           recurse(root);
           return out;
         };
-        var shadowDocument = (function() {
+        var shadowDocuments = (function() {
+          var roots = [];
           var all = document.querySelectorAll('*');
           for (var i = 0; i < all.length; i++) {
-            if (all[i].shadowRoot) return all[i].shadowRoot;
+            if (all[i].shadowRoot) roots.push(all[i].shadowRoot);
           }
-          return document;
+          return roots;
+        })();
+        var shadowDocument = (function() {
+          if (shadowDocuments.length === 0) return document;
+          if (shadowDocuments.length === 1) return shadowDocuments[0];
+          var best = shadowDocuments[0];
+          var bestScore = 0;
+          for (var i = 0; i < shadowDocuments.length; i++) {
+            var sr = shadowDocuments[i];
+            var score = sr.querySelectorAll('button, input, select, textarea, a, [role="button"], [role="radio"], [role="checkbox"], [role="link"], [contenteditable]').length;
+            if (score > bestScore) { bestScore = score; best = sr; }
+          }
+          return bestScore > 0 ? best : shadowDocuments[0];
         })();
       `;
 
@@ -2105,18 +2118,17 @@ async function handleMcpMessage(msg: {
         }
       }
 
-      // CSP blocked eval — fall back to CDP Runtime.evaluate which bypasses CSP
+      // CSP blocked eval: fall back to CDP Runtime.evaluate which bypasses CSP.
+      // Race against a configurable timeout (default 30s) to prevent hung scripts
+      // from locking the debugger indefinitely ("Another debugger is already
+      // attached" on every subsequent call until the tab is refreshed).
+      const scriptTimeoutMs = (msg.timeout_ms as number | undefined) ?? 30000;
       if (cspBlocked) {
         try {
           await raceWithNavigation(withDebugger(tabId, async () => {
-            // CDP Runtime.evaluate can await a returned promise directly via
-            // awaitPromise: true. So in the await-detected path we just have the
-            // expression be the async IIFE; awaitPromise resolves it for us.
-            // Auto-stringify objects, mirroring runInjection above. Strings
-            // and primitives go through String(); objects/arrays through
-            // JSON.stringify. CDP path is used when CSP blocks eval, the
-            // serialization rules must match the chrome.scripting path so
-            // callers see consistent output.
+            const dbg = chrome.debugger as unknown as {
+              sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
+            };
             const SERIALIZER = `function(__r) {
               if (__r === null || __r === undefined) return "undefined";
               if (typeof __r === "object") {
@@ -2124,10 +2136,6 @@ async function handleMcpMessage(msg: {
               }
               return String(__r);
             }`;
-            // Shadow helpers + user code wrapped so direct eval inside the
-            // IIFE sees the locals. Mirrors the chrome.scripting path so
-            // CSP-strict pages (Stripe, GitHub) get the same $deep/$deepAll
-            // behavior as everyone else.
             const wrappedCode = usesAwait
               ? `(async () => {
                   var __serialize = ${SERIALIZER};
@@ -2154,12 +2162,19 @@ async function handleMcpMessage(msg: {
                   if (__alert) window._alertCapture = null;
                   return JSON.stringify({ result: __serialize(__result), alert: __alert });
                 })()`;
-            const evalResult = await (chrome.debugger as any).sendCommand({ tabId }, "Runtime.evaluate", {
+            const evalPromise = dbg.sendCommand({ tabId }, "Runtime.evaluate", {
               expression: wrappedCode,
               returnByValue: true,
               allowUnsafeEvalBlockedByCSP: true,
               awaitPromise: usesAwait,
-            }) as { result: { value?: string }; exceptionDetails?: unknown };
+            });
+            const evalResult = await Promise.race([
+              evalPromise,
+              new Promise<never>((_, reject) => setTimeout(async () => {
+                try { await dbg.sendCommand({ tabId }, "Runtime.terminateExecution"); } catch { /* best-effort */ }
+                reject(new Error(`execute_script timed out after ${scriptTimeoutMs}ms. Script execution was terminated and the debugger will be released. Retry the call; no page refresh needed.`));
+              }, scriptTimeoutMs)),
+            ]) as { result: { value?: string }; exceptionDetails?: unknown };
             try {
               const parsed = JSON.parse(evalResult.result.value ?? "{}");
               result = parsed.result ?? "undefined";
@@ -2362,6 +2377,7 @@ async function handleMcpMessage(msg: {
       // every behavioral check we've seen short of OS-level input.
       let result: { success: boolean; message: string };
       let usedCdp = false;
+      const activityTimeoutMs = (msg.activity_timeout_ms as number | undefined) ?? 1500;
 
       // via === "fiber" returned early above, so by here via is "auto" or "cdp"
       // and CDP is always allowed when canCdp is true.
@@ -2458,8 +2474,9 @@ async function handleMcpMessage(msg: {
       // Wrapped in phaseRace so a hung probe (rare, but happens when
       // MAIN-world JS is blocked by a long synchronous handler) reports the
       // phase instead of running to the WS cap.
+      const probeBudgetMs = activityTimeoutMs + 2000;
       const probe = isScriptableUrl(tab.url) && tab.id
-        ? await phaseRace("activity_probe", 3500, runActivityProbe(tab.id, before_url, 1500, preClickVisibleCount)).catch((e) => {
+        ? await phaseRace("activity_probe", probeBudgetMs, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount)).catch((e) => {
             const err = e as Error & { phase?: string };
             return {
               activity: true,
@@ -2498,7 +2515,7 @@ async function handleMcpMessage(msg: {
             const probeTap = await phaseRace(
               "activity_probe_tap_fallback",
               3500,
-              runActivityProbe(tab.id, before_url, 1500, preClickVisibleCount),
+              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount),
             ).catch((e) => {
               const err = e as Error & { phase?: string };
               return {
@@ -2526,25 +2543,75 @@ async function handleMcpMessage(msg: {
       }
 
       if (!probe.activity) {
-        // Second-line automatic fallback (only when the primary CDP path ran):
+        // Pointer chain fallback: dispatch the full pointer event sequence
+        // (pointerdown, mousedown, pointerup, mouseup, click) directly ON
+        // the tagged element via the content script. This avoids the shadow
+        // DOM event retargeting problem: CDP coordinate-based clicks fire
+        // correctly inside the shadow root, but when the event bubbles OUT
+        // of the shadow boundary, event.target is retargeted to the shadow
+        // host. React event delegation checks event.target to route to the
+        // component handler, finds the host instead of the button, and
+        // discards the event. Dispatching directly on the element keeps
+        // event.target correct within the shadow root's delegation context.
+        if (
+          usedCdp &&
+          isScriptableUrl(tab.url) &&
+          tab.id
+        ) {
+          const pcResult = await phaseRace(
+            "pointer_chain_fallback",
+            3500,
+            forwardToContentScript(tab, {
+              type: "pointer_chain_click",
+              requestId: msg.requestId + "-pc",
+            }),
+          ).catch(() => null) as { fired?: boolean; label?: string } | null;
+
+          if (pcResult?.fired) {
+            const probePC = await phaseRace(
+              "activity_probe_pointer_chain",
+              3500,
+              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount),
+            ).catch((e) => {
+              const err = e as Error & { phase?: string };
+              return {
+                activity: true,
+                reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
+                mutation_count: 0,
+                url_changed: false,
+                after_url: before_url,
+                focused_after: null,
+              } as ActivityProbeResult;
+            });
+
+            if (probePC.activity) {
+              postNote += ` (fired via pointer chain fallback after CDP silently_rejected inside shadow DOM)`;
+              probe.activity = true;
+              probe.after_url = probePC.after_url;
+              probe.focused_after = probePC.focused_after;
+              probe.mutation_count = probePC.mutation_count;
+              probe.url_changed = probePC.url_changed;
+            }
+          }
+        }
+      }
+
+      if (!probe.activity) {
+        // DOM .click() fallback (only when the primary CDP path ran):
         // re-dispatch the click via the content-script's `.click()` method,
         // which loses isTrusted=true but catches a class of handlers the CDP
-        // click misses — HTML Popover API triggers (button[popovertarget]
+        // click misses: HTML Popover API triggers (button[popovertarget]
         // toggling <r-post-flairs-modal> on Reddit's new-post composer),
         // <faceplate-*> Lit web components that bind via addEventListener
         // without isTrusted gating, and onclick handlers attached on hosts
         // whose pointer-events:none parents ate the coordinate-based event.
         //
         // Outer `if (!probe.activity)` already gates on confident inactivity
-        // — if the CDP click had taken effect, mutations/focus/url change
-        // would have flipped activity true and we wouldn't be here. So
-        // double-firing isn't a real risk; gate only on CDP having been
+        // so double-firing isn't a real risk; gate only on CDP having been
         // the primary path so the content-script .click() hasn't already
         // run (cdpPhaseError + non-scriptable url paths run it pre-probe).
         // Sites that gate strictly on isTrusted (Reddit comment submit
-        // pre-0.9.12, X submit) will still silently_reject here — those
-        // need highlight_region + wait_for_click, and the response keeps
-        // surfacing silently_rejected so the agent knows to escalate.
+        // pre-0.9.12, X submit) will still silently_reject here.
         if (
           usedCdp &&
           isScriptableUrl(tab.url) &&
@@ -2560,7 +2627,7 @@ async function handleMcpMessage(msg: {
             const probeDom = await phaseRace(
               "activity_probe_dom_fallback",
               3500,
-              runActivityProbe(tab.id, before_url, 1500, preClickVisibleCount),
+              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount),
             ).catch((e) => {
               const err = e as Error & { phase?: string };
               return {
@@ -2613,7 +2680,7 @@ async function handleMcpMessage(msg: {
           // the second probe sees it and we fall through to the rest of the
           // click flow (until_*, expect_submit, etc).
           const probe2 = isScriptableUrl(tab.url) && tab.id
-            ? await phaseRace("activity_probe_2", 3500, runActivityProbe(tab.id, before_url, 1500, preClickVisibleCount)).catch((e) => {
+            ? await phaseRace("activity_probe_2", 3500, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount)).catch((e) => {
                 const err = e as Error & { phase?: string };
                 return {
                   activity: true,
@@ -2635,7 +2702,7 @@ async function handleMcpMessage(msg: {
             return {
               type: "click_element_response",
               success: false,
-              message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms even after try_fiber=true (${fiberResult.fired ? "fiber onClick invoked, no DOM/URL/focus/alert change" : `no React fiber __reactProps$.onClick found: ${fiberResult.message}`}). Switch to highlight_region + wait_for_click so the user's real gesture fires the action.`,
+              message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within ${activityTimeoutMs}ms even after try_fiber=true (${fiberResult.fired ? "fiber onClick invoked, no DOM/URL/focus/alert change" : `no React fiber __reactProps$.onClick found: ${fiberResult.message}`}). Switch to highlight_region + wait_for_click so the user's real gesture fires the action.`,
               before_url,
               after_url: probe2.after_url,
               navigated: false,
@@ -2648,7 +2715,7 @@ async function handleMcpMessage(msg: {
           return {
             type: "click_element_response",
             success: false,
-            message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within 1500ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection — isTrusted-strict React UIs and similar form validators do this even though the synthetic click reports success. Switch to highlight_region + wait_for_click so the user's real gesture fires the action, or retry with try_fiber=true to walk __reactProps$.onClick directly on React-heavy SPAs. Until_* clauses are skipped here since the click never registered.`,
+            message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within ${activityTimeoutMs}ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection, or the action requires more than ${activityTimeoutMs}ms to produce a visible change (retry with activity_timeout_ms=3000 for slow async actions). Switch to highlight_region + wait_for_click so the user's real gesture fires the action, or retry with try_fiber=true to walk __reactProps$.onClick directly on React-heavy SPAs. Until_* clauses are skipped here since the click never registered.`,
             before_url,
             after_url: probe.after_url,
             navigated: false,
