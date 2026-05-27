@@ -234,6 +234,14 @@ function render(state: State) {
 
   groupsEl.innerHTML = groups.join("");
 
+  // Force the popup to resize to fit content. Chrome extension popups
+  // don't shrink automatically when DOM content collapses.
+  requestAnimationFrame(() => {
+    document.body.style.height = "auto";
+    const h = document.body.scrollHeight;
+    document.body.style.height = h + "px";
+  });
+
   const activeCount = state.livePorts.length;
   const pillText = statusPill.querySelector(".pill-text")!;
   if (activeCount > 0) {
