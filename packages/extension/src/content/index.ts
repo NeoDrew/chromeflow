@@ -3,6 +3,9 @@ import {
   findElementByText,
   highlightElement,
   renderHighlight,
+  showInstanceInfo,
+  hideInstanceInfo,
+  setInstanceInfoVisible,
 } from "./highlight.js";
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
@@ -867,6 +870,25 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "clear": {
       clearAllOverlays();
+      return { type: "action_done", requestId: msg.requestId };
+    }
+
+    case "show_instance_info": {
+      showInstanceInfo({
+        label: msg.label as string | undefined,
+        port: msg.port as number | undefined,
+        host: msg.host as string | undefined,
+      });
+      return { type: "action_done", requestId: msg.requestId };
+    }
+
+    case "hide_instance_info": {
+      hideInstanceInfo();
+      return { type: "action_done", requestId: msg.requestId };
+    }
+
+    case "set_instance_info_visible": {
+      setInstanceInfoVisible(msg.visible as boolean);
       return { type: "action_done", requestId: msg.requestId };
     }
 
