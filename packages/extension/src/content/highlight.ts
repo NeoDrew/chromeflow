@@ -221,7 +221,7 @@ function createHighlightElements(message: string, _color: string, valueToType?: 
   callout.style.cssText = `
     position: fixed;
     background: #ffffff;
-    color: #ea580c;
+    color: #f97316;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     font-size: 13px;
     font-weight: 600;
@@ -253,7 +253,7 @@ function createHighlightElements(message: string, _color: string, valueToType?: 
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
       font-size: 12px;
       font-weight: 600;
-      color: #c2410c;
+      color: #ea580c;
       letter-spacing: 0.01em;
       user-select: text;
       pointer-events: auto;
@@ -358,5 +358,5 @@ export function hideInstanceInfo() {
 
 export function setInstanceInfoVisible(visible: boolean) {
   const el = document.getElementById(INFO_BOX_ID);
-  if (el) el.style.opacity = visible ? "1" : "0";
+  if (el) el.style.display = visible ? "" : "none";
 }
