@@ -28,6 +28,11 @@ const HOST_ICONS: Record<Host, { src: string; label: string }> = {
 
 const collapsedGroups = new Set<string>();
 
+function resizePopup() {
+  document.body.style.height = "auto";
+  document.body.style.height = document.body.scrollHeight + "px";
+}
+
 async function loadState(): Promise<State> {
   const [storage, currentWindow, allWindows] = await Promise.all([
     chrome.storage.local.get(["chromeflowLivePorts", "claudeInstances"]),
@@ -234,13 +239,14 @@ function render(state: State) {
 
   groupsEl.innerHTML = groups.join("");
 
-  // Force the popup to resize to fit content. Chrome extension popups
-  // don't shrink automatically when DOM content collapses.
-  requestAnimationFrame(() => {
-    document.body.style.height = "auto";
-    const h = document.body.scrollHeight;
-    document.body.style.height = h + "px";
-  });
+  // Set max-height on each expanded group body so CSS transitions work.
+  // Collapsed bodies get max-height:0 via CSS; expanded ones need an
+  // explicit pixel value (auto doesn't transition).
+  for (const body of groupsEl.querySelectorAll<HTMLElement>(".group:not(.collapsed) .group-body")) {
+    body.style.maxHeight = body.scrollHeight + "px";
+  }
+
+  resizePopup();
 
   const activeCount = state.livePorts.length;
   const pillText = statusPill.querySelector(".pill-text")!;
@@ -271,13 +277,47 @@ function renderAnimated(state: State) {
 groupsEl.addEventListener("click", async (e) => {
   const target = e.target as HTMLElement;
 
-  // Group toggle — pure CSS transition on .group-body (grid-template-rows + opacity)
-  // handles the slide; no view transition needed for collapse/expand.
   const toggleKey = target.closest<HTMLElement>("[data-toggle-group]")?.getAttribute("data-toggle-group");
   if (toggleKey) {
-    if (collapsedGroups.has(toggleKey)) collapsedGroups.delete(toggleKey);
-    else collapsedGroups.add(toggleKey);
-    render(await loadState());
+    const group = groupsEl.querySelector<HTMLElement>(`[data-group="${toggleKey}"]`);
+    const body = group?.querySelector<HTMLElement>(".group-body");
+    const expanding = collapsedGroups.has(toggleKey);
+
+    if (expanding) {
+      collapsedGroups.delete(toggleKey);
+    } else {
+      collapsedGroups.add(toggleKey);
+    }
+
+    if (group && body) {
+      if (expanding) {
+        group.classList.remove("collapsed");
+        body.style.maxHeight = "0";
+        requestAnimationFrame(() => {
+          body.style.maxHeight = body.scrollHeight + "px";
+          const onEnd = () => { body.removeEventListener("transitionend", onEnd); resizePopup(); };
+          body.addEventListener("transitionend", onEnd);
+          resizePopup();
+        });
+        group.querySelector(".group-toggle")!.removeAttribute("style");
+      } else {
+        body.style.maxHeight = body.scrollHeight + "px";
+        requestAnimationFrame(() => {
+          group.classList.add("collapsed");
+          const onEnd = () => { body.removeEventListener("transitionend", onEnd); resizePopup(); };
+          body.addEventListener("transitionend", onEnd);
+          // Resize during the animation so the popup shrinks with the content
+          const shrink = () => {
+            if (!group.classList.contains("collapsed")) return;
+            resizePopup();
+            if (body.offsetHeight > 0) requestAnimationFrame(shrink);
+          };
+          requestAnimationFrame(shrink);
+        });
+      }
+    } else {
+      render(await loadState());
+    }
     return;
   }
 
