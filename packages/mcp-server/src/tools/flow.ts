@@ -207,21 +207,26 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
     `Wait for the user to click (or interact with) the currently highlighted element, then return.
 Use this after highlighting a step so the flow advances automatically without the user returning to the chat.
 After this resolves, highlight the next step immediately.
-If the click causes page navigation, this resolves when the new page finishes loading.`,
+If the click causes page navigation, this resolves when the new page finishes loading.
+
+Pass \`redispatch: true\` to turn the user's gesture into a CDP-dispatched isTrusted=true click. When the user clicks the highlighted area, chromeflow captures the coordinates and re-dispatches a full humanlike CDP click (bezier approach, settle hover, pointer events) at those exact coordinates. This produces an isTrusted=true event that passes anti-bot checks. Use for buttons that reject all synthetic clicks (shadow DOM buttons checking isTrusted, annotation dashboard "Collect Traces" buttons) where highlight_region + wait_for_click normally works but only the user's real gesture fires the action. With redispatch, the user still clicks, but chromeflow re-fires via CDP so subsequent automation (activity probe, state verification) works normally.`,
     {
       timeout: z
         .number()
         .optional()
         .describe("Max seconds to wait for the click (default 120)"),
+      redispatch: z
+        .boolean()
+        .optional()
+        .describe('Re-dispatch the user\'s click via CDP at the captured coordinates (isTrusted=true). The user clicks the highlighted area, chromeflow captures the (x, y) and fires a full humanlike CDP click sequence at those coordinates. Use for anti-bot buttons that reject all synthetic clicks. Returns redispatched=true and redispatch_activity=true/false in the response.'),
     },
-    async ({ timeout = 120 }) => {
-      // The WS request must outlive the click watch — otherwise long timeouts
-      // are silently capped at the default 30s WS REQUEST_TIMEOUT_MS.
+    async ({ timeout = 120, redispatch }) => {
       const watchMs = timeout * 1000;
       const response = await bridge.request(
         {
           type: "start_click_watch",
           timeout: watchMs,
+          redispatch,
         },
         watchMs + 5_000,
       );
@@ -230,9 +235,14 @@ If the click causes page navigation, this resolves when the new page finishes lo
         type: string;
         url?: string;
         target?: { selector: string; text: string; tag: string; x: number; y: number } | null;
+        redispatched?: boolean;
+        redispatch_activity?: boolean;
       };
       const targetLine = r.target
         ? `\nClicked element: <${r.target.tag}>${r.target.text ? ` "${r.target.text}"` : ""} at (${r.target.x}, ${r.target.y}) — selector: ${r.target.selector}`
+        : "";
+      const redispatchLine = r.redispatched
+        ? `\nCDP re-dispatched: isTrusted=true click at (${r.target?.x ?? 0}, ${r.target?.y ?? 0})${r.redispatch_activity ? " — activity detected" : " — no immediate activity (async action may still be processing)"}`
         : "";
 
       if (r.type === "navigation_complete") {
@@ -240,13 +250,13 @@ If the click causes page navigation, this resolves when the new page finishes lo
           content: [
             {
               type: "text",
-              text: `User clicked. Page navigated to: ${r.url ?? "(unknown)"}${targetLine}`,
+              text: `User clicked. Page navigated to: ${r.url ?? "(unknown)"}${targetLine}${redispatchLine}`,
             },
           ],
         };
       }
       return {
-        content: [{ type: "text", text: `User clicked the highlighted element.${targetLine}` }],
+        content: [{ type: "text", text: `User clicked the highlighted element.${targetLine}${redispatchLine}` }],
       };
     }
   );

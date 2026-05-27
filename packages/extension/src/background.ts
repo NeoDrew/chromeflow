@@ -47,10 +47,12 @@ type ClickWatchResult = {
   type: string;
   url?: string;
   target?: { selector: string; text: string; tag: string; x: number; y: number } | null;
+  redispatched?: boolean;
+  redispatch_activity?: boolean;
 };
 const pendingClicks = new Map<
   string,
-  { port: number; cb: (result: ClickWatchResult) => void }
+  { port: number; redispatch?: boolean; cb: (result: ClickWatchResult) => void }
 >();
 
 // Recent navigation completions per tab — used to resolve click-watches that
@@ -115,7 +117,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       const entry = pendingClicks.get(msg.requestId);
       if (entry) {
         pendingClicks.delete(msg.requestId);
-        entry.cb({ type: "click_detected", target: msg.target ?? null });
+        const target = msg.target as ClickWatchResult["target"] ?? null;
+        if (entry.redispatch && target && target.x > 0 && target.y > 0) {
+          (async () => {
+            try {
+              const wid = getWindowId(entry.port);
+              if (!wid) { entry.cb({ type: "click_detected", target }); return; }
+              const [tab] = await chrome.tabs.query({ active: true, windowId: wid });
+              if (!tab?.id || !isScriptableUrl(tab.url)) {
+                entry.cb({ type: "click_detected", target });
+                return;
+              }
+              const beforeUrl = tab.url ?? "";
+              await dispatchHumanMouseClick(tab.id, target.x, target.y);
+              const probe = await runActivityProbe(tab.id, beforeUrl, 1500, null).catch(() => ({
+                activity: true, reason: "(probe failed)", mutation_count: 0,
+                url_changed: false, after_url: beforeUrl, focused_after: null,
+              } as ActivityProbeResult));
+              entry.cb({
+                type: "click_detected",
+                target,
+                redispatched: true,
+                redispatch_activity: probe.activity,
+              });
+            } catch {
+              entry.cb({ type: "click_detected", target, redispatched: false });
+            }
+          })();
+        } else {
+          entry.cb({ type: "click_detected", target });
+        }
       }
     }
     sendResponse({ ok: true });
@@ -1730,6 +1761,7 @@ async function handleMcpMessage(msg: {
 
     case "start_click_watch": {
       const timeout = (msg.timeout as number) ?? 120_000;
+      const redispatch = msg.redispatch === true;
       const tab = await getActiveTab(port);
 
       // Tell content script to start watching for a click on the highlight
@@ -1763,7 +1795,7 @@ async function handleMcpMessage(msg: {
           }
         }, timeout);
 
-        pendingClicks.set(msg.requestId, { port, cb: finish });
+        pendingClicks.set(msg.requestId, { port, redispatch, cb: finish });
 
         // Race condition guard: if the user clicked a link and the page finished
         // loading before this handler ran, onUpdated already fired with no pending
