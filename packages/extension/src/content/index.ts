@@ -6,7 +6,7 @@ import {
 } from "./highlight.js";
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
-import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView, reactFiberClickByHint, findTopmostDialog, findDialogByQuery } from "./click.js";
+import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView, reactFiberClickByHint, findTopmostDialog, findDialogByQuery, pointerChainOnTagged } from "./click.js";
 import { collectShadowHosts, countShadowHosts, extractTextDeep, queryAllDeep } from "./shadow.js";
 import { enumerateFormFields } from "./forms.js";
 import { findText, findInputs, waitForText } from "./find.js";
@@ -118,7 +118,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
     }
 
     case "prepare_click_target": {
-      const result = prepareClickTarget(
+      const result = await prepareClickTarget(
         msg.textHint as string | undefined,
         msg.nth as number | undefined,
         msg.within_selector as string | undefined,
@@ -127,6 +127,11 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         msg.in_dialog as boolean | undefined,
         msg.dialog_query as string | undefined,
       );
+      return { type: "action_done", requestId: msg.requestId, ...result };
+    }
+
+    case "pointer_chain_click": {
+      const result = pointerChainOnTagged();
       return { type: "action_done", requestId: msg.requestId, ...result };
     }
 

@@ -3,19 +3,34 @@
 Most errors carry a structured field that tells you exactly what
 happened. Read the response, don't guess.
 
-## `silently_rejected: true` (anti-bot)
+## `silently_rejected: true` (anti-bot or slow async)
 
-The click dispatched but the 1500ms activity probe saw zero DOM /
-focus / URL / value / checked / alert / toast / modal change. The site
-silently rejected the synthetic click — Reddit submit, X submit, and
-reCAPTCHA-protected forms all do this.
+The click dispatched but the activity probe (default 1500ms) saw zero
+DOM / focus / URL / value / checked / alert / toast / modal change.
+Two common causes:
+
+1. **Anti-bot rejection**: the site silently rejected the synthetic
+   click (Reddit submit, X submit, reCAPTCHA-protected forms).
+2. **Slow async action**: the button triggers an API call that takes
+   longer than the probe window to produce visible DOM changes (common
+   on annotation dashboards like "Collect Traces & Continue").
 
 **Recovery:**
-1. Try `try_fiber: true` once. If `fiber_attempted: true` AND
-   `silently_rejected: true` still set, fiber didn't help either.
-2. Pre-fill any related fields via `fill_form` / `fill_input`.
-3. `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
-4. Do NOT retry the same `click_element`. Re-targeting doesn't help.
+1. If the button triggers a slow async action (API call, data
+   collection), retry with `activity_timeout_ms: 3000` (or higher).
+   The probe returns early on activity, so increasing it only costs
+   time when there truly is no activity.
+2. For shadow DOM buttons: the new pointer chain fallback fires
+   automatically between the CDP click and DOM .click() fallback. If
+   you still see silently_rejected on shadow DOM sites, the button
+   likely gates on isTrusted (proceed to step 4).
+3. Try `try_fiber: true` once. The fiber walk is now shadow-DOM-aware
+   and searches inside the shadow root for the React root container.
+   If `fiber_attempted: true` AND `silently_rejected: true` still
+   set, fiber didn't help either.
+4. Pre-fill any related fields via `fill_form` / `fill_input`.
+5. `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
+6. Do NOT retry the same `click_element`. Re-targeting doesn't help.
 
 See `references/anti-bot.md` for the full decision tree.
 
@@ -66,6 +81,13 @@ Could be:
 3. A transient internal race where the previous detach hadn't
    propagated yet. The 5-retry budget (~7.5s) usually catches these,
    but if it slips through, just retry the original call once.
+4. A previous `execute_script` hung and locked the debugger. As of
+   0.10.4, `execute_script` auto-terminates via
+   `Runtime.terminateExecution` on timeout and releases the debugger
+   cleanly. If you hit this on an older version, refresh the tab.
+   Pass `timeout_ms` to `execute_script` to control the timeout
+   (default 30s; lower for scripts that might hang, higher for
+   intentionally long-running shadow DOM traversals).
 
 ## "Frame removed — page navigated during script execution"
 

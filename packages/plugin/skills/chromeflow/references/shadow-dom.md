@@ -36,7 +36,7 @@ use the extension's content-script context where `chrome.dom` is available.
 
 ## `execute_script` helpers — `$deep` / `$deepAll` / `shadowDocument`
 
-Every `execute_script` body has three locals pre-injected in scope:
+Every `execute_script` body has four locals pre-injected in scope:
 
 ```js
 // $deep(selector, root?) — querySelector that walks OPEN shadow roots
@@ -45,14 +45,24 @@ const btn = $deep('button.submit');
 // $deepAll(selector, root?) — querySelectorAll equivalent, returns array
 const all = $deepAll('[role=button]');
 
-// shadowDocument — first attached open shadow root on page, or document
+// shadowDocument — open shadow root with the most interactive elements
+// (buttons, inputs, links), or document if no shadow roots exist.
+// On pages with multiple shadow roots (e.g. one for CSS theme vars,
+// one for content), this picks the content root automatically.
 shadowDocument.querySelector('input[name=email]');
+
+// shadowDocuments — array of ALL open shadow roots on the page (DOM order).
+// Use when you need to search across multiple roots or when the
+// automatic pick is wrong.
+shadowDocuments.forEach(sr => console.log(sr.host.tagName));
 ```
 
 These cover the common case where an SPA mounts all its UI inside a
 single root open shadow host. Replace every `document.querySelector*`
 with `shadowDocument.querySelector*` and the same code reaches the SPA's
-content.
+content. On multi-root pages (theme host + content host), the scoring
+heuristic picks the root with the most interactive elements rather than
+the first one in DOM order.
 
 For **closed** shadow roots, MAIN world can't reach them — `execute_script`
 is still blind. Switch to `find_text` / `click_element` / `fill_input` /

@@ -14,7 +14,7 @@ import { markerIds } from "../markers.js";
  * already-checked radio toggles it OFF on React forms whose onChange handler
  * interprets the click as a deselect (common on React-controlled form widgets).
  */
-export function prepareClickTarget(
+export async function prepareClickTarget(
   textHint: string | undefined,
   nth?: number,
   within_selector?: string,
@@ -22,7 +22,7 @@ export function prepareClickTarget(
   selector?: string,
   in_dialog?: boolean,
   dialog_query?: string,
-): { success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean; nextCandidate?: string; scope_missed?: boolean } {
+): Promise<{ success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean; nextCandidate?: string; scope_missed?: boolean }> {
   // Clear any stale tags from a previous click
   document.querySelectorAll(`[${markerIds.clickTargetAttr()}]`).forEach((el) => el.removeAttribute(markerIds.clickTargetAttr()));
   document.querySelectorAll(`[${markerIds.preCheckedAttr()}]`).forEach((el) => el.removeAttribute(markerIds.preCheckedAttr()));
@@ -102,7 +102,7 @@ export function prepareClickTarget(
 
   // Pre-flight: an already-checked radio should never be re-clicked.
   if (checkable && checkable.type === "radio" && checkable.checked) {
-    scrollSmartIntoView(el);
+    await scrollSmartIntoView(el);
     const label =
       (el as HTMLElement).innerText?.trim() ||
       el.getAttribute("aria-label") ||
@@ -111,7 +111,7 @@ export function prepareClickTarget(
     return { success: true, skipClick: true, message: `"${label}" — radio already checked, click skipped`, label };
   }
 
-  scrollSmartIntoView(el);
+  await scrollSmartIntoView(el);
   el.setAttribute(markerIds.clickTargetAttr(), "true");
 
   // Record pre-click state on the resolved input so postClickInspect can
@@ -264,38 +264,106 @@ function firePointerChain(el: Element) {
  * fallback.
  */
 export function reactFiberClick(el: Element): { fired: boolean; component?: string } {
+  // When the element lives inside a shadow root, the React fiber tree is
+  // attached to the React root INSIDE that shadow root, not to the main
+  // document's React root. Walking parentElement from inside a shadow root
+  // eventually crosses the shadow boundary and reaches light DOM elements
+  // that have no __reactProps$ keys, causing the walk to fail. Worse, some
+  // shadow root implementations expose non-Element nodes on the boundary
+  // that crash on property access (the "toLowerCase" TypeError on Outlier).
+  //
+  // Fix: detect if el is inside a shadow root. If so, also search siblings
+  // and children of the shadow root for a React root container, and walk
+  // fibers from that container down to find the handler for el.
   let node: any = el; // eslint-disable-line @typescript-eslint/no-explicit-any
   for (let depth = 0; depth < 12 && node; depth++) {
-    const fk = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
-    const onClick = fk ? node[fk]?.onClick : null;
-    if (typeof onClick === "function") {
-      const ev = {
-        preventDefault() { /* noop */ },
-        stopPropagation() { /* noop */ },
-        stopImmediatePropagation() { /* noop */ },
-        nativeEvent: { isTrusted: true },
-        target: el,
-        currentTarget: el,
-        type: "click",
-        bubbles: true,
-        cancelable: true,
-        defaultPrevented: false,
-        isDefaultPrevented: () => false,
-        isPropagationStopped: () => false,
-      };
-      try {
-        onClick(ev);
-        const tag = node instanceof Element ? node.tagName.toLowerCase() : "(unknown)";
-        return { fired: true, component: tag };
-      } catch {
-        // Handler threw — still counts as "fired" so the caller doesn't keep
-        // walking. The page state will reveal whether the handler's exception
-        // was the real cause vs. an unrelated downstream failure.
-        return { fired: true };
+    try {
+      const fk = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
+      const onClick = fk ? node[fk]?.onClick : null;
+      if (typeof onClick === "function") {
+        const ev = {
+          preventDefault() { /* noop */ },
+          stopPropagation() { /* noop */ },
+          stopImmediatePropagation() { /* noop */ },
+          nativeEvent: { isTrusted: true },
+          target: el,
+          currentTarget: el,
+          type: "click",
+          bubbles: true,
+          cancelable: true,
+          defaultPrevented: false,
+          isDefaultPrevented: () => false,
+          isPropagationStopped: () => false,
+        };
+        try {
+          onClick(ev);
+          const tag = node instanceof Element ? node.tagName.toLowerCase() : "(unknown)";
+          return { fired: true, component: tag };
+        } catch {
+          return { fired: true };
+        }
       }
+    } catch {
+      // Property access on cross-boundary nodes can throw (shadow DOM edge
+      // cases where the node is a DocumentFragment or has restricted props).
+      // Skip this node and continue walking up.
     }
     node = node instanceof Element ? node.parentElement : null;
   }
+
+  // Shadow-root fallback: find the React root container inside the shadow
+  // root and search its children for the fiber handler targeting el.
+  let shadowRoot: ShadowRoot | null = null;
+  let cur: Node | null = el;
+  while (cur) {
+    if (cur instanceof ShadowRoot) { shadowRoot = cur; break; }
+    cur = cur.parentNode;
+  }
+  if (shadowRoot) {
+    const containers = shadowRoot.querySelectorAll("*");
+    for (const container of Array.from(containers)) {
+      try {
+        const rk = Object.keys(container).find((k) =>
+          k.startsWith("__reactContainer$") || k.startsWith("__reactFiber$"));
+        if (!rk) continue;
+        let fiber: any = (container as any)[rk];
+        for (let i = 0; i < 200 && fiber; i++) {
+          if (fiber.stateNode === el || fiber.stateNode?.contains?.(el)) {
+            const props = fiber.memoizedProps ?? fiber.pendingProps;
+            if (typeof props?.onClick === "function") {
+              const ev = {
+                preventDefault() { /* noop */ },
+                stopPropagation() { /* noop */ },
+                stopImmediatePropagation() { /* noop */ },
+                nativeEvent: { isTrusted: true },
+                target: el,
+                currentTarget: el,
+                type: "click",
+                bubbles: true,
+                cancelable: true,
+                defaultPrevented: false,
+                isDefaultPrevented: () => false,
+                isPropagationStopped: () => false,
+              };
+              try {
+                props.onClick(ev);
+                const tag = fiber.stateNode instanceof Element
+                  ? fiber.stateNode.tagName.toLowerCase()
+                  : "(shadow-fiber)";
+                return { fired: true, component: tag };
+              } catch {
+                return { fired: true };
+              }
+            }
+          }
+          fiber = fiber.child ?? fiber.sibling ?? fiber.return?.sibling;
+        }
+      } catch {
+        // Fiber traversal can throw on detached or mangled trees.
+      }
+    }
+  }
+
   return { fired: false };
 }
 
@@ -376,10 +444,10 @@ export function reactFiberClickByHint(
  * (chrome:// pages, debugger attach fails). The CDP path produces isTrusted=true
  * clicks; this path produces isTrusted=false synthetic clicks.
  */
-export function clickElement(
+export async function clickElement(
   textHint: string,
   nth?: number
-): { success: boolean; message: string } {
+): Promise<{ success: boolean; message: string }> {
   const lower = textHint.toLowerCase().trim();
   const el = findClickable(lower, nth);
 
@@ -388,7 +456,7 @@ export function clickElement(
   }
 
   // Scroll the element into view, including nested scroll containers
-  scrollSmartIntoView(el);
+  await scrollSmartIntoView(el);
 
   const label =
     (el as HTMLElement).innerText?.trim() ||
@@ -451,12 +519,16 @@ export function clickElement(
  * ancestor containers (e.g. Stripe's slide-over drawer panels, or any
  * inner-pane SPA where document.body.scrollHeight is dwarfed by the
  * inner scroll container's scrollHeight).
+ *
+ * Returns a Promise that resolves once the element is confirmed visible in
+ * the viewport via IntersectionObserver (or after a 500ms fallback timeout).
+ * Shadow DOM radio buttons and Lit components need the scroll to fully
+ * settle before a click will register; the old sync approach fired the click
+ * in the same tick as the scroll, which was too fast.
  */
-export function scrollSmartIntoView(el: Element) {
-  // Standard scroll for the main window
+export async function scrollSmartIntoView(el: Element): Promise<void> {
   el.scrollIntoView({ behavior: "smooth", block: "nearest" });
 
-  // Also walk up and scroll any overflow:auto/scroll ancestor
   let parent = el.parentElement;
   while (parent && parent !== document.documentElement) {
     const style = getComputedStyle(parent);
@@ -475,6 +547,19 @@ export function scrollSmartIntoView(el: Element) {
     }
     parent = parent.parentElement;
   }
+
+  await new Promise<void>((resolve) => {
+    let resolved = false;
+    const done = () => { if (!resolved) { resolved = true; resolve(); } };
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        observer.disconnect();
+        setTimeout(done, 50);
+      }
+    }, { threshold: 0.1 });
+    observer.observe(el);
+    setTimeout(() => { observer.disconnect(); done(); }, 500);
+  });
 }
 
 /**
@@ -691,6 +776,26 @@ export function findDialogByQuery(query: string): Element | null {
     if (text.includes(lower)) return d;
   }
   return null;
+}
+
+/**
+ * Fire the full pointer chain on the currently tagged click target element.
+ * Used as a fallback when CDP coordinate-based clicks are silently rejected
+ * inside shadow DOM: CDP dispatch at coordinates works, but when the event
+ * bubbles out of the shadow root, event.target is retargeted to the shadow
+ * host, so React event delegation (which checks event.target) discards it.
+ * Dispatching directly ON the element inside the shadow root avoids the
+ * retargeting problem.
+ */
+export function pointerChainOnTagged(): { fired: boolean; label?: string } {
+  const el = document.querySelector<HTMLElement>(`[${markerIds.clickTargetAttr()}]`);
+  if (!el) return { fired: false };
+  firePointerChain(el);
+  const label =
+    el.innerText?.trim().slice(0, 60) ||
+    el.getAttribute("aria-label") ||
+    el.tagName.toLowerCase();
+  return { fired: true, label };
 }
 
 /**

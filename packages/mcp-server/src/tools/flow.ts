@@ -81,7 +81,13 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       try_fiber: z
         .boolean()
         .optional()
-        .describe(`Opt-in last-resort fallback when silently_rejected fires. After the 1500ms activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest \`__reactProps$.onClick\` prop, and invokes it with a minimal synthetic event. Useful on React-heavy SPAs whose action buttons pass through isTrusted=true checks even on CDP events. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this — fiber-prop walking is undocumented and may misbehave on mangled production builds. Reserve for repeat silently_rejected on a known-safe React site.`),
+        .describe(`Opt-in last-resort fallback when silently_rejected fires. After the activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest \`__reactProps$.onClick\` prop, and invokes it with a minimal synthetic event. Now shadow-DOM-aware: when the element is inside a shadow root, the fiber walk searches for React root containers inside that shadow root instead of walking the light DOM. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this; reserve for repeat silently_rejected on a known-safe React site.`),
+      activity_timeout_ms: z
+        .number()
+        .int()
+        .min(500)
+        .optional()
+        .describe(`How long the activity probe watches for DOM mutations, focus changes, URL changes, or alert/toast/modal appearance after the click (default 1500ms). The probe returns early as soon as activity is detected, so the default adds only ~100ms on successful clicks. Increase to 2500-4000ms for buttons that trigger async API calls before producing visible DOM changes (e.g. "Collect Traces" on annotation dashboards). The probe reports "silently_rejected" when zero activity is seen within this window; a higher value reduces false negatives but slows genuine rejection detection.`),
       via: z
         .enum(["auto", "cdp", "fiber"])
         .optional()
@@ -95,7 +101,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         .optional()
         .describe(`Scope candidate matches to a specific dialog by heading or aria-label substring. Use when multiple dialogs are open and in_dialog (topmost) would pick the wrong one — e.g. click_element("Confirm", dialog_query="Delete account"). Mutually exclusive with in_dialog; dialog_query wins when both are set.`),
     },
-    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, via, in_dialog, dialog_query }) => {
+    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, via, in_dialog, dialog_query }) => {
       // Validate exactly-one-of(textHint, selector)
       if ((!textHint && !selector) || (textHint && selector)) {
         return {
@@ -109,7 +115,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, via, in_dialog, dialog_query },
+          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, via, in_dialog, dialog_query },
           wsTimeout
         );
       } catch (err) {

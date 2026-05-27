@@ -43,6 +43,7 @@ export type ServerMessage =
       within_selector?: string;
       near_text?: string;
       try_fiber?: boolean;
+      activity_timeout_ms?: number;
       via?: "auto" | "cdp" | "fiber";
       in_dialog?: boolean;
       dialog_query?: string;
@@ -62,7 +63,7 @@ export type ServerMessage =
   | { type: "get_page_html"; requestId: string; selector?: string; max_chars?: number }
   | { type: "wait_for_selector"; requestId: string; selector: string; timeout: number; refresh?: number; shadow_root?: boolean }
   | { type: "wait_for_change"; requestId: string; selector: string; timeout: number; settle?: number }
-  | { type: "execute_script"; requestId: string; code: string; tab_query?: string; pierce_shadow?: boolean }
+  | { type: "execute_script"; requestId: string; code: string; tab_query?: string; pierce_shadow?: boolean; timeout_ms?: number }
   | { type: "get_elements"; requestId: string }
   | { type: "get_form_fields"; requestId: string; only_empty?: boolean }
   | { type: "scroll_to_element"; requestId: string; query: string }
