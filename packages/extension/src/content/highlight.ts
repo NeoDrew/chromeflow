@@ -37,6 +37,11 @@ function ensureStyles() {
       from { opacity: 0; transform: translateY(-4px); }
       to   { opacity: 1; transform: translateY(0); }
     }
+    @keyframes chromeflow-indeterminate {
+      0%   { left: -40%; width: 40%; }
+      50%  { left: 30%;  width: 50%; }
+      100% { left: 110%; width: 40%; }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -321,34 +326,81 @@ const INFO_BOX_ID = "chromeflow-instance-info";
 
 export function showInstanceInfo(info: { label?: string; port?: number; host?: string }) {
   hideInstanceInfo();
+  ensureStyles();
   if (!info.label && !info.port) return;
+
   const el = document.createElement("div");
   el.id = INFO_BOX_ID;
+  el.style.cssText = `
+    position: fixed;
+    top: 12px;
+    right: 12px;
+    background: #ffffff;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: #374151;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.3;
+    padding: 10px 14px 12px;
+    border-radius: 10px;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.06);
+    pointer-events: none;
+    z-index: 2147483646;
+    user-select: none;
+    min-width: 180px;
+    overflow: hidden;
+  `;
+
+  const title = document.createElement("div");
+  title.style.cssText = `
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #f97316;
+    margin-bottom: 4px;
+  `;
+  title.textContent = "Chromeflow";
+
+  const details = document.createElement("div");
+  details.style.cssText = `
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+    font-size: 12px;
+    color: #6b7280;
+    margin-bottom: 8px;
+  `;
   const parts: string[] = [];
   if (info.label) parts.push(info.label);
   if (info.port) parts.push(`port ${info.port}`);
   if (info.host) parts.push(info.host);
-  el.textContent = parts.join("  ·  ");
-  el.style.cssText = `
-    position: fixed;
-    top: 8px;
-    right: 8px;
-    background: rgba(15, 15, 15, 0.75);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
-    color: rgba(255, 255, 255, 0.8);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
-    font-size: 11px;
-    font-weight: 500;
-    line-height: 1;
-    padding: 5px 10px;
-    border-radius: 6px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    pointer-events: none;
-    z-index: 2147483646;
-    user-select: none;
-    transition: opacity 0.15s ease;
+  details.textContent = parts.join("  ·  ");
+
+  const barTrack = document.createElement("div");
+  barTrack.style.cssText = `
+    height: 3px;
+    background: #f3f4f6;
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
   `;
+
+  const barFill = document.createElement("div");
+  barFill.style.cssText = `
+    position: absolute;
+    top: 0;
+    height: 100%;
+    background: linear-gradient(90deg, #fb923c, #f97316, #ea580c);
+    border-radius: 2px;
+    animation: chromeflow-indeterminate 1.4s ease-in-out infinite;
+  `;
+
+  barTrack.appendChild(barFill);
+  el.appendChild(title);
+  el.appendChild(details);
+  el.appendChild(barTrack);
   document.documentElement.appendChild(el);
 }
 

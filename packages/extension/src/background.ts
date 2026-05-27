@@ -1200,6 +1200,13 @@ async function handleMcpMessage(msg: {
 }, port: number): Promise<unknown> {
   switch (msg.type) {
     case "navigate": {
+      // Navigation reloads the page, destroying any injected info box.
+      // Clear the tracking so pushInstanceInfoIfNeeded re-injects after load.
+      const preNavTab = getWindowId(port)
+        ? (await chrome.tabs.query({ active: true, windowId: getWindowId(port)! }))[0]
+        : null;
+      if (preNavTab?.id) tabsWithInfoBox.delete(preNavTab.id);
+
       let targetTab: chrome.tabs.Tab;
       const targetUrl = msg.url as string;
       const blockNav = isBlockedUrl(targetUrl);
