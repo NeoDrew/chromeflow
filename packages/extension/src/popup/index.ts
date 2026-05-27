@@ -168,6 +168,29 @@ function render(state: State) {
     if (p.host) hostMap.set(p.port, p.host);
   }
 
+  // Deduplicate labels: if multiple ports share the same project name,
+  // append (1), (2), etc. like duplicate filenames.
+  const labelCounts = new Map<string, number>();
+  const displayLabelMap = new Map<number, string>();
+  for (const [port, label] of labelMap) {
+    const n = (labelCounts.get(label) ?? 0) + 1;
+    labelCounts.set(label, n);
+    displayLabelMap.set(port, n > 1 ? `${label} (${n - 1})` : label);
+  }
+  // Second pass: if a label appeared more than once, the first one also needs a suffix
+  for (const [port, label] of labelMap) {
+    if ((labelCounts.get(label) ?? 0) > 1 && displayLabelMap.get(port) === label) {
+      // Renumber all instances of this label sequentially
+      let idx = 0;
+      for (const [p] of labelMap) {
+        if (labelMap.get(p) === label) {
+          idx++;
+          displayLabelMap.set(p, idx === 1 ? label : `${label} (${idx - 1})`);
+        }
+      }
+    }
+  }
+
   // All known ports = live + assigned (even if offline)
   const allPorts = new Set<number>([
     ...state.livePorts.map((p) => p.port),
@@ -207,7 +230,7 @@ function render(state: State) {
 
   for (const port of sortedPorts) {
     const isLive = state.livePorts.some((p) => p.port === port);
-    const label = labelMap.get(port);
+    const label = displayLabelMap.get(port) ?? labelMap.get(port);
     const host = hostMap.get(port);
     const assignedWindowId = state.instances[String(port)];
     const card = renderInstanceCard(port, label, host, isLive, assignedWindowId, state.currentWindowId);
