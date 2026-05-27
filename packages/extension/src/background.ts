@@ -2458,24 +2458,30 @@ async function handleMcpMessage(msg: {
         }
       }
 
+      // skip_activity_probe: fire-and-forget mode. The CDP click was dispatched
+      // and we return success immediately without running the activity probe or
+      // any fallback chain (tap gesture, pointer chain, DOM .click(), fiber).
+      // Use for buttons that trigger slow async API calls (3-5s+) where the
+      // probe would falsely report "silently_rejected" and the fallback chain
+      // would double-fire the action. The caller verifies state via find_text
+      // or execute_script after an appropriate delay.
+      if (msg.skip_activity_probe && usedCdp) {
+        result.message += " (activity probe skipped; verify state manually)";
+        // Still honor until-clauses if set — they provide verification without
+        // the false-negative risk of the probe.
+        // Fall through to the until-clause / expect_submit / SPA-nav block below.
+      }
+
       // Fast-fail probe: watch the page for ANY observable activity in the
-      // 1500ms after dispatch (DOM mutations, focus change, value/check
-      // change, URL change, alert/toast/modal). When 0 activity is detected,
-      // the click was almost certainly silently rejected by anti-bot
-      // detection (isTrusted-strict React UIs, Reddit submit, X submit,
-      // and similar handlers) and any until_* clause is guaranteed to time
-      // out. Failing fast here saves up to 25s per failed click and tells
-      // the agent to switch to highlight_region + wait_for_click for a
-      // human gesture.
+      // 1500ms after dispatch. When 0 activity is detected, the click was
+      // almost certainly silently rejected by anti-bot detection.
       //
-      // Returns early as soon as activity is detected, so most clicks (which
-      // do produce activity) add only ~100ms before continuing to the
-      // existing until-poll / expect_submit / SPA-nav-wait flow.
-      // Wrapped in phaseRace so a hung probe (rare, but happens when
-      // MAIN-world JS is blocked by a long synchronous handler) reports the
-      // phase instead of running to the WS cap.
+      // Returns early as soon as activity is detected, so most clicks add
+      // only ~100ms before continuing to the until-poll / expect_submit flow.
       const probeBudgetMs = activityTimeoutMs + 2000;
-      const probe = isScriptableUrl(tab.url) && tab.id
+      const probe = msg.skip_activity_probe
+        ? { activity: true, reason: "(probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult
+        : isScriptableUrl(tab.url) && tab.id
         ? await phaseRace("activity_probe", probeBudgetMs, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount)).catch((e) => {
             const err = e as Error & { phase?: string };
             return {

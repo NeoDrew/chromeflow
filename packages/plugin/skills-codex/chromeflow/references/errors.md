@@ -17,20 +17,27 @@ Two common causes:
 
 **Recovery:**
 1. If the button triggers a slow async action (API call, data
-   collection), retry with `activity_timeout_ms: 3000` (or higher).
-   The probe returns early on activity, so increasing it only costs
-   time when there truly is no activity.
-2. For shadow DOM buttons: the new pointer chain fallback fires
+   collection, "Collect Traces"), use `skip_activity_probe: true`.
+   This skips the probe AND all fallback clicks (tap gesture, pointer
+   chain, DOM .click(), fiber), preventing double-fire. Verify state
+   yourself via `find_text` after 3-5s. You can combine with
+   `until_text_contains` or `until_selector` to wait for the result.
+2. If `skip_activity_probe` is too aggressive, try
+   `activity_timeout_ms: 3000` (or higher) first. The probe returns
+   early on activity, so increasing it only costs time when there
+   truly is no activity.
+3. For shadow DOM buttons: the pointer chain fallback fires
    automatically between the CDP click and DOM .click() fallback. If
    you still see silently_rejected on shadow DOM sites, the button
-   likely gates on isTrusted (proceed to step 4).
-3. Try `try_fiber: true` once. The fiber walk is now shadow-DOM-aware
-   and searches inside the shadow root for the React root container.
+   likely gates on isTrusted (proceed to step 5).
+4. Try `try_fiber: true` once. The fiber walk is shadow-DOM-aware.
    If `fiber_attempted: true` AND `silently_rejected: true` still
    set, fiber didn't help either.
-4. Pre-fill any related fields via `fill_form` / `fill_input`.
-5. `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
-6. Do NOT retry the same `click_element`. Re-targeting doesn't help.
+5. Pre-fill any related fields via `fill_form` / `fill_input`.
+6. `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
+   `wait_for_click` now detects shadow DOM state changes via a
+   shadow-pierce visible-element count poll (fires every 500ms).
+7. Do NOT retry the same `click_element`. Re-targeting doesn't help.
 
 See `references/anti-bot.md` for the full decision tree.
 

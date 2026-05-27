@@ -65,9 +65,12 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       let width = msg.width as number | undefined;
       let height = msg.height as number | undefined;
 
-      // If a selector is provided, resolve coordinates from the DOM
+      // If a selector is provided, resolve coordinates from the DOM.
+      // Uses queryAllDeep to pierce open AND closed shadow roots so
+      // selectors targeting shadow DOM elements (Outlier panels,
+      // Reddit faceplate-*, Radix portals) resolve correctly.
       if (msg.selector) {
-        const el = document.querySelector<HTMLElement>(msg.selector as string);
+        const el = queryAllDeep<HTMLElement>(document, msg.selector as string)[0] ?? null;
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
           const rect = el.getBoundingClientRect();
@@ -1068,9 +1071,7 @@ function startClickWatch(requestId: string) {
     if (done) return;
     done = true;
     cleanup();
-    clearAllOverlays(); // remove the highlight as soon as the user clicks
-    // Capture target before focus-forwarding so the captured selector / text
-    // reflects what the user actually clicked, even if focus snaps elsewhere.
+    clearAllOverlays();
     let captured: CapturedClickTarget | null = null;
     if (clientX !== undefined && clientY !== undefined) {
       const underlying = document.elementFromPoint(clientX, clientY);
@@ -1089,19 +1090,58 @@ function startClickWatch(requestId: string) {
     });
   };
 
-  // Accept any click on the page — the user is following the visual guide and
-  // knows what to click. Filtering by position caused false negatives when
-  // highlight coordinates were slightly off.
   const onPointerDown = (e: PointerEvent) => notify(e.clientX, e.clientY, e.target);
 
-  // Also advance when the user presses Enter/Tab (completing a form field)
   const onKeyDown = (e: KeyboardEvent) => {
     if (e.key === "Enter" || e.key === "Tab") notify(undefined, undefined, e.target);
   };
 
+  // Shadow DOM fallback: MutationObserver on document catches main-document
+  // mutations, but misses state changes inside shadow roots (Outlier panels,
+  // Lit components flipping visibility). Poll a shadow-pierce visible-element
+  // count as a backup signal: if the count changes by >= 5 after the watch
+  // starts, the user likely clicked and something happened.
+  const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+  function getShadowRoot(el: Element): ShadowRoot | null {
+    if (chromeDom?.openOrClosedShadowRoot) {
+      try { const sr = chromeDom.openOrClosedShadowRoot(el); if (sr) return sr; } catch { /* fall through */ }
+    }
+    return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+  }
+  function deepVisibleCount(): number {
+    let count = 0;
+    const seen = new WeakSet<ShadowRoot>();
+    function walk(root: Document | ShadowRoot) {
+      const all = root.querySelectorAll("*");
+      for (const el of Array.from(all)) {
+        if ((el as HTMLElement).offsetParent !== null) count++;
+        const sr = getShadowRoot(el);
+        if (sr && !seen.has(sr)) { seen.add(sr); walk(sr); }
+      }
+    }
+    walk(document);
+    return count;
+  }
+  const baselineVisible = deepVisibleCount();
+  let mutCount = 0;
+  const observer = new MutationObserver((records) => { mutCount += records.length; });
+  observer.observe(document, { subtree: true, childList: true, attributes: true });
+
+  const shadowPoll = setInterval(() => {
+    if (done) return;
+    const urlChanged = location.href !== startUrl;
+    const visibleDelta = deepVisibleCount() - baselineVisible;
+    if (urlChanged || mutCount > 3 || Math.abs(visibleDelta) >= 5) {
+      notify();
+    }
+  }, 500);
+  const startUrl = location.href;
+
   const cleanup = () => {
     document.removeEventListener("pointerdown", onPointerDown, true);
     document.removeEventListener("keydown", onKeyDown, true);
+    observer.disconnect();
+    clearInterval(shadowPoll);
   };
 
   document.addEventListener("pointerdown", onPointerDown, { capture: true });

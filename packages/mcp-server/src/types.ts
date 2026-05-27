@@ -44,6 +44,7 @@ export type ServerMessage =
       near_text?: string;
       try_fiber?: boolean;
       activity_timeout_ms?: number;
+      skip_activity_probe?: boolean;
       via?: "auto" | "cdp" | "fiber";
       in_dialog?: boolean;
       dialog_query?: string;
