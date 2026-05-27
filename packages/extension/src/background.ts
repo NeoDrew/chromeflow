@@ -12,6 +12,11 @@ import { parseDoc, detectFormat, type SupportedFormat } from "./lib/parse-doc";
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 
 // ─── Per-instance Claude window assignments ────────────────────────────────
+// Per-port instance metadata (label, host) from the WS identity handshake.
+// Populated via the offscreen "status" broadcast so the background can push
+// instance info to the content script for the info box overlay.
+const portMeta = new Map<number, { label?: string; host?: string }>();
+
 // Each Claude Code instance is identified by the WebSocket port it connects on
 // (7878-7888). Each instance can be assigned its own Chrome window so multiple
 // CC instances can run automations in parallel without colliding.
@@ -102,6 +107,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "status") {
       const livePorts = (msg.livePorts as Array<{ port: number; label?: string; host?: "claude" | "codex" }>) ?? [];
       chrome.storage.local.set({ chromeflowLivePorts: livePorts }).catch(() => {});
+      for (const lp of livePorts) {
+        portMeta.set(lp.port, { label: lp.label, host: lp.host });
+      }
       sendResponse({ ok: true });
       return true;
     }
@@ -1158,6 +1166,23 @@ function sendToContentScript(tabId: number, msg: object): Promise<unknown> {
 
 // ─── MCP message handler ───────────────────────────────────────────────────
 
+const tabsWithInfoBox = new Set<number>();
+
+async function pushInstanceInfoIfNeeded(tab: chrome.tabs.Tab, port: number) {
+  if (!tab.id || !isScriptableUrl(tab.url) || tabsWithInfoBox.has(tab.id)) return;
+  tabsWithInfoBox.add(tab.id);
+  const meta = portMeta.get(port);
+  try {
+    await forwardToContentScript(tab, {
+      type: "show_instance_info",
+      requestId: "info-" + Date.now(),
+      label: meta?.label,
+      port,
+      host: meta?.host,
+    });
+  } catch { /* best-effort */ }
+}
+
 async function handleMcpMessage(msg: {
   type: string;
   requestId: string;
@@ -1374,6 +1399,8 @@ async function handleMcpMessage(msg: {
           dismissed_beforeunload: dismissedBeforeunload,
         };
       }
+      await pushInstanceInfoIfNeeded(targetTab, port);
+
       return {
         type: "action_done",
         current_url: currentUrl,
@@ -1621,6 +1648,14 @@ async function handleMcpMessage(msg: {
         }
       }
 
+      // Hide the instance info box so it doesn't appear in the captured image.
+      // Best-effort; re-shown in the finally block below.
+      if (isScriptableUrl(tab.url) && tab.id) {
+        try {
+          await forwardToContentScript(tab, { type: "set_instance_info_visible", requestId: msg.requestId + "-hide", visible: false });
+        } catch { /* ignore */ }
+      }
+
       let capture: { dataUrl: string; via: "visibleTab" | "cdp" } | null = null;
       let lastErr: Error | null = null;
       const backoffMs = [0, 400, 1000];
@@ -1746,6 +1781,13 @@ async function handleMcpMessage(msg: {
             scroll = { x: r.sx, y: r.sy };
           }
         } catch { /* best-effort */ }
+      }
+
+      // Re-show the instance info box after capture.
+      if (isScriptableUrl(tab.url) && tab.id) {
+        try {
+          await forwardToContentScript(tab, { type: "set_instance_info_visible", requestId: msg.requestId + "-show", visible: true });
+        } catch { /* ignore */ }
       }
 
       return {
