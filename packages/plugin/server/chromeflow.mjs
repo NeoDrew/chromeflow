@@ -26070,7 +26070,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // ../mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.10.7" : "dev";
+var PACKAGE_VERSION = true ? "0.10.8" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);
