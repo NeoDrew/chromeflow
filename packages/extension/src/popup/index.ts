@@ -349,8 +349,11 @@ collapsedGroups.add("unassigned");
 // Listen for live-port changes from the offscreen document
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.source === "chromeflow-offscreen" && msg.type === "status") {
-    loadState().then(render);
+    loadState().then((s) => { render(s); resizePopup(); });
   }
 });
 
-loadState().then(render);
+loadState().then((s) => {
+  render(s);
+  requestAnimationFrame(() => document.body.classList.add("ready"));
+});

@@ -33,6 +33,13 @@
       color: var(--text);
       padding: 16px;
       -webkit-font-smoothing: antialiased;
+      opacity: 0;
+      transform: translateY(-4px);
+      transition: opacity 0.15s ease, transform 0.15s ease;
+    }
+    body.ready {
+      opacity: 1;
+      transform: translateY(0);
     }
 
     .header {
