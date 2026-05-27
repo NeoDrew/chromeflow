@@ -87,7 +87,11 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         .int()
         .min(500)
         .optional()
-        .describe(`How long the activity probe watches for DOM mutations, focus changes, URL changes, or alert/toast/modal appearance after the click (default 1500ms). The probe returns early as soon as activity is detected, so the default adds only ~100ms on successful clicks. Increase to 2500-4000ms for buttons that trigger async API calls before producing visible DOM changes (e.g. "Collect Traces" on annotation dashboards). The probe reports "silently_rejected" when zero activity is seen within this window; a higher value reduces false negatives but slows genuine rejection detection.`),
+        .describe(`How long the activity probe watches for DOM mutations, focus changes, URL changes, or alert/toast/modal appearance after the click (default 1500ms). The probe returns early as soon as activity is detected, so the default adds only ~100ms on successful clicks. Increase to 2500-4000ms for buttons that trigger async API calls before producing visible DOM changes. The probe reports "silently_rejected" when zero activity is seen within this window; a higher value reduces false negatives but slows genuine rejection detection. For buttons where the click triggers a 3-5s API call with no immediate DOM change, use skip_activity_probe instead.`),
+      skip_activity_probe: z
+        .boolean()
+        .optional()
+        .describe(`Skip the 1500ms activity probe AND all automatic fallbacks (tap gesture, pointer chain, DOM .click(), fiber walk) after the CDP click. The click is dispatched and success is returned immediately without verifying page activity. Use for buttons that trigger slow async API calls (3-5s+) before producing visible DOM changes, where the activity probe would falsely report "silently_rejected" and the fallback chain would double-fire. Verify state yourself via find_text or execute_script after an appropriate delay. WARNING: no automatic silent-rejection detection when this is set.`),
       via: z
         .enum(["auto", "cdp", "fiber"])
         .optional()
@@ -101,7 +105,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         .optional()
         .describe(`Scope candidate matches to a specific dialog by heading or aria-label substring. Use when multiple dialogs are open and in_dialog (topmost) would pick the wrong one — e.g. click_element("Confirm", dialog_query="Delete account"). Mutually exclusive with in_dialog; dialog_query wins when both are set.`),
     },
-    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, via, in_dialog, dialog_query }) => {
+    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query }) => {
       // Validate exactly-one-of(textHint, selector)
       if ((!textHint && !selector) || (textHint && selector)) {
         return {
@@ -115,7 +119,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, via, in_dialog, dialog_query },
+          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query },
           wsTimeout
         );
       } catch (err) {
