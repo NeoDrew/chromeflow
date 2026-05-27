@@ -90,7 +90,7 @@ function renderInstanceCard(
     metaPieces.push(
       isThisWindow
         ? `<span class="meta-tag">✓ this window</span>`
-        : `<span class="meta-tag elsewhere">window #${assignedWindowId}</span>`
+        : `<a class="meta-tag elsewhere go-to-window" href="#" data-window-id="${assignedWindowId}">go to window →</a>`
     );
   } else {
     metaPieces.push(`<span class="meta-tag unassigned">unassigned</span>`);
@@ -276,6 +276,15 @@ function renderAnimated(state: State) {
 
 groupsEl.addEventListener("click", async (e) => {
   const target = e.target as HTMLElement;
+
+  // "go to window" link — focus that Chrome window
+  const goToWindow = target.closest<HTMLElement>(".go-to-window");
+  if (goToWindow) {
+    e.preventDefault();
+    const wid = Number(goToWindow.getAttribute("data-window-id"));
+    if (wid) chrome.windows.update(wid, { focused: true });
+    return;
+  }
 
   const toggleKey = target.closest<HTMLElement>("[data-toggle-group]")?.getAttribute("data-toggle-group");
   if (toggleKey) {

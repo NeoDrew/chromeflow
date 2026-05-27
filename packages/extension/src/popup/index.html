@@ -248,6 +248,12 @@
     .meta-tag { display: inline-block; color: var(--success); font-weight: 500; }
     .meta-tag.elsewhere { color: var(--warning); }
     .meta-tag.unassigned { color: var(--text-faint); }
+    a.go-to-window {
+      text-decoration: none;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    a.go-to-window:hover { text-decoration: underline; }
 
     .btn-row { display: flex; gap: 6px; }
     .btn {
