@@ -1168,7 +1168,17 @@ function sendToContentScript(tabId: number, msg: object): Promise<unknown> {
 
 const tabsWithInfoBox = new Set<number>();
 
-async function pushInstanceInfoIfNeeded(tab: chrome.tabs.Tab, port: number) {
+async function pushInstanceInfoIfNeeded(portOrTab: number | chrome.tabs.Tab, port: number) {
+  let tab: chrome.tabs.Tab;
+  if (typeof portOrTab === "number") {
+    const wid = getWindowId(port);
+    if (!wid) return;
+    const [t] = await chrome.tabs.query({ active: true, windowId: wid });
+    if (!t?.id) return;
+    tab = t;
+  } else {
+    tab = portOrTab;
+  }
   if (!tab.id || !isScriptableUrl(tab.url) || tabsWithInfoBox.has(tab.id)) return;
   tabsWithInfoBox.add(tab.id);
   const meta = portMeta.get(port);
@@ -1399,7 +1409,7 @@ async function handleMcpMessage(msg: {
           dismissed_beforeunload: dismissedBeforeunload,
         };
       }
-      await pushInstanceInfoIfNeeded(targetTab, port);
+      await pushInstanceInfoIfNeeded(port, port);
 
       return {
         type: "action_done",
@@ -4121,6 +4131,7 @@ async function handleMcpMessage(msg: {
 
     default: {
       const tab = await getActiveTab(port);
+      await pushInstanceInfoIfNeeded(tab, port);
       return forwardToContentScript(tab, msg);
     }
   }
