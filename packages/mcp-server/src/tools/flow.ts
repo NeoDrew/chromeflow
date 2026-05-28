@@ -91,7 +91,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       skip_activity_probe: z
         .boolean()
         .optional()
-        .describe(`Skip the 1500ms activity probe AND all automatic fallbacks (tap gesture, pointer chain, DOM .click(), fiber walk) after the CDP click. The click is dispatched and success is returned immediately without verifying page activity. Use for buttons that trigger slow async API calls (3-5s+) before producing visible DOM changes, where the activity probe would falsely report "silently_rejected" and the fallback chain would double-fire. Verify state yourself via find_text or execute_script after an appropriate delay. WARNING: no automatic silent-rejection detection when this is set.`),
+        .describe(`Skip the 1500ms activity probe AND all automatic fallbacks (tap gesture, pointer chain, DOM .click(), fiber walk) after the CDP click. The click is dispatched and success is returned immediately without verifying page activity. Use for buttons that trigger slow async API calls (3-5s+) before producing visible DOM changes, where the activity probe would falsely report "silently_rejected" and the fallback chain would double-fire. Verify state yourself via find_text or execute_script after an appropriate delay. NOTE: this is set IMPLICITLY when any until_* clause is passed, since the until-clause already provides verification. WARNING: no automatic silent-rejection detection when this is set without an until-clause.`),
       via: z
         .enum(["auto", "cdp", "fiber"])
         .optional()
