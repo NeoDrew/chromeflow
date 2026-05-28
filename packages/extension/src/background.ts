@@ -647,17 +647,11 @@ async function dispatchHumanMouseClick(
     const dbg = chrome.debugger as unknown as {
       sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
     };
-    // Activation primer: Reddit's <r-post-flairs-modal>, <r-post-form-submit-button>,
-    // and similar strict Web Components check more than isTrusted=true on the click
-    // event. Likely they check navigator.userActivation.isActive, which only stays
-    // true for ~5s after a transient activation. Standalone CDP clicks DO create
-    // activation via dispatchMouseEvent, but the check often runs before the
-    // mousedown activation has propagated to the page's main-frame document.
-    //
-    // Page.bringToFront brings the tab to the front via a user-equivalent focus
-    // event, which seeds the activation context the page's check needs. Burns
-    // ~10ms and is silently ignored on platforms where it doesn't apply.
-    try { await dbg.sendCommand({ tabId }, "Page.bringToFront"); } catch { /* best-effort */ }
+    // (Previously: Page.bringToFront here to seed user activation. Removed in
+    // 0.10.14 because the stealth shim in stealth.ts now patches
+    // document.hasFocus and navigator.userActivation at document_start, which
+    // covers the same gates without stealing OS focus from the user's
+    // terminal/IDE.)
     const button = options.button ?? "left";
     const ptr = { pointerType: "mouse" as const, force: 0.5 };
     const sx = cx + Math.round((Math.random() - 0.5) * 60);
@@ -2547,18 +2541,6 @@ async function handleMcpMessage(msg: {
       const preClickVisibleCount = canCdp && tab.id
         ? await snapshotVisibleCount(tab.id).catch(() => null)
         : null;
-      // Pre-click activation: bring the tab's window to the foreground and
-      // activate the tab. Reddit's <r-post-flairs-modal>, <r-post-form-submit-button>,
-      // and similar strict Web Components reject clicks dispatched to a
-      // backgrounded or unfocused tab even when isTrusted=true, because the
-      // page's check often gates on document.hasFocus() in addition to event
-      // trust. Best-effort: ignore errors when the window/tab is already focused.
-      if (canCdp && tab.id && tab.windowId !== undefined) {
-        try {
-          await chrome.windows.update(tab.windowId, { focused: true });
-          await chrome.tabs.update(tab.id, { active: true });
-        } catch { /* best-effort */ }
-      }
       let cdpPhaseError: string | null = null;
       if (canCdp) {
         try {
