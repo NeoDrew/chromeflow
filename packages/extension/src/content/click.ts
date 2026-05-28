@@ -31,6 +31,9 @@ export async function prepareClickTarget(
   for (const el of queryAllDeep(document, `[${markerIds.preCheckedAttr()}]`)) {
     el.removeAttribute(markerIds.preCheckedAttr());
   }
+  for (const el of queryAllDeep(document, `[${markerIds.preDimensionsAttr()}]`)) {
+    el.removeAttribute(markerIds.preDimensionsAttr());
+  }
 
   let scope: Document | Element = document;
   if (dialog_query) {
@@ -118,6 +121,13 @@ export async function prepareClickTarget(
 
   await scrollSmartIntoView(el);
   el.setAttribute(markerIds.clickTargetAttr(), "true");
+  // Record pre-click dimensions. If post-click the element is 0×0, it might
+  // mean the click succeeded and the element was removed (modal close
+  // dismissing its trigger button) rather than the click hitting nothing.
+  const preRect = el.getBoundingClientRect();
+  if (preRect.width > 0 && preRect.height > 0) {
+    el.setAttribute(markerIds.preDimensionsAttr(), "1");
+  }
 
   // Record pre-click state on the resolved input so postClickInspect can
   // verify the click landed and fall back to a full pointer-event chain
@@ -234,13 +244,22 @@ export function postClickInspect(): { message: string; stateChanged: boolean } {
   }
 
   const rect = el.getBoundingClientRect();
-  if (
-    rect.width === 0 && rect.height === 0 &&
+  const nowZero = rect.width === 0 && rect.height === 0 &&
     !el.offsetWidth && !el.offsetHeight &&
-    el.getClientRects().length === 0
-  ) {
-    stateNote += " — WARNING: element has 0×0 dimensions (likely inside a collapsed or hidden panel). The click may not have had any effect.";
+    el.getClientRects().length === 0;
+  if (nowZero) {
+    // If pre-click dims were non-zero (we recorded that), this is a likely
+    // success signal — the click closed/removed the target (modal close
+    // button vanishes after Apply, popover closes after picking an option).
+    // Don't warn; just note the disappearance.
+    if (el.hasAttribute(markerIds.preDimensionsAttr())) {
+      stateChanged = true;
+      stateNote += " — element removed/hidden post-click (modal close, popover dismiss, or similar)";
+    } else {
+      stateNote += " — WARNING: element has 0×0 dimensions (likely inside a collapsed or hidden panel). The click may not have had any effect.";
+    }
   }
+  el.removeAttribute(markerIds.preDimensionsAttr());
 
   // NOTE: marker attribute is NOT removed here. The activity probe needs it
   // to find the target element for its post-click state snapshot. Removal
