@@ -8,6 +8,7 @@
  */
 
 import { parseDoc, detectFormat, type SupportedFormat } from "./lib/parse-doc";
+import { markerIds } from "./markers";
 
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 
@@ -578,6 +579,43 @@ async function dispatchTapGesture(
       duration: 50,
       tapCount: 1,
       gestureSourceType: "mouse",
+    });
+  });
+}
+
+/**
+ * Keyboard activation fallback. When a button's click handler is
+ * gated on something beyond isTrusted=true (Reddit's web components
+ * check user-activation provenance — CDP mouse events count as trusted
+ * but apparently not "trusted enough" for some custom-element handlers),
+ * a CDP keyboard Enter press still activates the button. Buttons handle
+ * Enter and Space natively via the browser's built-in keyboard activation
+ * path, which bypasses any mouse-event source checks the page added.
+ *
+ * The element must be focused first (handled by the caller via
+ * scripting.executeScript + el.focus()).
+ */
+async function dispatchKeyboardActivation(tabId: number): Promise<void> {
+  await withDebugger(tabId, async () => {
+    const dbg = chrome.debugger as unknown as {
+      sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
+    };
+    // Small dwell before key press, mimicking a human pressing Enter after focus.
+    await new Promise((r) => setTimeout(r, 60 + Math.random() * 40));
+    await dbg.sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+    });
+    await new Promise((r) => setTimeout(r, 40 + Math.random() * 30));
+    await dbg.sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
     });
   });
 }
@@ -2641,6 +2679,61 @@ async function handleMcpMessage(msg: {
             // synthesizeTapGesture failed (older Chrome, debugger detached).
             // Fall through to the DOM .click() path below.
           }
+        }
+      }
+
+      if (!probe.activity) {
+        // Keyboard activation fallback. Reddit's <faceplate-*> web
+        // components (flair button, comment composer expand) and similar
+        // strict gates check something beyond isTrusted=true on the click
+        // event — likely the activation provenance. CDP mouse events count
+        // as trusted but get rejected anyway. Dispatching a CDP keyboard
+        // Enter on the focused element activates the button via the
+        // browser's native keyboard activation path, which bypasses any
+        // mouse-event source checks the page added.
+        //
+        // Focuses the tagged element via execute_script (ISOLATED world so
+        // the marker attribute resolves), then dispatches Input.dispatchKeyEvent
+        // for Enter. Buttons and most form controls handle Enter natively.
+        if (canCdp && tab.id) {
+          try {
+            const focusOk = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: (markerAttr: string) => {
+                const el = document.querySelector<HTMLElement>(`[${markerAttr}]`);
+                if (!el) return false;
+                el.focus();
+                return document.activeElement === el;
+              },
+              args: [markerIds.clickTargetAttr()],
+            });
+            if (focusOk[0]?.result === true) {
+              await phaseRace("keyboard_activation_fallback", 3500, dispatchKeyboardActivation(tabId));
+              const probeKB = await phaseRace(
+                "activity_probe_keyboard_fallback",
+                3500,
+                runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount),
+              ).catch((e) => {
+                const err = e as Error & { phase?: string };
+                return {
+                  activity: true,
+                  reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
+                  mutation_count: 0,
+                  url_changed: false,
+                  after_url: before_url,
+                  focused_after: null,
+                } as ActivityProbeResult;
+              });
+              if (probeKB.activity) {
+                postNote += ` (fired via CDP keyboard Enter after mouse silently_rejected)`;
+                probe.activity = true;
+                probe.after_url = probeKB.after_url;
+                probe.focused_after = probeKB.focused_after;
+                probe.mutation_count = probeKB.mutation_count;
+                probe.url_changed = probeKB.url_changed;
+              }
+            }
+          } catch { /* fall through to pointer chain */ }
         }
       }
 
