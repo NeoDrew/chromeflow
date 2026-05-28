@@ -2549,18 +2549,23 @@ async function handleMcpMessage(msg: {
         }
       }
 
-      // skip_activity_probe: fire-and-forget mode. The CDP click was dispatched
-      // and we return success immediately without running the activity probe or
-      // any fallback chain (tap gesture, pointer chain, DOM .click(), fiber).
-      // Use for buttons that trigger slow async API calls (3-5s+) where the
-      // probe would falsely report "silently_rejected" and the fallback chain
-      // would double-fire the action. The caller verifies state via find_text
-      // or execute_script after an appropriate delay.
+      // Implicit skip_activity_probe when an until-clause was set. The until
+      // clause IS the verification: it polls for selector/text/URL appearance
+      // for up to until_timeout_ms (default 5s). Running the activity probe
+      // in addition produces false negatives on slow async submits (Reddit
+      // post submit takes 2-3s before the page redirects, the probe times
+      // out at 1500ms and reports silently_rejected), and the fallback chain
+      // (tap gesture, pointer chain, DOM .click()) fires duplicate events on
+      // the SAME button that the original click already hit — which on
+      // Reddit gets deduped and on other sites can double-submit forms.
+      const hasUntilClause = !!(
+        msg.until_selector || msg.until_url_contains ||
+        msg.until_text_contains || msg.until_url_changes
+      );
+      const effectiveSkipProbe = msg.skip_activity_probe === true || hasUntilClause;
+
       if (msg.skip_activity_probe && usedCdp) {
         result.message += " (activity probe skipped; verify state manually)";
-        // Still honor until-clauses if set — they provide verification without
-        // the false-negative risk of the probe.
-        // Fall through to the until-clause / expect_submit / SPA-nav block below.
       }
 
       // Fast-fail probe: watch the page for ANY observable activity in the
@@ -2570,8 +2575,8 @@ async function handleMcpMessage(msg: {
       // Returns early as soon as activity is detected, so most clicks add
       // only ~100ms before continuing to the until-poll / expect_submit flow.
       const probeBudgetMs = activityTimeoutMs + 2000;
-      const probe = msg.skip_activity_probe
-        ? { activity: true, reason: "(probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult
+      const probe = effectiveSkipProbe
+        ? { activity: true, reason: hasUntilClause ? "(probe skipped: until-clause verifies)" : "(probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult
         : isScriptableUrl(tab.url) && tab.id
         ? await phaseRace("activity_probe", probeBudgetMs, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount)).catch((e) => {
             const err = e as Error & { phase?: string };
@@ -3154,8 +3159,64 @@ async function handleMcpMessage(msg: {
               }
               target.focus();
               if (clearFirst) {
-                try { document.execCommand("selectAll"); } catch { /* ignore */ }
-                try { document.execCommand("delete"); } catch { /* ignore */ }
+                // Lexical (Reddit composer): editor instance lives on the
+                // contenteditable element as __lexicalEditor<hash>. execCommand
+                // is intercepted and ignored; the only reliable clear is to
+                // parse a blank editor state and call setEditorState.
+                let cleared = false;
+                const lexicalKey = Object.keys(target).find((k) => k.startsWith("__lexicalEditor"));
+                if (lexicalKey) {
+                  try {
+                    const editor = (target as unknown as Record<string, { parseEditorState: (s: string) => unknown; setEditorState: (s: unknown) => void }>)[lexicalKey];
+                    const blank = editor.parseEditorState('{"root":{"children":[{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1}],"direction":null,"format":"","indent":0,"type":"root","version":1}}');
+                    editor.setEditorState(blank);
+                    cleared = true;
+                  } catch { /* fall through to execCommand */ }
+                }
+                // ProseMirror / TipTap: editor exposes pmViewDesc and the view
+                // on element.pmViewDesc.spec, or pmEditorView on the editable.
+                if (!cleared) {
+                  const pmView = (target as unknown as { pmViewDesc?: { node?: unknown }; CodeMirror?: unknown }).pmViewDesc;
+                  // TipTap exposes editor via the closest [data-tiptap-editor]
+                  const tiptapHost = target.closest("[data-tiptap-editor], .tiptap, .ProseMirror");
+                  if (tiptapHost) {
+                    const tiptapKey = Object.keys(tiptapHost).find((k) => k.startsWith("__tiptapEditor"));
+                    if (tiptapKey) {
+                      try {
+                        const editor = (tiptapHost as unknown as Record<string, { commands?: { clearContent?: () => void } }>)[tiptapKey];
+                        if (editor.commands?.clearContent) {
+                          editor.commands.clearContent();
+                          cleared = true;
+                        }
+                      } catch { /* fall through */ }
+                    }
+                  }
+                  if (!cleared && pmView) {
+                    // Generic ProseMirror clear: replace content with empty doc
+                    try {
+                      const view = (target as unknown as { pmViewDesc: { spec?: { editor?: unknown } } }).pmViewDesc.spec?.editor as { state?: { tr?: { delete: (a: number, b: number) => unknown }; doc?: { content?: { size?: number } } }; dispatch?: (t: unknown) => void } | undefined;
+                      const tr = view?.state?.tr;
+                      const size = view?.state?.doc?.content?.size;
+                      if (tr && view?.dispatch && typeof size === "number") {
+                        const cleared_tr = tr.delete(0, size);
+                        view.dispatch(cleared_tr);
+                        cleared = true;
+                      }
+                    } catch { /* fall through */ }
+                  }
+                }
+                // Fallback for plain contenteditable / input / textarea
+                if (!cleared) {
+                  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+                    target.value = "";
+                    target.dispatchEvent(new Event("input", { bubbles: true }));
+                    target.dispatchEvent(new Event("change", { bubbles: true }));
+                    cleared = true;
+                  } else {
+                    try { document.execCommand("selectAll"); } catch { /* ignore */ }
+                    try { document.execCommand("delete"); } catch { /* ignore */ }
+                  }
+                }
               }
               return "ok";
             },
