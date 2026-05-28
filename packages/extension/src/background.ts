@@ -2914,7 +2914,56 @@ async function handleMcpMessage(msg: {
             untilTextContains && `text "${untilTextContains}"`,
             untilUrlChanges && `URL change`,
           ].filter(Boolean).join(" or ");
-          untilResult = { ok: false, reason: `Click fired but ${conditions} did not appear within ${untilTimeoutMs}ms — the click may not have registered. Try execute_script with a direct .click() on the matched element, or pass a different until_* value.` };
+
+          // Check if a dialog/modal opened post-click. This is the canonical
+          // "Reddit submit blocked because flair required" case: the click
+          // fired, no navigation, but a modal opened asking for missing
+          // info. Surfacing the modal's title lets the agent fix the
+          // precondition (set a flair, accept a prompt, etc.) and retry.
+          let blockerHint = "";
+          if (isScriptableUrl(tab.url) && tab.id) {
+            try {
+              const r = await chrome.scripting.executeScript({
+                target: { tabId: tab.id },
+                func: () => {
+                  const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+                  function getShadowRoot(el: Element): ShadowRoot | null {
+                    if (chromeDom?.openOrClosedShadowRoot) {
+                      try { const sr = chromeDom.openOrClosedShadowRoot(el); if (sr) return sr; } catch { /* ignore */ }
+                    }
+                    return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+                  }
+                  function deepFind(sel: string): Element | null {
+                    const stack: (Document | ShadowRoot)[] = [document];
+                    while (stack.length) {
+                      const root = stack.pop()!;
+                      const found = root.querySelector(sel);
+                      if (found) return found;
+                      for (const el of Array.from(root.querySelectorAll("*"))) {
+                        const sr = getShadowRoot(el);
+                        if (sr) stack.push(sr);
+                      }
+                    }
+                    return null;
+                  }
+                  const dialog = deepFind('[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"], dialog[open], faceplate-dialog:not([hidden])');
+                  if (!dialog) return null;
+                  const heading = dialog.querySelector("h1, h2, h3, [role='heading']")?.textContent?.trim() ?? "";
+                  const aria = dialog.getAttribute("aria-label") ?? "";
+                  const r = (dialog as HTMLElement).getBoundingClientRect?.();
+                  if (r && r.width === 0 && r.height === 0) return null;
+                  return { heading: heading.slice(0, 80), aria: aria.slice(0, 80), tag: dialog.tagName.toLowerCase() };
+                },
+              });
+              const d = r[0]?.result as { heading: string; aria: string; tag: string } | null | undefined;
+              if (d) {
+                const label = d.heading || d.aria || d.tag;
+                blockerHint = ` A dialog opened post-click: "${label}". The click likely triggered a required-input prompt (e.g. Reddit's "Add flair" modal on a flair-required sub). Resolve the dialog first, then retry the submit.`;
+              }
+            } catch { /* best-effort */ }
+          }
+
+          untilResult = { ok: false, reason: `Click fired but ${conditions} did not appear within ${untilTimeoutMs}ms — the click may not have registered.${blockerHint} Try execute_script with a direct .click() on the matched element, or pass a different until_* value.` };
         }
       } else if (expectSubmit) {
         // expect_submit: poll for any anti-bot-friendly submit signal within
