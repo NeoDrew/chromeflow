@@ -102,6 +102,63 @@
       }
     } catch { /* ignore */ }
 
+    // document.hasFocus() — patch to always return true. When the user is
+    // looking at their terminal/IDE instead of the Chrome window, the page
+    // sees hasFocus=false. Strict Web Components (Reddit's r-post-flairs-modal,
+    // r-post-form-submit-button) check this in addition to event.isTrusted and
+    // silently reject clicks when false. CDP's Page.bringToFront and
+    // chrome.windows.update({focused:true}) bring the tab forward in Chrome's
+    // tab strip but don't make Chrome the OS-foreground window when another
+    // app has it. The override here makes chromeflow's CDP clicks pass these
+    // focus gates regardless of OS-level focus.
+    //
+    // Side effect: pages that pause/resume video on focus loss will keep
+    // playing. Acceptable tradeoff for click reliability.
+    try {
+      Object.defineProperty(Document.prototype, "hasFocus", {
+        value: fakeNative(function hasFocus() { return true; }, "hasFocus"),
+        configurable: true,
+        writable: true,
+      });
+    } catch { /* may be frozen */ }
+    try {
+      Object.defineProperty(Document.prototype, "hidden", {
+        get: fakeNative(function get() { return false; }, "get hidden"),
+        configurable: true,
+        enumerable: true,
+      });
+    } catch { /* ignore */ }
+    try {
+      Object.defineProperty(Document.prototype, "visibilityState", {
+        get: fakeNative(function get() { return "visible"; }, "get visibilityState"),
+        configurable: true,
+        enumerable: true,
+      });
+    } catch { /* ignore */ }
+
+    // navigator.userActivation.isActive — strict gates (Reddit's
+    // faceplate-tracker, others) check this to verify a fresh user gesture
+    // preceded the action. CDP-dispatched events create user activation,
+    // but the `isActive` flag only stays true for ~5 seconds and CDP timing
+    // doesn't always align with the page's check. Force both flags true so
+    // chromeflow's CDP clicks always pass.
+    try {
+      const ua = (navigator as Navigator & { userActivation?: { isActive: boolean; hasBeenActive: boolean } }).userActivation;
+      if (ua) {
+        const proto = Object.getPrototypeOf(ua);
+        Object.defineProperty(proto, "isActive", {
+          get: fakeNative(function get() { return true; }, "get isActive"),
+          configurable: true,
+          enumerable: true,
+        });
+        Object.defineProperty(proto, "hasBeenActive", {
+          get: fakeNative(function get() { return true; }, "get hasBeenActive"),
+          configurable: true,
+          enumerable: true,
+        });
+      }
+    } catch { /* ignore */ }
+
     // window.chrome.runtime — extensions sometimes hide this from page context,
     // making the page appear "non-Chrome". Ensure it's at least present.
     try {
