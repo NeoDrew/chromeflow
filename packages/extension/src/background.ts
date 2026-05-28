@@ -2694,15 +2694,29 @@ async function handleMcpMessage(msg: {
           : "(probe skipped)";
       // Cleanup helper: postClickInspect no longer removes the click-target
       // marker because the activity probe needs it to read post-click state.
-      // Untag after all probes and fallbacks finish.
+      // Untag after all probes and fallbacks finish. Shadow-piercing because
+      // the tagged element may live inside a closed shadow root.
       const untagClickTarget = async () => {
         if (!isScriptableUrl(tab.url) || !tab.id) return;
         try {
           await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             func: (markerAttr: string) => {
-              for (const el of document.querySelectorAll(`[${markerAttr}]`)) {
-                el.removeAttribute(markerAttr);
+              const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+              function getShadowRoot(el: Element): ShadowRoot | null {
+                if (chromeDom?.openOrClosedShadowRoot) {
+                  try { const sr = chromeDom.openOrClosedShadowRoot(el); if (sr) return sr; } catch { /* ignore */ }
+                }
+                return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+              }
+              const stack: (Document | ShadowRoot)[] = [document];
+              while (stack.length) {
+                const root = stack.pop()!;
+                root.querySelectorAll(`[${markerAttr}]`).forEach((el) => el.removeAttribute(markerAttr));
+                root.querySelectorAll("*").forEach((el) => {
+                  const sr = getShadowRoot(el);
+                  if (sr) stack.push(sr);
+                });
               }
             },
             args: [markerIds.clickTargetAttr()],
