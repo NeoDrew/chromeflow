@@ -161,11 +161,12 @@ function describeCandidate(el: Element, hint: string): string {
  * fallback for React-controlled inputs whose handlers are bound to pointer
  * events rather than mouse events.
  */
-export function postClickInspect(): { message: string } {
+export function postClickInspect(): { message: string; stateChanged: boolean } {
   const el = document.querySelector<HTMLElement>(`[${markerIds.clickTargetAttr()}]`);
-  if (!el) return { message: "" };
+  if (!el) return { message: "", stateChanged: false };
 
   let stateNote = "";
+  let stateChanged = false;
   const checkable = resolveCheckableInput(el);
   if (checkable) {
     const preAttr = checkable.getAttribute(markerIds.preCheckedAttr());
@@ -178,6 +179,13 @@ export function postClickInspect(): { message: string } {
     if (radioFailed || checkboxFailed) {
       firePointerChain(checkable);
       fallbackUsed = true;
+    }
+
+    // State changed iff: radio is now checked OR checkbox value differs from preChecked.
+    if (checkable.type === "radio") {
+      stateChanged = checkable.checked;
+    } else if (checkable.type === "checkbox" && preAttr !== null) {
+      stateChanged = checkable.checked !== preChecked;
     }
 
     checkable.removeAttribute(markerIds.preCheckedAttr());
@@ -194,7 +202,7 @@ export function postClickInspect(): { message: string } {
   }
 
   el.removeAttribute(markerIds.clickTargetAttr());
-  return { message: stateNote };
+  return { message: stateNote, stateChanged };
 }
 
 /**

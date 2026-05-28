@@ -765,6 +765,7 @@ async function runActivityProbe(
   beforeUrl: string,
   windowMs: number = 1500,
   externalBaseline: number | null = null,
+  targetMarkerAttr: string | null = null,
 ): Promise<ActivityProbeResult> {
   const empty: ActivityProbeResult = {
     activity: true,
@@ -777,7 +778,7 @@ async function runActivityProbe(
   try {
     const r = await chrome.scripting.executeScript({
       target: { tabId },
-      func: (windowMs: number, beforeUrl: string, externalBaseline: number | null) => {
+      func: (windowMs: number, beforeUrl: string, externalBaseline: number | null, targetMarkerAttr: string | null) => {
         return new Promise<ActivityProbeResult>((resolve) => {
           function getShadowRoot(el: Element): ShadowRoot | null {
             const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
@@ -861,6 +862,37 @@ async function runActivityProbe(
           const focusedBefore = getFocused();
           const focusedKeyBefore = focusedBefore ? JSON.stringify(focusedBefore) : "";
           const signalsBefore = getSignalCounts();
+          // Snapshot the tagged click target's state-bearing attributes so
+          // we can detect state changes that don't produce general DOM
+          // mutations (a faceplate-radio-input toggling aria-checked, a
+          // Lit dropdown flipping aria-expanded, a contenteditable changing
+          // its value). Without this, the probe reports "no activity" on
+          // every Reddit radio click even though the radio IS now selected.
+          const STATE_ATTRS = [
+            "aria-checked", "aria-selected", "aria-expanded",
+            "aria-pressed", "aria-current", "data-state",
+            "checked", "value", "disabled",
+          ];
+          function snapshotTargetState(): string | null {
+            if (!targetMarkerAttr) return null;
+            const stack: (Document | ShadowRoot)[] = [document];
+            while (stack.length) {
+              const root = stack.pop()!;
+              const found = root.querySelector(`[${targetMarkerAttr}]`);
+              if (found) {
+                const parts: string[] = [];
+                for (const a of STATE_ATTRS) parts.push(`${a}=${found.getAttribute(a) ?? ""}`);
+                if (found instanceof HTMLInputElement) parts.push(`prop_checked=${found.checked}`);
+                return parts.join("|");
+              }
+              for (const el of Array.from(root.querySelectorAll("*"))) {
+                const sr = getShadowRoot(el);
+                if (sr) stack.push(sr);
+              }
+            }
+            return null;
+          }
+          const targetStateBefore = snapshotTargetState();
           // Prefer caller-supplied pre-click baseline. If absent, fall
           // back to taking it now (sufficient for most callers; only
           // synchronous-render Lit components require the pre-click path).
@@ -889,6 +921,16 @@ async function runActivityProbe(
             const focusedKeyNow = focusedNow ? JSON.stringify(focusedNow) : "";
             if (focusedKeyNow !== focusedKeyBefore) {
               return { activity: true, reason: "focused element changed", url_changed: false };
+            }
+            // Target element attribute change — catches form-input state
+            // changes (aria-checked, checked) and Lit/Radix dropdown state
+            // changes (aria-expanded, data-state) on the SPECIFIC element
+            // that was clicked. MutationObserver detects these at the
+            // document level too, but radios in shadow DOM with custom
+            // attribute names sometimes evade general subtree observation.
+            const targetStateNow = snapshotTargetState();
+            if (targetStateBefore !== null && targetStateNow !== null && targetStateNow !== targetStateBefore) {
+              return { activity: true, reason: "target element state attribute changed", url_changed: false };
             }
             const c = getSignalCounts();
             if (c.alert > signalsBefore.alert) return { activity: true, reason: "alert/aria-live element appeared", url_changed: false };
@@ -928,7 +970,7 @@ async function runActivityProbe(
           tick();
         });
       },
-      args: [windowMs, beforeUrl, externalBaseline],
+      args: [windowMs, beforeUrl, externalBaseline, targetMarkerAttr],
       // Default ISOLATED world — chrome.dom.openOrClosedShadowRoot is only
       // available in extension content-script contexts, not in the page's
       // MAIN world. ISOLATED still shares the live DOM so MutationObserver
@@ -2560,12 +2602,14 @@ async function handleMcpMessage(msg: {
       // Phase 3: inspect post-click state (radio/checkbox check state, 0×0 warnings)
       // and untag. Best-effort — skip if the click caused navigation.
       let postNote = "";
+      let postClickStateChanged = false;
       try {
         const post = await forwardToContentScript(tab, {
           type: "post_click_inspect",
           requestId: msg.requestId + "-post",
-        }) as { message?: string };
+        }) as { message?: string; stateChanged?: boolean };
         postNote = post.message ?? "";
+        postClickStateChanged = post.stateChanged === true;
       } catch { /* page may have navigated away */ }
 
       if (usedCdp) {
@@ -2622,7 +2666,15 @@ async function handleMcpMessage(msg: {
         msg.until_selector || msg.until_url_contains ||
         msg.until_text_contains || msg.until_url_changes
       );
-      const effectiveSkipProbe = msg.skip_activity_probe === true || hasUntilClause;
+      // postClickStateChanged is set when post_click_inspect confirmed a
+      // radio/checkbox toggled state. That's a direct observation of click
+      // success — running the activity probe in addition produces false
+      // negatives on form inputs whose state change doesn't trigger DOM
+      // mutations (Reddit's faceplate-radio-input is the canonical case).
+      const effectiveSkipProbe =
+        msg.skip_activity_probe === true ||
+        hasUntilClause ||
+        postClickStateChanged;
 
       if (msg.skip_activity_probe && usedCdp) {
         result.message += " (activity probe skipped; verify state manually)";
@@ -2635,10 +2687,15 @@ async function handleMcpMessage(msg: {
       // Returns early as soon as activity is detected, so most clicks add
       // only ~100ms before continuing to the until-poll / expect_submit flow.
       const probeBudgetMs = activityTimeoutMs + 2000;
+      const probeSkipReason = postClickStateChanged
+        ? "(probe skipped: post-click state change already confirmed)"
+        : hasUntilClause
+          ? "(probe skipped: until-clause verifies)"
+          : "(probe skipped)";
       const probe = effectiveSkipProbe
-        ? { activity: true, reason: hasUntilClause ? "(probe skipped: until-clause verifies)" : "(probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult
+        ? { activity: true, reason: probeSkipReason, mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult
         : isScriptableUrl(tab.url) && tab.id
-        ? await phaseRace("activity_probe", probeBudgetMs, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount)).catch((e) => {
+        ? await phaseRace("activity_probe", probeBudgetMs, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr())).catch((e) => {
             const err = e as Error & { phase?: string };
             return {
               activity: true,
@@ -2677,7 +2734,7 @@ async function handleMcpMessage(msg: {
             const probeTap = await phaseRace(
               "activity_probe_tap_fallback",
               3500,
-              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount),
+              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
             ).catch((e) => {
               const err = e as Error & { phase?: string };
               return {
@@ -2741,7 +2798,7 @@ async function handleMcpMessage(msg: {
               const probeKB = await phaseRace(
                 "activity_probe_keyboard_fallback",
                 3500,
-                runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount),
+                runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
               ).catch((e) => {
                 const err = e as Error & { phase?: string };
                 return {
@@ -2795,7 +2852,7 @@ async function handleMcpMessage(msg: {
             const probePC = await phaseRace(
               "activity_probe_pointer_chain",
               3500,
-              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount),
+              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
             ).catch((e) => {
               const err = e as Error & { phase?: string };
               return {
@@ -2851,7 +2908,7 @@ async function handleMcpMessage(msg: {
             const probeDom = await phaseRace(
               "activity_probe_dom_fallback",
               3500,
-              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount),
+              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
             ).catch((e) => {
               const err = e as Error & { phase?: string };
               return {
@@ -2904,7 +2961,7 @@ async function handleMcpMessage(msg: {
           // the second probe sees it and we fall through to the rest of the
           // click flow (until_*, expect_submit, etc).
           const probe2 = isScriptableUrl(tab.url) && tab.id
-            ? await phaseRace("activity_probe_2", 3500, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount)).catch((e) => {
+            ? await phaseRace("activity_probe_2", 3500, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr())).catch((e) => {
                 const err = e as Error & { phase?: string };
                 return {
                   activity: true,
@@ -2926,7 +2983,7 @@ async function handleMcpMessage(msg: {
             return {
               type: "click_element_response",
               success: false,
-              message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within ${activityTimeoutMs}ms even after try_fiber=true (${fiberResult.fired ? "fiber onClick invoked, no DOM/URL/focus/alert change" : `no React fiber __reactProps$.onClick found: ${fiberResult.message}`}). Switch to highlight_region + wait_for_click so the user's real gesture fires the action.`,
+              message: `Clicked "${prep.label ?? msg.textHint}" but no observable activity (DOM mutations, focus change, URL change, alert/toast/modal) within ${activityTimeoutMs}ms even after try_fiber=true (${fiberResult.fired ? "fiber onClick invoked, no DOM/URL/focus/alert change" : `no React fiber __reactProps$.onClick found: ${fiberResult.message}`}). The click MAY have succeeded for actions whose state change isn't observable in the DOM (toggling internal state, opening native dialogs). Verify with find_text or execute_script before retrying. If genuinely rejected, switch to highlight_region + wait_for_click.`,
               before_url,
               after_url: probe2.after_url,
               navigated: false,
@@ -2939,7 +2996,7 @@ async function handleMcpMessage(msg: {
           return {
             type: "click_element_response",
             success: false,
-            message: `Clicked "${prep.label ?? msg.textHint}" but the page showed no sign of activity within ${activityTimeoutMs}ms (0 DOM mutations, no focus change, no URL change, no value/checked change, no alert/toast/modal). The click was likely silently rejected by anti-bot detection, or the action requires more than ${activityTimeoutMs}ms to produce a visible change (retry with activity_timeout_ms=3000 for slow async actions). Switch to highlight_region + wait_for_click so the user's real gesture fires the action, or retry with try_fiber=true to walk __reactProps$.onClick directly on React-heavy SPAs. Until_* clauses are skipped here since the click never registered.`,
+            message: `Clicked "${prep.label ?? msg.textHint}" but no observable activity (DOM mutations, focus change, URL change, alert/toast/modal) within ${activityTimeoutMs}ms. Possible causes: (1) the click DID work but the state change isn't observable in the DOM (toggling internal Lit state, opening native dialogs, setting a value) — verify with find_text or execute_script before retrying; (2) the action takes longer than ${activityTimeoutMs}ms — retry with activity_timeout_ms=3000+; (3) genuine anti-bot rejection — switch to highlight_region + wait_for_click, or retry with try_fiber=true on React SPAs.`,
             before_url,
             after_url: probe.after_url,
             navigated: false,
