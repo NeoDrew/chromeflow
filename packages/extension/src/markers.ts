@@ -70,4 +70,5 @@ export const markerIds = {
   fileTargetAttr: () => `data-${prefix()}-file`,
   clickTargetAttr: () => `data-${prefix()}-click`,
   preCheckedAttr: () => `data-${prefix()}-prech`,
+  preDimensionsAttr: () => `data-${prefix()}-predim`,
 };
