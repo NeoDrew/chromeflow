@@ -3386,64 +3386,17 @@ async function handleMcpMessage(msg: {
                 target.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "center" });
               }
               target.focus();
+              // Tag the target so the MAIN-world clear step can find the
+              // same element. Page-script expandos like __lexicalEditor are
+              // ONLY visible in MAIN world; ISOLATED can't reach them.
               if (clearFirst) {
-                // Lexical (Reddit composer): editor instance lives on the
-                // contenteditable element as __lexicalEditor<hash>. execCommand
-                // is intercepted and ignored; the only reliable clear is to
-                // parse a blank editor state and call setEditorState.
-                let cleared = false;
-                const lexicalKey = Object.keys(target).find((k) => k.startsWith("__lexicalEditor"));
-                if (lexicalKey) {
-                  try {
-                    const editor = (target as unknown as Record<string, { parseEditorState: (s: string) => unknown; setEditorState: (s: unknown) => void }>)[lexicalKey];
-                    const blank = editor.parseEditorState('{"root":{"children":[{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1}],"direction":null,"format":"","indent":0,"type":"root","version":1}}');
-                    editor.setEditorState(blank);
-                    cleared = true;
-                  } catch { /* fall through to execCommand */ }
-                }
-                // ProseMirror / TipTap: editor exposes pmViewDesc and the view
-                // on element.pmViewDesc.spec, or pmEditorView on the editable.
-                if (!cleared) {
-                  const pmView = (target as unknown as { pmViewDesc?: { node?: unknown }; CodeMirror?: unknown }).pmViewDesc;
-                  // TipTap exposes editor via the closest [data-tiptap-editor]
-                  const tiptapHost = target.closest("[data-tiptap-editor], .tiptap, .ProseMirror");
-                  if (tiptapHost) {
-                    const tiptapKey = Object.keys(tiptapHost).find((k) => k.startsWith("__tiptapEditor"));
-                    if (tiptapKey) {
-                      try {
-                        const editor = (tiptapHost as unknown as Record<string, { commands?: { clearContent?: () => void } }>)[tiptapKey];
-                        if (editor.commands?.clearContent) {
-                          editor.commands.clearContent();
-                          cleared = true;
-                        }
-                      } catch { /* fall through */ }
-                    }
-                  }
-                  if (!cleared && pmView) {
-                    // Generic ProseMirror clear: replace content with empty doc
-                    try {
-                      const view = (target as unknown as { pmViewDesc: { spec?: { editor?: unknown } } }).pmViewDesc.spec?.editor as { state?: { tr?: { delete: (a: number, b: number) => unknown }; doc?: { content?: { size?: number } } }; dispatch?: (t: unknown) => void } | undefined;
-                      const tr = view?.state?.tr;
-                      const size = view?.state?.doc?.content?.size;
-                      if (tr && view?.dispatch && typeof size === "number") {
-                        const cleared_tr = tr.delete(0, size);
-                        view.dispatch(cleared_tr);
-                        cleared = true;
-                      }
-                    } catch { /* fall through */ }
-                  }
-                }
-                // Fallback for plain contenteditable / input / textarea
-                if (!cleared) {
-                  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-                    target.value = "";
-                    target.dispatchEvent(new Event("input", { bubbles: true }));
-                    target.dispatchEvent(new Event("change", { bubbles: true }));
-                    cleared = true;
-                  } else {
-                    try { document.execCommand("selectAll"); } catch { /* ignore */ }
-                    try { document.execCommand("delete"); } catch { /* ignore */ }
-                  }
+                target.setAttribute("data-chromeflow-clear-target", "1");
+                // Native input/textarea clear: works in ISOLATED.
+                if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+                  target.value = "";
+                  target.dispatchEvent(new Event("input", { bubbles: true }));
+                  target.dispatchEvent(new Event("change", { bubbles: true }));
+                  target.removeAttribute("data-chromeflow-clear-target");
                 }
               }
               return "ok";
@@ -3458,6 +3411,65 @@ async function handleMcpMessage(msg: {
               success: false,
               message: `into_selector "${intoSelector}" did not resolve to a focusable element (${r[0]?.result ?? "unknown"}). Either the selector is wrong, the element is detached, or it lives in a cross-origin iframe.`,
             };
+          }
+          // Second pass: clear Lexical / ProseMirror / TipTap state in MAIN world.
+          // Page-script expandos like __lexicalEditor are only visible from
+          // MAIN world; the ISOLATED-world pass above can't reach them.
+          if (clearFirst) {
+            try {
+              await chrome.scripting.executeScript({
+                target: { tabId },
+                world: "MAIN",
+                func: () => {
+                  const target = document.querySelector<HTMLElement>('[data-chromeflow-clear-target]');
+                  if (!target) return;
+                  // Lexical
+                  const lexicalKey = Object.keys(target).find((k) => k.startsWith("__lexicalEditor"));
+                  if (lexicalKey) {
+                    try {
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      const editor = (target as any)[lexicalKey];
+                      const blank = editor.parseEditorState('{"root":{"children":[{"children":[],"direction":null,"format":"","indent":0,"type":"paragraph","version":1}],"direction":null,"format":"","indent":0,"type":"root","version":1}}');
+                      editor.setEditorState(blank);
+                      target.removeAttribute("data-chromeflow-clear-target");
+                      return;
+                    } catch { /* fall through */ }
+                  }
+                  // TipTap on closest [data-tiptap-editor] / .tiptap / .ProseMirror
+                  const tiptapHost = target.closest("[data-tiptap-editor], .tiptap, .ProseMirror") as HTMLElement | null;
+                  if (tiptapHost) {
+                    const tiptapKey = Object.keys(tiptapHost).find((k) => k.startsWith("__tiptapEditor"));
+                    if (tiptapKey) {
+                      try {
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        const editor = (tiptapHost as any)[tiptapKey];
+                        if (editor?.commands?.clearContent) {
+                          editor.commands.clearContent();
+                          target.removeAttribute("data-chromeflow-clear-target");
+                          return;
+                        }
+                      } catch { /* fall through */ }
+                    }
+                  }
+                  // ProseMirror via pmViewDesc
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  const pmView = (target as any).pmViewDesc?.spec?.editor;
+                  if (pmView?.state && pmView?.dispatch) {
+                    try {
+                      const tr = pmView.state.tr;
+                      const size = pmView.state.doc.content.size;
+                      pmView.dispatch(tr.delete(0, size));
+                      target.removeAttribute("data-chromeflow-clear-target");
+                      return;
+                    } catch { /* fall through */ }
+                  }
+                  // Plain contenteditable: select all + delete
+                  try { document.execCommand("selectAll"); } catch { /* ignore */ }
+                  try { document.execCommand("delete"); } catch { /* ignore */ }
+                  target.removeAttribute("data-chromeflow-clear-target");
+                },
+              });
+            } catch { /* best-effort; typing will still happen */ }
           }
         } catch (e) {
           return {
