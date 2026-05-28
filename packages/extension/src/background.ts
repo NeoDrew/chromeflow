@@ -647,6 +647,28 @@ async function dispatchHumanMouseClick(
     const dbg = chrome.debugger as unknown as {
       sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
     };
+    // Beforeunload auto-dismiss for the click duration. When a click triggers
+    // a navigation away from a page with unsaved form content (Reddit's flair
+    // Apply on a draft post, any composer with typed body), Chrome shows
+    // "Leave site?" and freezes JS execution until the user clicks Stay/Leave.
+    // The frozen tab also blocks any subsequent debugger commands from
+    // chromeflow, causing 30s timeouts. Auto-dismiss via Page.handleJavaScriptDialog
+    // accept:true silently allows the navigation.
+    let beforeunloadHandler:
+      | ((source: chrome.debugger.Debuggee, method: string, params?: object) => void)
+      | null = null;
+    try {
+      await dbg.sendCommand({ tabId }, "Page.enable");
+      beforeunloadHandler = (source, method, params) => {
+        if (source.tabId !== tabId) return;
+        const p = params as { type?: string } | undefined;
+        if (method === "Page.javascriptDialogOpening" && p?.type === "beforeunload") {
+          dbg.sendCommand({ tabId }, "Page.handleJavaScriptDialog", { accept: true }).catch(() => {});
+        }
+      };
+      chrome.debugger.onEvent.addListener(beforeunloadHandler);
+    } catch { /* Page.enable failed; click proceeds without protection */ }
+
     // (Previously: Page.bringToFront here to seed user activation. Removed in
     // 0.10.14 because the stealth shim in stealth.ts now patches
     // document.hasFocus and navigator.userActivation at document_start, which
@@ -708,6 +730,13 @@ async function dispatchHumanMouseClick(
     await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
       type: "mouseMoved", x: px, y: py, button: "none", clickCount: 0, ...ptr,
     });
+    // Give beforeunload listeners a moment to fire post-click. The dialog
+    // arrives synchronously with the navigation attempt, so a short tail
+    // catches it before the debugger detaches.
+    await new Promise((r) => setTimeout(r, 200));
+    if (beforeunloadHandler) {
+      try { chrome.debugger.onEvent.removeListener(beforeunloadHandler); } catch { /* ignore */ }
+    }
   });
 }
 
