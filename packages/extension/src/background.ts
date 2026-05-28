@@ -2692,6 +2692,24 @@ async function handleMcpMessage(msg: {
         : hasUntilClause
           ? "(probe skipped: until-clause verifies)"
           : "(probe skipped)";
+      // Cleanup helper: postClickInspect no longer removes the click-target
+      // marker because the activity probe needs it to read post-click state.
+      // Untag after all probes and fallbacks finish.
+      const untagClickTarget = async () => {
+        if (!isScriptableUrl(tab.url) || !tab.id) return;
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: (markerAttr: string) => {
+              for (const el of document.querySelectorAll(`[${markerAttr}]`)) {
+                el.removeAttribute(markerAttr);
+              }
+            },
+            args: [markerIds.clickTargetAttr()],
+          });
+        } catch { /* best-effort */ }
+      };
+
       const probe = effectiveSkipProbe
         ? { activity: true, reason: probeSkipReason, mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult
         : isScriptableUrl(tab.url) && tab.id
@@ -3005,6 +3023,10 @@ async function handleMcpMessage(msg: {
           };
         }
       }
+
+      // Probe + fallbacks done. Remove the marker so the next click doesn't
+      // hit a stale tag.
+      await untagClickTarget();
 
       // If the caller specified an until-clause, poll for it before returning.
       // This catches the "click_element returned success but the click didn't
