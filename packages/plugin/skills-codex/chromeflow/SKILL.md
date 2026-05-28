@@ -174,13 +174,35 @@ Auto-detected; uses execCommand insertText. If it fails,
 `type_text(into_selector=".ProseMirror", clear_first=true, text=…)`
 also auto-recovers from TipTap silent-drop.
 
-**Anti-bot submit (Reddit, X, similar isTrusted-strict forms):**
+**Reddit new-post (fully autonomous as of 0.10.20):**
 ```
-get_form_fields()
-fill_form([{label: ..., value: ...}])
-highlight_region("button[type=submit]", "Click to submit")
-wait_for_click()
+open_page("https://www.reddit.com/r/<sub>/submit?type=TEXT")
+type_text(into_selector="textarea[name='title']", text=TITLE, clear_first=true)
+type_text(into_selector="div[name='body']",      text=BODY,  clear_first=true)
+# Body is a Lexical contenteditable. fill_input will NOT work — must use
+# type_text with into_selector. clear_first works (Lexical-aware since 0.10.16).
+
+# If the sub requires flair:
+click_element(selector="#reddit-post-flair-button", activity_timeout_ms=3000)
+# The activity probe may report "no observable activity" but the modal IS
+# open. Don't panic. Verify with find_text or just continue.
+# Find the radio you want; only first ~3 are visible without scrolling.
+# If your target flair is offscreen, click_element selector="#view-all-flairs-button" first.
+click_element(selector="#post-flair-radio-input-N")   # reports "— now checked"
+click_element(selector="#post-flair-modal-apply-button")  # reports element-removed (success)
+
+# Submit. CRITICAL: target #submit-post-button (the OUTER r-post-form-submit-button
+# wrapper), NOT #inner-post-submit-button (the presentation button). The form's
+# submit handler is on the wrapper.
+click_element(selector="#submit-post-button", until_url_changes=true, until_timeout_ms=15000)
+# On success URL changes to /r/<sub>/?created=t3_<postID>... (the new post's ID)
 ```
+
+**X / Twitter, LinkedIn, Facebook composer submits** — these still gate hard
+on real user gesture for the submit step. Pre-fill body via
+`type_text(into_selector="[data-testid='tweetTextarea_0']", ...)` then
+`highlight_region` the submit and `wait_for_click(redispatch=true)` so the
+user's gesture is re-fired via CDP. See `references/anti-bot.md`.
 
 **Closed shadow DOM (Radix portal, Stencil):**
 ```
