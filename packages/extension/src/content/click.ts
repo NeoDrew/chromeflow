@@ -119,6 +119,13 @@ export async function prepareClickTarget(
   // if the input's checked state didn't flip.
   if (checkable) {
     checkable.setAttribute(markerIds.preCheckedAttr(), checkable.checked ? "true" : "false");
+  } else {
+    // Custom-element radio/checkbox/switch (faceplate-radio-input, sl-radio):
+    // record pre-click aria-checked so postClickInspect can detect toggles.
+    const role = el.getAttribute("role");
+    if (role === "radio" || role === "checkbox" || role === "switch") {
+      el.setAttribute(markerIds.preCheckedAttr(), el.getAttribute("aria-checked") === "true" ? "true" : "false");
+    }
   }
 
   const rect = el.getBoundingClientRect();
@@ -167,6 +174,8 @@ export function postClickInspect(): { message: string; stateChanged: boolean } {
 
   let stateNote = "";
   let stateChanged = false;
+
+  // Native HTMLInputElement radio/checkbox — resolve via label-wrapping etc.
   const checkable = resolveCheckableInput(el);
   if (checkable) {
     const preAttr = checkable.getAttribute(markerIds.preCheckedAttr());
@@ -181,7 +190,6 @@ export function postClickInspect(): { message: string; stateChanged: boolean } {
       fallbackUsed = true;
     }
 
-    // State changed iff: radio is now checked OR checkbox value differs from preChecked.
     if (checkable.type === "radio") {
       stateChanged = checkable.checked;
     } else if (checkable.type === "checkbox" && preAttr !== null) {
@@ -190,6 +198,30 @@ export function postClickInspect(): { message: string; stateChanged: boolean } {
 
     checkable.removeAttribute(markerIds.preCheckedAttr());
     stateNote = ` — now ${checkable.checked ? "checked" : "unchecked"}${fallbackUsed ? " (after pointer-chain fallback)" : ""}`;
+  } else {
+    // Custom-element radio/checkbox (faceplate-radio-input, sl-radio, etc.).
+    // Check role and aria-checked. If role=radio and aria-checked=true (and the
+    // pre-click attr said false/missing), that's a state change.
+    const role = el.getAttribute("role");
+    if (role === "radio" || role === "checkbox" || role === "switch") {
+      const preAttr = el.getAttribute(markerIds.preCheckedAttr());
+      const ariaChecked = el.getAttribute("aria-checked");
+      const nowChecked = ariaChecked === "true";
+      if (preAttr !== null) {
+        const preChecked = preAttr === "true";
+        stateChanged = nowChecked !== preChecked;
+        // Per-element-type semantics: a radio counts as "state changed" iff it
+        // ended in the checked state (radios can only be set, not unset by
+        // direct click), while checkboxes/switches toggle.
+        if (role === "radio") stateChanged = nowChecked;
+        stateNote = ` — now ${nowChecked ? "checked" : "unchecked"}`;
+        el.removeAttribute(markerIds.preCheckedAttr());
+      } else if (nowChecked) {
+        // No baseline recorded but element is now checked: treat as success.
+        stateChanged = true;
+        stateNote = ` — now checked`;
+      }
+    }
   }
 
   const rect = el.getBoundingClientRect();
@@ -201,7 +233,9 @@ export function postClickInspect(): { message: string; stateChanged: boolean } {
     stateNote += " — WARNING: element has 0×0 dimensions (likely inside a collapsed or hidden panel). The click may not have had any effect.";
   }
 
-  el.removeAttribute(markerIds.clickTargetAttr());
+  // NOTE: marker attribute is NOT removed here. The activity probe needs it
+  // to find the target element for its post-click state snapshot. Removal
+  // happens after the probe completes (background.ts untags via execute_script).
   return { message: stateNote, stateChanged };
 }
 
