@@ -23,9 +23,14 @@ export async function prepareClickTarget(
   in_dialog?: boolean,
   dialog_query?: string,
 ): Promise<{ success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean; nextCandidate?: string; scope_missed?: boolean }> {
-  // Clear any stale tags from a previous click
-  document.querySelectorAll(`[${markerIds.clickTargetAttr()}]`).forEach((el) => el.removeAttribute(markerIds.clickTargetAttr()));
-  document.querySelectorAll(`[${markerIds.preCheckedAttr()}]`).forEach((el) => el.removeAttribute(markerIds.preCheckedAttr()));
+  // Clear any stale tags from a previous click. Shadow-piercing because the
+  // previous click may have tagged an element inside a shadow root.
+  for (const el of queryAllDeep(document, `[${markerIds.clickTargetAttr()}]`)) {
+    el.removeAttribute(markerIds.clickTargetAttr());
+  }
+  for (const el of queryAllDeep(document, `[${markerIds.preCheckedAttr()}]`)) {
+    el.removeAttribute(markerIds.preCheckedAttr());
+  }
 
   let scope: Document | Element = document;
   if (dialog_query) {
@@ -169,7 +174,11 @@ function describeCandidate(el: Element, hint: string): string {
  * events rather than mouse events.
  */
 export function postClickInspect(): { message: string; stateChanged: boolean } {
-  const el = document.querySelector<HTMLElement>(`[${markerIds.clickTargetAttr()}]`);
+  // Shadow-piercing find: the click target may live inside a closed shadow
+  // root (Reddit's <r-post-flairs-modal>, Radix portals, Stencil/Lit shells).
+  // prepareClickTarget used queryAllDeep to tag it; we have to use the same
+  // to find it again, or document.querySelector returns null.
+  const el = queryAllDeep<HTMLElement>(document, `[${markerIds.clickTargetAttr()}]`)[0] ?? null;
   if (!el) return { message: "", stateChanged: false };
 
   let stateNote = "";
@@ -830,7 +839,9 @@ export function findDialogByQuery(query: string): Element | null {
  * retargeting problem.
  */
 export function pointerChainOnTagged(): { fired: boolean; label?: string } {
-  const el = document.querySelector<HTMLElement>(`[${markerIds.clickTargetAttr()}]`);
+  // Shadow-piercing: same reason as postClickInspect — tagged element may
+  // live inside a shadow root (Reddit's flair modal, Radix portals).
+  const el = queryAllDeep<HTMLElement>(document, `[${markerIds.clickTargetAttr()}]`)[0] ?? null;
   if (!el) return { fired: false };
   firePointerChain(el);
   const label =
