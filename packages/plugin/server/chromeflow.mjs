@@ -25687,9 +25687,10 @@ ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit
       skip_activity_probe: external_exports.boolean().optional().describe(`Skip the 1500ms activity probe AND all automatic fallbacks (tap gesture, pointer chain, DOM .click(), fiber walk) after the CDP click. The click is dispatched and success is returned immediately without verifying page activity. Use for buttons that trigger slow async API calls (3-5s+) before producing visible DOM changes, where the activity probe would falsely report "silently_rejected" and the fallback chain would double-fire. Verify state yourself via find_text or execute_script after an appropriate delay. NOTE: this is set IMPLICITLY when any until_* clause is passed, since the until-clause already provides verification. WARNING: no automatic silent-rejection detection when this is set without an until-clause.`),
       via: external_exports.enum(["auto", "cdp", "fiber"]).optional().describe(`Click dispatch mode. "auto" (default): CDP click, then fiber fallback when try_fiber=true and the activity probe failed. "cdp": CDP click only, no fiber fallback ever. "fiber": skip the CDP bezier + activity probe entirely and invoke __reactProps$.onClick directly. Use "fiber" on React-heavy SPAs (Outlier-style dashboards) where you already know the site is fiber-only \u2014 cuts ~3 seconds of ceremony off the round trip. The fiber path is undocumented React internal access, prefer "auto" until you've confirmed the site needs it.`),
       in_dialog: external_exports.boolean().optional().describe(`Scope candidate matches to the topmost open dialog (\`[role=dialog]\`, \`[role=alertdialog]\`, or \`<dialog open>\`), highest z-index wins. Use when Radix/Headless UI dialogs portal to document.body and a generic textHint like "Cancel" would otherwise match the wrong button. Returns scope_missed=true when no dialog is open.`),
-      dialog_query: external_exports.string().optional().describe(`Scope candidate matches to a specific dialog by heading or aria-label substring. Use when multiple dialogs are open and in_dialog (topmost) would pick the wrong one \u2014 e.g. click_element("Confirm", dialog_query="Delete account"). Mutually exclusive with in_dialog; dialog_query wins when both are set.`)
+      dialog_query: external_exports.string().optional().describe(`Scope candidate matches to a specific dialog by heading or aria-label substring. Use when multiple dialogs are open and in_dialog (topmost) would pick the wrong one \u2014 e.g. click_element("Confirm", dialog_query="Delete account"). Mutually exclusive with in_dialog; dialog_query wins when both are set.`),
+      wait_until_enabled_ms: external_exports.number().int().min(0).optional().describe(`When the matched target is currently disabled (native disabled OR aria-disabled=true), poll for up to this many ms waiting for it to become enabled before clicking. Default 0 (do not wait \u2014 return target_disabled immediately). Use 2000-5000 for Submit-style buttons that briefly disable while an async copilot/validator/save is in flight. On timeout the response carries target_disabled=true plus a structured disabled_state snapshot (disabled, aria_disabled, pointer_events, opacity, visible) so the caller can decide between "wait more" or "field is genuinely missing \u2014 run get_form_fields(only_empty:true)".`)
     },
-    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query }) => {
+    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms }) => {
       if (!textHint && !selector || textHint && selector) {
         return {
           content: [{ type: "text", text: "click_element requires exactly one of textHint or selector" }]
@@ -25700,7 +25701,7 @@ ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query },
+          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms },
           wsTimeout
         );
       } catch (err) {
@@ -26070,7 +26071,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // ../mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.10.21" : "dev";
+var PACKAGE_VERSION = true ? "0.10.23" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

@@ -48,6 +48,7 @@ export type ServerMessage =
       via?: "auto" | "cdp" | "fiber";
       in_dialog?: boolean;
       dialog_query?: string;
+      wait_until_enabled_ms?: number;
     }
   | {
       type: "click_at_coordinates";
@@ -194,6 +195,14 @@ export type ClientMessage =
       silently_rejected?: boolean;
       fiber_attempted?: boolean;
       phase_timed_out?: string;
+      target_disabled?: boolean;
+      disabled_state?: {
+        disabled: boolean;
+        aria_disabled: string | null;
+        pointer_events: string;
+        opacity: string;
+        visible: boolean;
+      };
       focused_after?: {
         tag: string;
         id: string;

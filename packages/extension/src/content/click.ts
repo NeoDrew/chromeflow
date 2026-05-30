@@ -22,7 +22,26 @@ export async function prepareClickTarget(
   selector?: string,
   in_dialog?: boolean,
   dialog_query?: string,
-): Promise<{ success: boolean; message: string; x?: number; y?: number; width?: number; height?: number; label?: string; skipClick?: boolean; nextCandidate?: string; scope_missed?: boolean }> {
+): Promise<{
+  success: boolean;
+  message: string;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  label?: string;
+  skipClick?: boolean;
+  nextCandidate?: string;
+  scope_missed?: boolean;
+  target_disabled?: boolean;
+  disabled_state?: {
+    disabled: boolean;
+    aria_disabled: string | null;
+    pointer_events: string;
+    opacity: string;
+    visible: boolean;
+  };
+}> {
   // Clear any stale tags from a previous click. Shadow-piercing because the
   // previous click may have tagged an element inside a shadow root.
   for (const el of queryAllDeep(document, `[${markerIds.clickTargetAttr()}]`)) {
@@ -106,6 +125,15 @@ export async function prepareClickTarget(
       : undefined;
   }
 
+  // Disabled-state snapshot. When the resolved target is disabled-but-otherwise-
+  // visible (the common "Submit" mid-async-recheck case), surface the full
+  // signal set so the caller doesn't have to execute_script-spelunk to read
+  // disabled / aria-disabled / pointer-events / opacity separately. The
+  // background handler uses `target_disabled` + `wait_until_enabled_ms` to
+  // poll-then-click without manual retry logic.
+  const disabledState = readDisabledState(el);
+  const targetDisabled = disabledState.disabled || disabledState.aria_disabled === "true";
+
   const checkable = resolveCheckableInput(el);
 
   // Pre-flight: an already-checked radio should never be re-clicked.
@@ -155,7 +183,46 @@ export async function prepareClickTarget(
     textHint ||
     descriptor;
 
-  return { success: true, message: `Target prepared: "${label}"`, x, y, width: rect.width, height: rect.height, label, nextCandidate };
+  return {
+    success: true,
+    message: `Target prepared: "${label}"`,
+    x,
+    y,
+    width: rect.width,
+    height: rect.height,
+    label,
+    nextCandidate,
+    target_disabled: targetDisabled || undefined,
+    disabled_state: targetDisabled ? disabledState : undefined,
+  };
+}
+
+/**
+ * Snapshot the enabled-state signals of an element in one pass. Returns ALL
+ * four fields the user's runbook says agents should read together: native
+ * `disabled` property, `aria-disabled` attribute, computed `pointer-events`,
+ * computed `opacity`. The `visible` field is true when the element is rendered
+ * (non-zero rect, not display:none/visibility:hidden/opacity:0). Surfaced via
+ * `prepareClickTarget` so a single `click_element` call carries enough info
+ * for the agent to decide between "disabled is transient, wait" and "disabled
+ * is permanent, find the missing field".
+ */
+function readDisabledState(el: Element): {
+  disabled: boolean;
+  aria_disabled: string | null;
+  pointer_events: string;
+  opacity: string;
+  visible: boolean;
+} {
+  const cs = getComputedStyle(el);
+  const rect = el.getBoundingClientRect();
+  return {
+    disabled: !!(el as HTMLButtonElement).disabled,
+    aria_disabled: el.getAttribute("aria-disabled"),
+    pointer_events: cs.pointerEvents || "auto",
+    opacity: cs.opacity || "1",
+    visible: (rect.width > 0 && rect.height > 0) && cs.display !== "none" && cs.visibility !== "hidden",
+  };
 }
 
 /**
@@ -294,6 +361,12 @@ function resolveCheckableInput(el: Element): HTMLInputElement | null {
  * checked state via the standard click. This is the user-validated reliable
  * pattern for React-controlled radios/checkboxes whose handlers are bound
  * to pointer events. Does NOT call .click() — that's already been tried.
+ *
+ * Radix and similar dropdown libraries gate `onPointerDown` on
+ * `event.isPrimary && event.pointerId != null`. Plain `new PointerEvent(...)`
+ * with bubbles/cancelable alone leaves isPrimary=false and pointerId=0, which
+ * those handlers ignore. Pass pointerId=1, isPrimary=true, plus the buttons
+ * bitfield (1 while pressed, 0 on release) so the chain matches a real mouse.
  */
 function firePointerChain(el: Element) {
   const rect = el.getBoundingClientRect();
@@ -307,12 +380,21 @@ function firePointerChain(el: Element) {
     clientY: cy,
     button: 0,
   };
+  const ptrDown = {
+    ...baseOpts,
+    pointerId: 1,
+    pointerType: "mouse",
+    isPrimary: true,
+    buttons: 1,
+    pressure: 0.5,
+  };
+  const ptrUp = { ...ptrDown, buttons: 0, pressure: 0 };
   try {
-    el.dispatchEvent(new PointerEvent("pointerdown", { ...baseOpts, pointerType: "mouse" }));
+    el.dispatchEvent(new PointerEvent("pointerdown", ptrDown));
   } catch { /* PointerEvent may be unavailable in old browsers */ }
-  el.dispatchEvent(new MouseEvent("mousedown", baseOpts));
+  el.dispatchEvent(new MouseEvent("mousedown", { ...baseOpts, buttons: 1 }));
   try {
-    el.dispatchEvent(new PointerEvent("pointerup", { ...baseOpts, pointerType: "mouse" }));
+    el.dispatchEvent(new PointerEvent("pointerup", ptrUp));
   } catch { /* ignore */ }
   el.dispatchEvent(new MouseEvent("mouseup", baseOpts));
   el.dispatchEvent(new MouseEvent("click", baseOpts));
