@@ -270,8 +270,31 @@ async function injectAlertCapture(tabId: number): Promise<void> {
 // "Another debugger is already attached." This serializes all debugger
 // operations per tab — each call waits for the previous one to detach.
 const tabDebuggerLocks = new Map<number, Promise<void>>();
+// Refcount for nested withDebugger calls on the same tab. Lets click_element
+// hold a single outer attach across prep + CDP click + activity probe +
+// fallback chain + until-poll so a beforeunload listener registered at the
+// outer scope stays armed when nested CDP helpers (dispatchHumanMouseClick,
+// dispatchTapGesture, dispatchKeyboardActivation) finish their inner blocks.
+// Without this, the inner withDebugger detaches between the click and the
+// probe, and a "Leave site?" dialog that fires during the probe hangs the
+// tab because the listener can no longer send Page.handleJavaScriptDialog.
+const tabDebuggerRefCount = new Map<number, number>();
 
 async function withDebugger<T>(tabId: number, fn: () => Promise<T>): Promise<T> {
+  // Nested call inside an outer attach: skip both the queue and the
+  // attach/detach pair. Just bump the refcount and run.
+  const existing = tabDebuggerRefCount.get(tabId) ?? 0;
+  if (existing > 0) {
+    tabDebuggerRefCount.set(tabId, existing + 1);
+    try {
+      return await fn();
+    } finally {
+      const cur = tabDebuggerRefCount.get(tabId) ?? 1;
+      if (cur <= 1) tabDebuggerRefCount.delete(tabId);
+      else tabDebuggerRefCount.set(tabId, cur - 1);
+    }
+  }
+
   const prev = tabDebuggerLocks.get(tabId);
   if (prev) await prev.catch(() => {});
 
@@ -310,9 +333,11 @@ async function withDebugger<T>(tabId: number, fn: () => Promise<T>): Promise<T> 
     }
     if (lastErr) throw lastErr;
 
+    tabDebuggerRefCount.set(tabId, 1);
     try {
       return await fn();
     } finally {
+      tabDebuggerRefCount.delete(tabId);
       await (chrome.debugger as any).detach({ tabId }).catch(() => {});
     }
   } finally {
@@ -647,27 +672,12 @@ async function dispatchHumanMouseClick(
     const dbg = chrome.debugger as unknown as {
       sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
     };
-    // Beforeunload auto-dismiss for the click duration. When a click triggers
-    // a navigation away from a page with unsaved form content (Reddit's flair
-    // Apply on a draft post, any composer with typed body), Chrome shows
-    // "Leave site?" and freezes JS execution until the user clicks Stay/Leave.
-    // The frozen tab also blocks any subsequent debugger commands from
-    // chromeflow, causing 30s timeouts. Auto-dismiss via Page.handleJavaScriptDialog
-    // accept:true silently allows the navigation.
-    let beforeunloadHandler:
-      | ((source: chrome.debugger.Debuggee, method: string, params?: object) => void)
-      | null = null;
-    try {
-      await dbg.sendCommand({ tabId }, "Page.enable");
-      beforeunloadHandler = (source, method, params) => {
-        if (source.tabId !== tabId) return;
-        const p = params as { type?: string } | undefined;
-        if (method === "Page.javascriptDialogOpening" && p?.type === "beforeunload") {
-          dbg.sendCommand({ tabId }, "Page.handleJavaScriptDialog", { accept: true }).catch(() => {});
-        }
-      };
-      chrome.debugger.onEvent.addListener(beforeunloadHandler);
-    } catch { /* Page.enable failed; click proceeds without protection */ }
+    // Beforeunload auto-dismiss is owned by the outer click_element handler
+    // (see armBeforeunloadDismissOnAttachedTab) so the listener stays armed
+    // across the activity probe and fallback chain — a late-firing dialog
+    // (Reddit submit can fire it 1-2s after the click, as the API response
+    // resolves and the redirect begins) would otherwise hang the tab because
+    // the listener registered here was already removed.
 
     // (Previously: Page.bringToFront here to seed user activation. Removed in
     // 0.10.14 because the stealth shim in stealth.ts now patches
@@ -730,14 +740,56 @@ async function dispatchHumanMouseClick(
     await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
       type: "mouseMoved", x: px, y: py, button: "none", clickCount: 0, ...ptr,
     });
-    // Give beforeunload listeners a moment to fire post-click. The dialog
-    // arrives synchronously with the navigation attempt, so a short tail
-    // catches it before the debugger detaches.
+    // Short tail so an immediately-firing beforeunload dialog is dismissed by
+    // the outer click_element handler's listener before this function returns.
     await new Promise((r) => setTimeout(r, 200));
-    if (beforeunloadHandler) {
-      try { chrome.debugger.onEvent.removeListener(beforeunloadHandler); } catch { /* ignore */ }
-    }
   });
+}
+
+/**
+ * Register a Page.javascriptDialogOpening listener that auto-dismisses the
+ * native "Leave site?" / "Reload site?" beforeunload dialog on the given tab.
+ * Assumes the caller is already inside an active withDebugger attach. Returns
+ * a `release` callback that detaches the listener and reports whether a
+ * dialog was dismissed during the protected window.
+ *
+ * Owned by click_element so the listener spans the entire flow: prep, CDP
+ * click, activity probe, fallback chain, until-poll. Reddit's submit flow
+ * fires the beforeunload 1-2s AFTER the click (post-API navigation), well
+ * after dispatchHumanMouseClick's own withDebugger would have detached.
+ */
+async function armBeforeunloadDismissOnAttachedTab(tabId: number): Promise<{
+  release: () => { dismissed: boolean };
+}> {
+  let dismissed = false;
+  let handler:
+    | ((source: chrome.debugger.Debuggee, method: string, params?: object) => void)
+    | null = null;
+  try {
+    await (chrome.debugger as unknown as {
+      sendCommand: (t: { tabId: number }, m: string) => Promise<unknown>;
+    }).sendCommand({ tabId }, "Page.enable");
+    handler = (source, method, params) => {
+      if (source.tabId !== tabId) return;
+      const p = params as { type?: string } | undefined;
+      if (method === "Page.javascriptDialogOpening" && p?.type === "beforeunload") {
+        (chrome.debugger as unknown as {
+          sendCommand: (t: { tabId: number }, m: string, args?: object) => Promise<unknown>;
+        }).sendCommand({ tabId }, "Page.handleJavaScriptDialog", { accept: true }).catch(() => {});
+        dismissed = true;
+      }
+    };
+    chrome.debugger.onEvent.addListener(handler);
+  } catch { /* Page.enable failed; flow proceeds without protection */ }
+  return {
+    release: () => {
+      if (handler) {
+        try { chrome.debugger.onEvent.removeListener(handler); } catch { /* ignore */ }
+        handler = null;
+      }
+      return { dismissed };
+    },
+  };
 }
 
 /**
@@ -938,7 +990,14 @@ async function runActivityProbe(
             attributes: true,
             characterData: true,
           });
-          function check(): { activity: boolean; reason: string; url_changed: boolean } {
+          // Last time deepVisibleCount() was sampled. The deep walk is the
+          // single most expensive check in the probe (50-150ms on a heavy
+          // page with many shadow hosts). Cheap signals (URL, mutations,
+          // focus, target attr, role-based count) fire every 100ms tick;
+          // the deep walk only runs every 500ms AND on the final tick.
+          // Catches Lit/Stencil/Radix visibility flips with ~half the CPU.
+          let lastDeepCheckAt = 0;
+          function check(isFinalTick: boolean): { activity: boolean; reason: string; url_changed: boolean } {
             const after_url = location.href;
             if (after_url !== beforeUrl) {
               return { activity: true, reason: `URL changed to ${after_url}`, url_changed: true };
@@ -965,24 +1024,31 @@ async function runActivityProbe(
             if (c.alert > signalsBefore.alert) return { activity: true, reason: "alert/aria-live element appeared", url_changed: false };
             if (c.toast > signalsBefore.toast) return { activity: true, reason: "toast / notification appeared", url_changed: false };
             if (c.modal > signalsBefore.modal) return { activity: true, reason: "modal / [role=dialog] appeared", url_changed: false };
-            // Shadow-pierce VISIBLE-element count check (catches Lit /
-            // Stencil / Radix shows that flip visibility on pre-rendered
-            // shadow-DOM content, which MutationObserver misses entirely
-            // because no nodes are added — only CSS visibility changes).
-            // Threshold >= 5 to filter background tickers / single-node
-            // spinners. Reddit's flair picker exposes ~78 newly-visible
-            // elements when opened.
-            const deepCountNow = deepVisibleCount();
-            const delta = deepCountNow - deepCountBefore;
-            if (delta >= 5) {
-              return { activity: true, reason: `shadow-pierce visible-element count grew by ${delta}`, url_changed: false };
+            // Throttled shadow-pierce VISIBLE-element count check (catches
+            // Lit / Stencil / Radix shows that flip visibility on pre-
+            // rendered shadow-DOM content, which MutationObserver misses
+            // entirely because no nodes are added — only CSS visibility
+            // changes). Threshold >= 5 to filter background tickers / single-
+            // node spinners. Reddit's flair picker exposes ~78 newly-visible
+            // elements when opened. Sampled every 500ms + on the final tick
+            // to keep cost ~3x lower than the previous every-100ms sampling.
+            const now = Date.now();
+            if (isFinalTick || now - lastDeepCheckAt >= 500) {
+              lastDeepCheckAt = now;
+              const deepCountNow = deepVisibleCount();
+              const delta = deepCountNow - deepCountBefore;
+              if (delta >= 5) {
+                return { activity: true, reason: `shadow-pierce visible-element count grew by ${delta}`, url_changed: false };
+              }
             }
             return { activity: false, reason: "", url_changed: false };
           }
           const start = Date.now();
           function tick() {
-            const r = check();
-            if (r.activity || Date.now() - start >= windowMs) {
+            const elapsed = Date.now() - start;
+            const isFinalTick = elapsed + 100 >= windowMs;
+            const r = check(isFinalTick);
+            if (r.activity || elapsed >= windowMs) {
               observer.disconnect();
               resolve({
                 activity: r.activity,
@@ -2459,6 +2525,14 @@ async function handleMcpMessage(msg: {
         skipClick?: boolean;
         nextCandidate?: string;
         scope_missed?: boolean;
+        target_disabled?: boolean;
+        disabled_state?: {
+          disabled: boolean;
+          aria_disabled: string | null;
+          pointer_events: string;
+          opacity: string;
+          visible: boolean;
+        };
       };
       // via:"fiber" skips the CDP click entirely and goes straight to React
       // fiber prop invocation. Use when the caller already knows the site is
@@ -2522,6 +2596,55 @@ async function handleMcpMessage(msg: {
       // toggle it OFF on React-controlled forms.
       if (prep.skipClick) {
         return { type: "click_element_response", success: true, message: prep.message, before_url, after_url: before_url, navigated: false };
+      }
+
+      // Pre-flight disabled handling. When the resolved match is disabled and
+      // the caller supplied wait_until_enabled_ms, poll prepareClickTarget
+      // briefly. Many "Submit" buttons go from disabled (validating) to enabled
+      // within ~1s; this avoids the agent re-reading state mid-async via
+      // execute_script and chasing a phantom missing field.
+      //
+      // When wait_until_enabled_ms is 0 (default) OR the wait times out, return
+      // a structured target_disabled response with the full signal snapshot so
+      // the agent can read disabled / aria-disabled / pointer-events / opacity
+      // in one call instead of four separate execute_script reads.
+      const waitUntilEnabledMs = (msg.wait_until_enabled_ms as number | undefined) ?? 0;
+      if (prep.target_disabled && waitUntilEnabledMs > 0) {
+        const start = Date.now();
+        // Re-poll every 250ms. The first poll already happened above; start
+        // the wait loop with a delay so we don't immediately re-issue.
+        while (Date.now() - start < waitUntilEnabledMs) {
+          await new Promise((r) => setTimeout(r, 250));
+          const reprep = await forwardToContentScript(tab, {
+            type: "prepare_click_target",
+            requestId: msg.requestId + "-enabledpoll",
+            textHint: msg.textHint,
+            selector: msg.selector,
+            nth: msg.nth,
+            within_selector: msg.within_selector,
+            near_text: msg.near_text,
+            in_dialog: msg.in_dialog,
+            dialog_query: msg.dialog_query,
+          }) as PrepResult;
+          if (reprep.success && !reprep.target_disabled) {
+            prep = reprep;
+            prep.message = `Target became enabled after ${Date.now() - start}ms wait. ${prep.message}`;
+            break;
+          }
+        }
+      }
+      if (prep.target_disabled) {
+        const ds = prep.disabled_state;
+        return {
+          type: "click_element_response",
+          success: false,
+          message: `Refusing to click "${prep.label ?? msg.textHint}" — element is disabled (disabled=${ds?.disabled}, aria-disabled=${ds?.aria_disabled ?? "null"}, pointer-events=${ds?.pointer_events}, opacity=${ds?.opacity}). If the disable is transient (mid-async-validate), retry with wait_until_enabled_ms=3000. If permanent, run get_form_fields(only_empty:true) to surface required-but-empty fields.`,
+          before_url,
+          after_url: before_url,
+          navigated: false,
+          target_disabled: true,
+          disabled_state: ds,
+        };
       }
 
       // Pre-flight refusal: matched element is 0×0 (display:none, off-DOM, or
@@ -2597,19 +2720,36 @@ async function handleMcpMessage(msg: {
       // a realistic pressure value via `force`). Combined with the bezier
       // trajectory, settle hover, and post-click jitter, this passes
       // every behavioral check we've seen short of OS-level input.
-      let result: { success: boolean; message: string };
-      let usedCdp = false;
-      const activityTimeoutMs = (msg.activity_timeout_ms as number | undefined) ?? 1500;
-
+      //
+      // BEFOREUNLOAD HANG FIX (0.10.22): wrap from here through the entire
+      // fallback chain + until-poll in a single outer withDebugger attach so
+      // a Page.javascriptDialogOpening listener registered here stays armed
+      // for the whole flow. Reddit's submit redirect fires "Leave site?" 1-2s
+      // post-click, well after dispatchHumanMouseClick's own withDebugger
+      // would have detached — hangs the tab if the listener is gone.
       // via === "fiber" returned early above, so by here via is "auto" or "cdp"
       // and CDP is always allowed when canCdp is true.
       const canCdp = isScriptableUrl(tab.url) && typeof prep.x === "number" && typeof prep.y === "number";
+
+      const runClickFlow = async (): Promise<unknown> => {
+      let result: { success: boolean; message: string };
+      let usedCdp = false;
+      const activityTimeoutMs = (msg.activity_timeout_ms as number | undefined) ?? 1500;
+      // The probe is implicitly skipped when an until-clause is set (the until
+      // poll IS the verification) or the caller passes skip_activity_probe.
+      // Compute this here, BEFORE the click, so we can skip the expensive
+      // pre-click snapshotVisibleCount baseline walk. On a heavy Outlier-class
+      // page this deep walk costs 50-150ms per click; wasting it when the
+      // probe won't run accounts for a measurable chunk of perceived slowness.
+      const willSkipProbe =
+        msg.skip_activity_probe === true ||
+        !!(msg.until_selector || msg.until_url_contains || msg.until_text_contains || msg.until_url_changes);
       // Snapshot the shadow-pierce visible-element count BEFORE dispatching
       // the click, so the activity probe has a baseline that pre-dates any
       // synchronous Lit / Stencil render the click might trigger. See
       // snapshotVisibleCount jsdoc for why this can't be deferred to inside
       // the probe.
-      const preClickVisibleCount = canCdp && tab.id
+      const preClickVisibleCount = canCdp && tab.id && !willSkipProbe
         ? await snapshotVisibleCount(tab.id).catch(() => null)
         : null;
       let cdpPhaseError: string | null = null;
@@ -2753,6 +2893,15 @@ async function handleMcpMessage(msg: {
         } catch { /* best-effort */ }
       };
 
+      // Fallback probe budget. Each step in the fallback chain re-runs the
+      // activity probe — and on a heavy antibot page where every step
+      // silently_rejects, the cumulative probe wait was 5x activityTimeoutMs
+      // (~7.5s on the default). Fallback probes only need a quick "did THIS
+      // alternate dispatch fire" answer — successful fallbacks tend to show
+      // activity within ~300-500ms. Cap each fallback at min(800,
+      // activityTimeoutMs) so worst-case fallback-chain probe wait is
+      // ~3.2s instead of ~6s, with no measured loss in success detection.
+      const fallbackProbeTimeoutMs = Math.min(800, activityTimeoutMs);
       const probe = effectiveSkipProbe
         ? { activity: true, reason: probeSkipReason, mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult
         : isScriptableUrl(tab.url) && tab.id
@@ -2795,7 +2944,7 @@ async function handleMcpMessage(msg: {
             const probeTap = await phaseRace(
               "activity_probe_tap_fallback",
               3500,
-              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
+              runActivityProbe(tab.id, before_url, fallbackProbeTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
             ).catch((e) => {
               const err = e as Error & { phase?: string };
               return {
@@ -2859,7 +3008,7 @@ async function handleMcpMessage(msg: {
               const probeKB = await phaseRace(
                 "activity_probe_keyboard_fallback",
                 3500,
-                runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
+                runActivityProbe(tab.id, before_url, fallbackProbeTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
               ).catch((e) => {
                 const err = e as Error & { phase?: string };
                 return {
@@ -2913,7 +3062,7 @@ async function handleMcpMessage(msg: {
             const probePC = await phaseRace(
               "activity_probe_pointer_chain",
               3500,
-              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
+              runActivityProbe(tab.id, before_url, fallbackProbeTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
             ).catch((e) => {
               const err = e as Error & { phase?: string };
               return {
@@ -2969,7 +3118,7 @@ async function handleMcpMessage(msg: {
             const probeDom = await phaseRace(
               "activity_probe_dom_fallback",
               3500,
-              runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
+              runActivityProbe(tab.id, before_url, fallbackProbeTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr()),
             ).catch((e) => {
               const err = e as Error & { phase?: string };
               return {
@@ -3022,7 +3171,7 @@ async function handleMcpMessage(msg: {
           // the second probe sees it and we fall through to the rest of the
           // click flow (until_*, expect_submit, etc).
           const probe2 = isScriptableUrl(tab.url) && tab.id
-            ? await phaseRace("activity_probe_2", 3500, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr())).catch((e) => {
+            ? await phaseRace("activity_probe_2", 3500, runActivityProbe(tab.id, before_url, fallbackProbeTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr())).catch((e) => {
                 const err = e as Error & { phase?: string };
                 return {
                   activity: true,
@@ -3330,6 +3479,23 @@ async function handleMcpMessage(msg: {
       }
 
       return { type: "click_element_response", success: true, message, before_url, after_url, navigated, focused_after: probe.focused_after };
+      }; // end runClickFlow
+
+      // Wrap the entire post-prep flow in an outer withDebugger when CDP is
+      // available, so the beforeunload listener registered inside stays armed
+      // across the activity probe and fallback chain. When CDP isn't usable
+      // (chrome:// pages, missing coords), run the flow without an attach.
+      if (canCdp) {
+        return await withDebugger(tabId, async () => {
+          const buCtx = await armBeforeunloadDismissOnAttachedTab(tabId);
+          try {
+            return await runClickFlow();
+          } finally {
+            buCtx.release();
+          }
+        });
+      }
+      return await runClickFlow();
     }
 
     case "click_at_coordinates": {
