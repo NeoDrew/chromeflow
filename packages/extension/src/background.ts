@@ -256,6 +256,38 @@ async function injectAlertCapture(tabId: number): Promise<void> {
             };
           });
         }
+
+        // In-flight request counter for click_element's network-aware
+        // until-poll. The Resource Timing API only records entries AFTER a
+        // request completes, so it can't report in-flight requests — we have
+        // to count them ourselves by wrapping fetch + XHR. window.__cfInflight
+        // holds the live count of pending fetch/XHR requests.
+        if (!(window as any).__cfInflightPatched) {
+          (window as any).__cfInflightPatched = true;
+          (window as any).__cfInflight = 0;
+          const dec = () => { (window as any).__cfInflight = Math.max(0, ((window as any).__cfInflight || 0) - 1); };
+          const origFetch = window.fetch;
+          if (typeof origFetch === "function") {
+            window.fetch = function (this: unknown, ...a: unknown[]) {
+              (window as any).__cfInflight = ((window as any).__cfInflight || 0) + 1;
+              let p: unknown;
+              try { p = (origFetch as (...x: unknown[]) => unknown).apply(this, a); }
+              catch (e) { dec(); throw e; }
+              return Promise.resolve(p as Promise<unknown>).finally(dec);
+            } as typeof window.fetch;
+          }
+          const XHR = window.XMLHttpRequest;
+          if (XHR && XHR.prototype && typeof XHR.prototype.send === "function") {
+            const origSend = XHR.prototype.send;
+            XHR.prototype.send = function (this: XMLHttpRequest, ...a: unknown[]) {
+              try {
+                (window as any).__cfInflight = ((window as any).__cfInflight || 0) + 1;
+                this.addEventListener("loadend", dec, { once: true });
+              } catch { /* ignore */ }
+              return (origSend as (...x: unknown[]) => unknown).apply(this, a);
+            } as typeof XHR.prototype.send;
+          }
+        }
       },
     });
   } catch {
@@ -1075,6 +1107,147 @@ async function runActivityProbe(
     return result ?? empty;
   } catch {
     return empty;
+  }
+}
+
+/**
+ * Count in-flight fetch/XHR requests on the page. Lets click_element's
+ * until-poll tell a slow-but-real submit (API request still resolving, so the
+ * URL change is merely pending) apart from a click that never registered.
+ * `responseEnd === 0` means started-but-not-finished. We ignore entries older
+ * than 30s so a long-lived SSE / websocket opened at page load isn't mistaken
+ * for a pending submit, and only count fetch/XHR (not images, scripts, css).
+ */
+async function countInFlightRequests(tabId: number): Promise<number> {
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId },
+      // MAIN world: window.__cfInflight is the live pending-request count
+      // maintained by the fetch/XHR wrappers installed in injectAlertCapture.
+      // (Resource Timing can't see in-flight requests — it records on
+      // completion — so we count them ourselves.)
+      world: "MAIN",
+      func: () => {
+        try {
+          const n = (window as unknown as { __cfInflight?: number }).__cfInflight;
+          return typeof n === "number" && n > 0 ? n : 0;
+        } catch {
+          return 0;
+        }
+      },
+    });
+    return (r[0]?.result as number | undefined) ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Sync a React-controlled radio/checkbox's store after a click that flipped the
+ * DOM .checked but didn't reach React's onChange (shadow-boundary retargeting).
+ * Runs in MAIN world because React's __reactProps$<hash> expando is only
+ * visible there. SAFE / idempotent: fires onChange ONLY when the element's
+ * controlled `checked` prop (what React last rendered) disagrees with the
+ * current DOM .checked — so an already-committed change is left alone and a
+ * functional-toggle handler is never double-fired.
+ */
+async function commitReactControlState(
+  tabId: number,
+  markerAttr: string,
+): Promise<{ committed: boolean; kind?: string }> {
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: "MAIN",
+      func: (attr: string) => {
+        try {
+          // Find the tagged element, piercing OPEN shadow roots (MAIN world has
+          // no chrome.dom, so closed roots aren't reachable here — but React
+          // state that MAIN-world code can touch lives in light/open DOM).
+          function deepFind(sel: string): Element | null {
+            const stack: (Document | ShadowRoot)[] = [document];
+            while (stack.length) {
+              const root = stack.pop()!;
+              const hit = root.querySelector(sel);
+              if (hit) return hit;
+              for (const el of Array.from(root.querySelectorAll("*"))) {
+                const sr = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+                if (sr) stack.push(sr);
+              }
+            }
+            return null;
+          }
+          const target = deepFind(`[${attr}]`);
+          if (!target) return { committed: false };
+
+          // Resolve to the actual radio/checkbox input (the target may be a
+          // wrapping label or a custom control).
+          let input: HTMLInputElement | null = null;
+          if (target instanceof HTMLInputElement && (target.type === "radio" || target.type === "checkbox")) {
+            input = target;
+          } else {
+            const forId = target.getAttribute?.("for");
+            if (forId) {
+              const t = document.getElementById(forId);
+              if (t instanceof HTMLInputElement && (t.type === "radio" || t.type === "checkbox")) input = t;
+            }
+            if (!input) {
+              const inner = target.querySelector?.('input[type="radio"], input[type="checkbox"]');
+              if (inner instanceof HTMLInputElement) input = inner;
+            }
+          }
+          if (!input) return { committed: false };
+
+          // Walk up from the input looking for __reactProps$ with an onChange.
+          // Use the INPUT's controlled `checked` prop for the desync test.
+          let node: Element | null = input;
+          let onChange: ((e: unknown) => void) | null = null;
+          let controlledChecked: boolean | undefined;
+          for (let depth = 0; depth < 6 && node; depth++) {
+            const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
+            const props = key ? (node as unknown as Record<string, { onChange?: unknown; checked?: unknown }>)[key] : undefined;
+            if (props) {
+              if (controlledChecked === undefined && typeof props.checked === "boolean") {
+                controlledChecked = props.checked;
+              }
+              if (!onChange && typeof props.onChange === "function") {
+                onChange = props.onChange as (e: unknown) => void;
+              }
+            }
+            if (onChange && controlledChecked !== undefined) break;
+            node = node.parentElement;
+          }
+
+          // Only act on a genuine controlled-state desync.
+          if (!onChange || controlledChecked === undefined) return { committed: false };
+          if (controlledChecked === input.checked) return { committed: false };
+
+          const ev = {
+            target: input,
+            currentTarget: input,
+            type: "change",
+            bubbles: true,
+            cancelable: true,
+            defaultPrevented: false,
+            nativeEvent: { isTrusted: true },
+            preventDefault() { /* noop */ },
+            stopPropagation() { /* noop */ },
+            stopImmediatePropagation() { /* noop */ },
+            persist() { /* noop */ },
+            isDefaultPrevented: () => false,
+            isPropagationStopped: () => false,
+          };
+          onChange(ev);
+          return { committed: true, kind: input.type };
+        } catch {
+          return { committed: false };
+        }
+      },
+      args: [markerAttr],
+    });
+    return (r[0]?.result as { committed: boolean; kind?: string } | undefined) ?? { committed: false };
+  } catch {
+    return { committed: false };
   }
 }
 
@@ -3216,6 +3389,27 @@ async function handleMcpMessage(msg: {
         }
       }
 
+      // React controlled radio/checkbox commit. A CDP/synthetic click flips the
+      // input's DOM .checked (so the activity probe reports success), but
+      // React's delegated change listener can MISS the event when event.target
+      // is retargeted at a shadow boundary — leaving the form-level store stale
+      // and a "This question is required" error stuck. If the clicked target is
+      // a radio/checkbox whose React-controlled `checked` prop disagrees with
+      // the DOM, call __reactProps$.onChange directly to sync the store. Runs
+      // in MAIN world (the only place page expandos like __reactProps$ are
+      // visible). Idempotent: only fires on a genuine prop/DOM mismatch, so it
+      // never double-toggles an already-committed change.
+      if (isScriptableUrl(tab.url) && tab.id) {
+        const committed = await phaseRace(
+          "react_state_commit",
+          2500,
+          commitReactControlState(tab.id, markerIds.clickTargetAttr()),
+        ).catch(() => null) as { committed: boolean; kind?: string } | null;
+        if (committed?.committed) {
+          result.message += ` (synced stale React ${committed.kind ?? "control"} state via onChange)`;
+        }
+      }
+
       // Probe + fallbacks done. Remove the marker so the next click doesn't
       // hit a stale tag.
       await untagClickTarget();
@@ -3229,7 +3423,10 @@ async function handleMcpMessage(msg: {
       const untilUrlContains = msg.until_url_contains as string | undefined;
       const untilTextContains = msg.until_text_contains as string | undefined;
       const untilUrlChanges = msg.until_url_changes === true;
-      const untilTimeoutMs = (msg.until_timeout_ms as number | undefined) ?? 5000;
+      // url-change waits gate submit-style navigations whose backend roundtrip
+      // can run 5-15s before the URL flips, so default them longer than
+      // selector/text waits. Caller can still override with until_timeout_ms.
+      const untilTimeoutMs = (msg.until_timeout_ms as number | undefined) ?? (untilUrlChanges ? 15000 : 5000);
       const expectSubmit = msg.expect_submit === true;
       const hasUntil = !!(untilSelector || untilUrlContains || untilTextContains || untilUrlChanges);
       // If the substring is already present in the pre-click URL, require
@@ -3245,12 +3442,23 @@ async function handleMcpMessage(msg: {
         ? await getSubmitSignalCounts(tabId)
         : null;
 
-      let untilResult: { ok: boolean; reason: string } | null = null;
+      let untilResult: {
+        ok: boolean;
+        reason: string;
+        request_in_flight?: boolean;
+        dialog?: { kind: string; label: string; primary_action: string };
+      } | null = null;
       let navigationResult: string | null = null;
 
       if (hasUntil) {
         const start = Date.now();
-        while (Date.now() - start < untilTimeoutMs) {
+        // Hard ceiling for the grace-extension below: if a submit request is
+        // still in flight at the base deadline, keep waiting (up to this cap)
+        // rather than declaring failure on a click that genuinely fired.
+        const maxDeadline = start + Math.max(untilTimeoutMs, untilUrlChanges ? 30000 : untilTimeoutMs);
+        let deadline = start + untilTimeoutMs;
+        let sawInFlight = false;
+        while (Date.now() < deadline) {
           // Pull the current tab state each iteration (URL may change after navigation).
           const [currentTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
           const currentUrl = currentTab?.url ?? "";
@@ -3298,6 +3506,20 @@ async function handleMcpMessage(msg: {
             } catch { /* page may be navigating — keep polling */ }
           }
 
+          // Network-aware deadline extension. A click whose handler fired an
+          // API request (submit, save) often navigates only AFTER the request
+          // resolves — sometimes past the base timeout. If a fresh fetch/XHR is
+          // in flight when we'd otherwise give up, keep waiting (up to
+          // maxDeadline) instead of reporting "click may not have registered"
+          // and inviting a dangerous double-submit retry.
+          if (currentTab?.id && isScriptableUrl(currentUrl) && Date.now() >= deadline - 500) {
+            const inflight = await countInFlightRequests(currentTab.id);
+            if (inflight > 0) {
+              sawInFlight = true;
+              deadline = Math.min(maxDeadline, Date.now() + 4000);
+            }
+          }
+
           await new Promise((r) => setTimeout(r, 250));
         }
         if (!untilResult) {
@@ -3308,12 +3530,19 @@ async function handleMcpMessage(msg: {
             untilUrlChanges && `URL change`,
           ].filter(Boolean).join(" or ");
 
-          // Check if a dialog/modal opened post-click. This is the canonical
-          // "Reddit submit blocked because flair required" case: the click
-          // fired, no navigation, but a modal opened asking for missing
-          // info. Surfacing the modal's title lets the agent fix the
-          // precondition (set a flair, accept a prompt, etc.) and retry.
+          // Check if a dialog/modal opened post-click and CLASSIFY it. Two very
+          // different things both open a [role=dialog]:
+          //   - a confirmation step ("Submit?" -> [Confirm]) — the click worked,
+          //     it's just a two-step action; the agent should click through.
+          //   - a required-input prompt (flair picker, "answer this first") —
+          //     the agent must supply the missing value before retrying.
+          // The old code labelled everything "required-input prompt", which was
+          // misleading on confirm dialogs. We now distinguish them by content
+          // (form fields / validation text => required-input, else => confirm)
+          // and surface the primary action label so the agent knows what to
+          // click next.
           let blockerHint = "";
+          let dialogInfo: { kind: string; label: string; primary_action: string } | undefined;
           if (isScriptableUrl(tab.url) && tab.id) {
             try {
               const r = await chrome.scripting.executeScript({
@@ -3339,24 +3568,86 @@ async function handleMcpMessage(msg: {
                     }
                     return null;
                   }
-                  const dialog = deepFind('[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"], dialog[open], faceplate-dialog:not([hidden])');
+                  function deepAllWithin(root: Element, sel: string): Element[] {
+                    const out: Element[] = [];
+                    const stack: (Element | ShadowRoot)[] = [root];
+                    while (stack.length) {
+                      const r = stack.pop()!;
+                      for (const el of Array.from(r.querySelectorAll(sel))) out.push(el);
+                      const scope = r instanceof Element ? [r, ...Array.from(r.querySelectorAll("*"))] : Array.from(r.querySelectorAll("*"));
+                      for (const el of scope) {
+                        const sr = getShadowRoot(el);
+                        if (sr) stack.push(sr);
+                      }
+                    }
+                    return out;
+                  }
+                  // First VISIBLE dialog — skip stale hidden dialog nodes that
+                  // SPAs (Radix/headless) leave mounted but display:none, which
+                  // would otherwise mask the real one that just opened.
+                  const dialogSel = '[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"], dialog[open], faceplate-dialog:not([hidden])';
+                  let dialog: Element | null = null;
+                  for (const cand of deepAllWithin(document.documentElement, dialogSel)) {
+                    const cr = (cand as HTMLElement).getBoundingClientRect?.();
+                    if (cr && cr.width === 0 && cr.height === 0) continue;
+                    dialog = cand;
+                    break;
+                  }
                   if (!dialog) return null;
                   const heading = dialog.querySelector("h1, h2, h3, [role='heading']")?.textContent?.trim() ?? "";
                   const aria = dialog.getAttribute("aria-label") ?? "";
-                  const r = (dialog as HTMLElement).getBoundingClientRect?.();
-                  if (r && r.width === 0 && r.height === 0) return null;
-                  return { heading: heading.slice(0, 80), aria: aria.slice(0, 80), tag: dialog.tagName.toLowerCase() };
+                  const label = (heading || aria || dialog.tagName.toLowerCase()).slice(0, 80);
+
+                  // Does the dialog ask for input?
+                  const hasField = deepAllWithin(dialog,
+                    'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]), textarea, select, [contenteditable="true"], [role="radio"], [role="checkbox"], [role="textbox"], [role="combobox"], [role="listbox"]'
+                  ).length > 0;
+                  const txt = (dialog.textContent ?? "").slice(0, 2000);
+                  const validationText = /\b(is required|required field|please (?:answer|select|choose|enter|provide|complete)|you must (?:answer|select|choose|provide|complete))\b/i.test(txt);
+
+                  // Primary action button: prefer an affirmative verb, else the
+                  // last button (dialogs usually order [Cancel][Confirm]).
+                  const btns = deepAllWithin(dialog, 'button, [role="button"], a[href]')
+                    .map((b) => (b.textContent ?? "").replace(/\s+/g, " ").trim())
+                    .filter((t) => t.length > 0 && t.length < 40);
+                  const affirmative = btns.find((t) => /\b(confirm|submit|continue|proceed|yes|ok|okay|accept|save|delete|got it|next)\b/i.test(t));
+                  const primary = (affirmative || btns[btns.length - 1] || "").slice(0, 40);
+
+                  const kind = (hasField || validationText) ? "required-input" : (primary ? "confirmation" : "dialog");
+                  return { kind, label, primary_action: primary };
                 },
               });
-              const d = r[0]?.result as { heading: string; aria: string; tag: string } | null | undefined;
+              const d = r[0]?.result as { kind: string; label: string; primary_action: string } | null | undefined;
               if (d) {
-                const label = d.heading || d.aria || d.tag;
-                blockerHint = ` A dialog opened post-click: "${label}". The click likely triggered a required-input prompt (e.g. Reddit's "Add flair" modal on a flair-required sub). Resolve the dialog first, then retry the submit.`;
+                dialogInfo = d;
+                if (d.kind === "confirmation") {
+                  blockerHint = ` A confirmation dialog opened: "${d.label}". This is a two-step action, not a validation error — the first click worked. Click its primary action${d.primary_action ? ` ("${d.primary_action}")` : ""} to complete, e.g. click_element with textHint="${d.primary_action || "Confirm"}".`;
+                } else if (d.kind === "required-input") {
+                  blockerHint = ` A required-input dialog opened: "${d.label}". Supply the missing value inside it${d.primary_action ? `, then click "${d.primary_action}"` : ""}, before retrying the original action.`;
+                } else {
+                  blockerHint = ` A dialog opened post-click: "${d.label}".`;
+                }
               }
             } catch { /* best-effort */ }
           }
 
-          untilResult = { ok: false, reason: `Click fired but ${conditions} did not appear within ${untilTimeoutMs}ms — the click may not have registered.${blockerHint} Try execute_script with a direct .click() on the matched element, or pass a different until_* value.` };
+          const waited = Date.now() - start;
+          if (sawInFlight && !dialogInfo) {
+            // The click fired a network request that was still resolving — it
+            // DID register. Surface that instead of "may not have registered",
+            // which on a submit invites a double-submit retry.
+            untilResult = {
+              ok: false,
+              request_in_flight: true,
+              reason: `Click fired and triggered a network request still in flight after ${waited}ms; ${conditions} has not appeared yet. The click DID register — navigation/response is likely pending. Do NOT retry (double-submit risk). Re-check page state, or call again with a higher until_timeout_ms.`,
+            };
+          } else {
+            untilResult = {
+              ok: false,
+              dialog: dialogInfo,
+              reason: `Click fired but ${conditions} did not appear within ${waited}ms — the click may not have registered.${blockerHint} Try execute_script with a direct .click() on the matched element, or pass a different until_* value.`,
+            };
+          }
         }
       } else if (expectSubmit) {
         // expect_submit: poll for any anti-bot-friendly submit signal within
@@ -3467,7 +3758,17 @@ async function handleMcpMessage(msg: {
         if (alertMessage) {
           message += `\n\nPAGE ALERT: "${alertMessage}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
         }
-        return { type: "click_element_response", success: untilResult.ok, message, before_url, after_url, navigated, focused_after: probe.focused_after };
+        return {
+          type: "click_element_response",
+          success: untilResult.ok,
+          message,
+          before_url,
+          after_url,
+          navigated,
+          focused_after: probe.focused_after,
+          ...(untilResult.request_in_flight ? { request_in_flight: true } : {}),
+          ...(untilResult.dialog ? { dialog_opened: untilResult.dialog } : {}),
+        };
       }
 
       message = navigationResult
@@ -3979,7 +4280,7 @@ async function handleMcpMessage(msg: {
         type: "tag_file_input",
         requestId: msg.requestId,
         hint: msg.hint,
-      }) as { found: boolean; message?: string; attr?: string };
+      }) as { found: boolean; message?: string; attr?: string; matched_desc?: string; matched_via?: string };
 
       if (!tagResult.found) {
         return { type: "action_done", requestId: msg.requestId, success: false, message: tagResult.message ?? "No file input found" };
@@ -4081,6 +4382,9 @@ async function handleMcpMessage(msg: {
       }
 
       const noteParts: string[] = [];
+      if (tagResult.matched_desc) {
+        noteParts.push(`targeted ${tagResult.matched_desc}${tagResult.matched_via ? ` (via ${tagResult.matched_via})` : ""}`);
+      }
       noteParts.push(`page-level file count: ${preTotal} → ${postTotal}`);
       if (verifySelector) noteParts.push(`verifySelector "${verifySelector}" ${verifyMatched ? "matched" : "did not match"}`);
       if (consumed) noteParts.push("file was consumed by the page (input was reset)");
@@ -4225,7 +4529,23 @@ async function handleMcpMessage(msg: {
       if (!result) return { type: "action_done", requestId: msg.requestId, success: false, message: "no response from page" };
       if (!result.ok) return { type: "action_done", requestId: msg.requestId, success: false, message: result.reason };
 
-      const accepted = result.readBack === value;
+      let accepted = result.readBack === value;
+      let normalizedNote = "";
+      if (!accepted) {
+        // Same false-negative as fill_input's textHint path: a controlled
+        // `value={n || ""}` renders 0 as empty, and number inputs reformat
+        // ("0.50" -> "0.5"). Both mean the value WAS accepted.
+        const writtenNum = Number(value);
+        const readNum = Number(result.readBack);
+        const isZeroWrite = value.trim() !== "" && writtenNum === 0;
+        if (isZeroWrite && (result.readBack === "" || readNum === 0)) {
+          accepted = true;
+          normalizedNote = result.readBack === "" ? " (wrote 0; field renders zero as empty, accepted as 0)" : "";
+        } else if (result.readBack !== "" && !Number.isNaN(writtenNum) && !Number.isNaN(readNum) && writtenNum === readNum) {
+          accepted = true;
+          normalizedNote = ` (normalised "${value}" → "${result.readBack}")`;
+        }
+      }
       const desc = `<${result.tag}${result.type ? ` type="${result.type}"` : ""}${result.name ? ` name="${result.name}"` : ""}${result.id ? ` id="${result.id}"` : ""}>`;
       const shadowNote = taggedInShadow ? " (resolved inside shadow DOM)" : "";
       return {
@@ -4233,7 +4553,7 @@ async function handleMcpMessage(msg: {
         requestId: msg.requestId,
         success: true,
         message: accepted
-          ? `Set ${desc} to "${value.slice(0, 60)}"${frameSelector ? ` (inside iframe "${frameSelector}")` : ""}${shadowNote}`
+          ? `Set ${desc} to "${value.slice(0, 60)}"${frameSelector ? ` (inside iframe "${frameSelector}")` : ""}${shadowNote}${normalizedNote}`
           : `Set ${desc} via native setter, but React reported back "${result.readBack.slice(0, 60)}" — the page may be controlling the value externally.${shadowNote}`,
       };
     }

@@ -409,27 +409,48 @@ export function waitForText(
   const queries = Array.isArray(query) ? query : [query];
   const initialMatchThresholdMs = 50;
 
-  const check = (): { match: FindTextMatch; query: string; index: number } | null => {
+  const sinceNow = opts.since === "now";
+
+  const findOpts = {
+    scope_selector: opts.scope_selector,
+    regex: opts.regex,
+    visible_only: true,
+    context_chars: 60,
+    whole_word: opts.whole_word,
+  };
+
+  // Stable identity for a match so we can tell a genuinely NEW occurrence apart
+  // from pre-existing text that an unrelated mutation merely re-surfaced.
+  const matchKey = (m: FindTextMatch) => `${m.selector} ${m.text} ${m.context}`;
+
+  const findCandidates = (): Array<{ match: FindTextMatch; query: string; index: number }> => {
+    const out: Array<{ match: FindTextMatch; query: string; index: number }> = [];
     for (let i = 0; i < queries.length; i++) {
-      const q = queries[i];
-      const r = findText(
-        q,
-        {
-          max: 1,
-          scope_selector: opts.scope_selector,
-          regex: opts.regex,
-          visible_only: true,
-          context_chars: 60,
-          whole_word: opts.whole_word,
-        },
-        doc
-      );
-      if (r.matches[0]) return { match: r.matches[0], query: q, index: i };
+      // since:"now" needs every current occurrence (to baseline + diff), so
+      // widen max in that mode; otherwise the first match is enough.
+      const r = findText(queries[i], { ...findOpts, max: sinceNow ? 25 : 1 }, doc);
+      for (const m of r.matches) out.push({ match: m, query: queries[i], index: i });
+    }
+    return out;
+  };
+
+  // since:"now" baseline: snapshot every match present at call time. We only
+  // resolve on a match whose key is NOT in this set, so the wait fires on text
+  // that was genuinely ADDED to the scope — not on the query string that was
+  // already sitting in e.g. the prompt textarea, and not on late-rendered
+  // re-paints of text that already existed.
+  const baselineKeys = new Set<string>();
+  if (sinceNow) {
+    for (const c of findCandidates()) baselineKeys.add(matchKey(c.match));
+  }
+
+  const check = (): { match: FindTextMatch; query: string; index: number } | null => {
+    for (const c of findCandidates()) {
+      if (sinceNow && baselineKeys.has(matchKey(c.match))) continue;
+      return c;
     }
     return null;
   };
-
-  const sinceNow = opts.since === "now";
 
   return new Promise<WaitForTextResult>((resolve) => {
     // When since="now" is set the initial-check short-circuit is skipped,
@@ -476,21 +497,11 @@ export function waitForText(
     }
     const observeTarget: Element | Document = scope ?? doc;
 
-    let seenMutation = false;
-    const observer = new MutationObserver((records) => {
-      // since="now" gates resolution on at least one meaningful record. A
-      // pure attribute-only mutation isn't enough, we only want childList
-      // additions/removals or characterData changes that could actually
-      // bring new text into the DOM.
-      if (sinceNow && !seenMutation) {
-        for (const r of records) {
-          if (r.type === "childList" || r.type === "characterData") {
-            seenMutation = true;
-            break;
-          }
-        }
-        if (!seenMutation) return;
-      }
+    const observer = new MutationObserver(() => {
+      // since:"now" gating is handled by the baseline-key diff inside check():
+      // a match only resolves if its key wasn't present at call time. The
+      // observer just re-runs the check whenever the DOM changes (it observes
+      // childList + characterData, the mutations that can bring in new text).
       const m = check();
       if (m) {
         observer.disconnect();
@@ -691,6 +702,14 @@ function buildPathSelector(el: Element): string {
   for (let depth = 0; depth < 6 && current; depth++) {
     if (current.id) {
       parts.unshift(`#${CSS.escape(current.id)}`);
+      return parts.join(" > ");
+    }
+    // data-testid is a stable, intent-revealing anchor (e.g.
+    // "carousel-add-button-bottom") that survives re-renders better than
+    // nth-of-type, and surfacing it tells the agent the element's role.
+    const testid = current.getAttribute("data-testid");
+    if (testid) {
+      parts.unshift(`[data-testid="${CSS.escape(testid)}"]`);
       return parts.join(" > ");
     }
     const parent = current.parentElement;

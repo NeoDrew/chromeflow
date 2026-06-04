@@ -119,7 +119,13 @@ click_element("Confirm", until_text_contains: "Order placed")
 click_element("Submit", until_url_changes: true)
 ```
 Require an observable post-click condition. Returns success=false if not
-met within `until_timeout_ms` (default 5000).
+met within `until_timeout_ms` (default 5000ms; 15000ms for
+`until_url_changes`, since submit roundtrips run longer). If a request
+the click fired is still in flight at the deadline, the poll auto-extends
+(up to 30s for url-change) and returns `request_in_flight: true` rather
+than a misleading "may not have registered" — do NOT retry those, you'll
+double-submit. If a modal opened instead, the response carries
+`dialog_opened: { kind, label, primary_action }` (see errors.md).
 
 ```
 click_element("Action", try_fiber: true)

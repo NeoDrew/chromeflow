@@ -223,7 +223,10 @@ Refuses fast on pages that are in fullscreen mode (captureVisibleTab hangs there
           execSync(`osascript -e 'set the clipboard to (read (POSIX file "${tmpPath}") as «class PNGf»)'`);
           notes.push("Copied to clipboard");
         } catch {
-          // best effort — non-mac platforms silently skip
+          // Surface the failure explicitly rather than silently dropping it, so
+          // the caller never assumes a clipboard copy that didn't happen
+          // (clipboard copy is macOS-only; other platforms land here).
+          notes.push("Clipboard copy failed (macOS-only feature)");
         }
       }
 

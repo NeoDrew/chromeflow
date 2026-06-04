@@ -38,6 +38,32 @@ function resolveFrameDocument(frame: string | undefined): Document | null {
   }
 }
 
+/**
+ * Build an actionable error for a frame that couldn't be read. A cross-origin
+ * iframe (e.g. a cloudfront.net component viewer) can't be reached by in-page
+ * DOM tools at all, but its HTML IS retrievable via fetch_url, which runs in
+ * the extension's privileged context with cookies. Point the agent there
+ * instead of leaving it stuck.
+ */
+function frameErrorHint(frame: string | undefined): string {
+  if (!frame) return "No frame specified.";
+  const iframe = document.querySelector<HTMLIFrameElement>(frame);
+  if (!iframe) return `Iframe "${frame}" not found.`;
+  let crossOrigin = false;
+  try {
+    crossOrigin = !iframe.contentDocument;
+  } catch {
+    crossOrigin = true;
+  }
+  const src = iframe.getAttribute("src") ?? "";
+  if (crossOrigin) {
+    return src
+      ? `Iframe "${frame}" is cross-origin — in-page DOM tools can't read it. Retrieve its HTML with fetch_url("${src}") (privileged context, cookies included), or use take_screenshot for visual content.`
+      : `Iframe "${frame}" is cross-origin and has no readable src — use take_screenshot for its visual content.`;
+  }
+  return `Iframe "${frame}" contentDocument unavailable (it may not have loaded yet — retry, or wait_for a selector inside it).`;
+}
+
 chrome.runtime.onMessage.addListener(
   (msg: IncomingMessage, _sender, sendResponse) => {
     handleMessage(msg)
@@ -529,7 +555,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           total_matches: 0,
           hidden_count: 0,
           truncated: false,
-          frame_error: `Iframe "${msg.frame}" not found, cross-origin, or contentDocument unavailable`,
+          frame_error: frameErrorHint(msg.frame as string | undefined),
         };
       }
       // in_dialog / dialog_query override scope_selector when set, matching
@@ -591,7 +617,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           fields: [],
           total_matches: 0,
           truncated: false,
-          frame_error: `Iframe "${msg.frame}" not found, cross-origin, or contentDocument unavailable`,
+          frame_error: frameErrorHint(msg.frame as string | undefined),
         };
       }
       const result = findInputs(
@@ -614,7 +640,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           requestId: msg.requestId,
           found: false,
           elapsed_ms: 0,
-          frame_error: `Iframe "${msg.frame}" not found, cross-origin, or contentDocument unavailable`,
+          frame_error: frameErrorHint(msg.frame as string | undefined),
         };
       }
       const result = await waitForText(
@@ -791,12 +817,50 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       const hintLower = hint.toLowerCase();
       let found: HTMLInputElement | null = null;
 
-      // Try hint as a CSS selector first (e.g. "#import-problem-file", "input[name=upload]")
-      if (hint && (hint.startsWith("#") || hint.startsWith(".") || hint.startsWith("input") || hint.startsWith("["))) {
+      // An explicit CSS selector hint is a precise instruction, not a fuzzy
+      // search term. Honour it exactly: if it doesn't resolve to a file input,
+      // FAIL LOUDLY rather than silently routing to some other file input on
+      // the page (the bug where "#screenshot-uuid" landed the file in the
+      // adjacent output slot). Three sibling file inputs each with a unique id
+      // is the canonical case this protects.
+      const hintIsSelector =
+        !!hint && (hint.startsWith("#") || hint.startsWith(".") || hint.startsWith("input") || hint.startsWith("["));
+      if (hintIsSelector) {
+        let matches: Element[] = [];
         try {
-          const el = queryAllDeep<HTMLInputElement>(document, hint)[0] ?? null;
-          if (el && el.type === "file") found = el;
-        } catch { /* invalid selector, continue to label matching */ }
+          matches = queryAllDeep<Element>(document, hint);
+        } catch {
+          return {
+            type: "action_done",
+            requestId: msg.requestId,
+            found: false,
+            message: `Hint "${hint}" is not a valid CSS selector. Pass the file input's id/selector or a text label.`,
+          };
+        }
+        // The match itself, or a single file input descended from it.
+        for (const m of matches) {
+          if (m instanceof HTMLInputElement && m.type === "file") { found = m; break; }
+        }
+        if (!found) {
+          for (const m of matches) {
+            const innerFiles = m.querySelectorAll?.('input[type="file"]') ?? [];
+            if (innerFiles.length === 1) { found = innerFiles[0] as HTMLInputElement; break; }
+          }
+        }
+        if (!found) {
+          return {
+            type: "action_done",
+            requestId: msg.requestId,
+            found: false,
+            message: matches.length
+              ? `Selector "${hint}" matched ${matches.length} element(s) but none is a file input (and none wraps exactly one). Refusing to route the upload to a different input. Target the input[type=file] itself.`
+              : `Selector "${hint}" matched nothing. Refusing to fall back to a fuzzy match. Check the selector, or pass a text label instead of a "#"/"."/"["-prefixed selector.`,
+          };
+        }
+        const desc = found.id ? `#${found.id}` : (found.getAttribute("name") ?? "input[type=file]");
+        const attr = markerIds.fileTargetAttr();
+        found.setAttribute(attr, "true");
+        return { type: "action_done", requestId: msg.requestId, found: true, attr, matched_desc: desc, matched_via: "css-selector" };
       }
 
       // Try matching by ID directly (e.g. hint="import-problem-file" matches id="import-problem-file").
@@ -840,7 +904,8 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       // Tag so CDP can target it by selector
       const attr = markerIds.fileTargetAttr();
       found.setAttribute(attr, "true");
-      return { type: "action_done", requestId: msg.requestId, found: true, attr };
+      const desc = found.id ? `#${found.id}` : (found.getAttribute("name") ?? "input[type=file]");
+      return { type: "action_done", requestId: msg.requestId, found: true, attr, matched_desc: desc, matched_via: "label/id" };
     }
 
     case "untag_file_input": {
@@ -929,6 +994,9 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           const idx = sameTagSiblings.indexOf(el) + 1;
           selector = `${tag}:nth-of-type(${idx})`;
         }
+        // Cross-origin = has a real http(s) src we can't read in-page. Surface
+        // the fetch_url escape hatch so the agent doesn't dead-end on it.
+        const crossOrigin = !accessible && !!origin && origin !== location.origin;
         return {
           index: index + 1,
           selector,
@@ -936,6 +1004,10 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
           origin,
           title: el.getAttribute("title") ?? "",
           accessible,
+          cross_origin: crossOrigin,
+          hint: crossOrigin && src
+            ? `cross-origin: read its HTML with fetch_url("${src}") or capture it with take_screenshot`
+            : undefined,
           x: Math.round(rect.x),
           y: Math.round(rect.y),
           width: Math.round(rect.width),
