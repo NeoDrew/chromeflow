@@ -41,6 +41,43 @@ Two common causes:
 
 See `references/anti-bot.md` for the full decision tree.
 
+## `request_in_flight: true` (slow submit, do NOT retry)
+
+Set on a `click_element` whose `until_*` clause timed out *while a
+fetch/XHR triggered by the click was still in flight*. The click DID
+register; the navigation or server response is simply still pending.
+The until-poll already auto-extends its deadline while a request is in
+flight (up to 30s for `until_url_changes`), so seeing this means the
+request outran even that.
+
+**Recovery:** do NOT retry the click — on a submit, a second click
+double-submits. Re-check the page with `find_text` / `get_page_text`,
+or re-issue the same `click_element` with a higher `until_timeout_ms`.
+(`until_url_changes` now defaults to 15000ms, up from 5000ms, for
+exactly this reason.)
+
+## `dialog_opened: { kind, label, primary_action }`
+
+Set on a `click_element` whose `until_*` clause timed out because a
+modal opened instead of navigating. `kind` tells you which:
+
+- `"confirmation"` — a two-step action ("Submit?" → [Confirm]). The
+  first click worked; click the `primary_action` label to finish, e.g.
+  `click_element(textHint: primary_action)`. NOT a validation error.
+- `"required-input"` — the dialog wants a value first (flair picker,
+  "answer this question"). Supply it inside the dialog, then click its
+  `primary_action`, then retry the original action.
+- `"dialog"` — opened but unclassified; read `label` and decide.
+
+## `wait_for(since: "now")` only fires on genuinely new text
+
+`since: "now"` now snapshots every match present at call time and only
+resolves on a match that wasn't there before. Use it whenever the query
+string might already be on the page (e.g. the prompt text echoed in a
+textarea, or stacked prior-step content an SPA left in the DOM): the
+wait won't false-fire on the pre-existing copy, only on the freshly
+rendered one. Omit `since` to match text that's already present.
+
 ## `phase_timed_out: "<phase_name>"`
 
 One phase of a click exceeded its own budget. Phases and budgets:

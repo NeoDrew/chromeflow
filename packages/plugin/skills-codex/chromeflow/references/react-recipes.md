@@ -17,6 +17,16 @@ cases where you need to reach into React's internal machinery.
   click`) on the input. Response says `"now checked (after pointer-
   chain fallback)"`.
 - **Checkbox didn't toggle**: same pointer-chain fallback.
+- **DOM `checked` flipped but React's store didn't** (the click toggled
+  the input visually, yet a "This question is required" error sticks
+  because React never registered the change — common when event.target
+  is retargeted at a shadow boundary): chromeflow now auto-detects the
+  desync (the input's controlled `checked` prop disagrees with the DOM)
+  and calls `__reactProps$.onChange` directly to commit it. Response
+  appends `"synced stale React radio/checkbox state via onChange"`. This
+  is idempotent — it only fires on a genuine mismatch, never on an
+  already-committed change — so the old manual `react_call_prop`
+  onChange workaround is no longer needed for native radios/checkboxes.
 
 You only need to drop into `execute_script` for the no-native-input
 case below.

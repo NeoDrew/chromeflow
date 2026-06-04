@@ -184,14 +184,40 @@ export function fillInput(
 
   // Read back the value to confirm it was accepted (React may discard improperly dispatched events)
   const confirmedValue = (input as HTMLInputElement | HTMLTextAreaElement).value;
-  const accepted = confirmedValue === value;
+  let accepted = confirmedValue === value;
+  let normalizedNote = "";
+  if (!accepted) {
+    // The naive `confirmedValue === value` check raises false alarms when the
+    // component legitimately normalises the displayed value. Two common cases,
+    // both meaning the value WAS accepted:
+    //   (a) zero rendered as empty: a controlled field written `value={n || ""}`
+    //       shows "" for 0, so writing "0" reads back "".
+    //   (b) numeric coercion: a number input reformats "0.50" -> "0.5".
+    const writtenNum = Number(value);
+    const readNum = Number(confirmedValue);
+    const isZeroWrite = value.trim() !== "" && writtenNum === 0;
+    if (isZeroWrite && (confirmedValue === "" || readNum === 0)) {
+      accepted = true;
+      normalizedNote = confirmedValue === ""
+        ? ` (wrote 0; field renders zero as empty, accepted as 0)`
+        : "";
+    } else if (
+      confirmedValue !== "" &&
+      !Number.isNaN(writtenNum) &&
+      !Number.isNaN(readNum) &&
+      writtenNum === readNum
+    ) {
+      accepted = true;
+      normalizedNote = ` (normalised "${value}" → "${confirmedValue}")`;
+    }
+  }
   const matched = describeElement(input);
   const matchNote = `matched via ${kind}`;
   return {
     success: true,
     matched,
     message: accepted
-      ? `Filled "${textHint}" → ${matched} (${matchNote})`
+      ? `Filled "${textHint}" → ${matched} (${matchNote})${normalizedNote}`
       : `Filled "${textHint}" → ${matched} (${matchNote}) — but value may not have been accepted by React (got back: "${confirmedValue.slice(0, 60)}")`,
   };
 }

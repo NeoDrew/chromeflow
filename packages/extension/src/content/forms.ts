@@ -180,9 +180,74 @@ function deriveFileLabel(el: HTMLInputElement, doc: Document): string {
   return label;
 }
 
+// Validation-message phrasings that indicate a field is required. Deliberately
+// specific (not a bare /required/i match) so unrelated helper text like
+// "Required experience: 5 years" doesn't trip it. Covers the late-bound
+// messages SPAs render only after a failed submit ("This question is required",
+// "Please select an option", "You must answer this").
+const REQUIRED_VALIDATION_RE =
+  /\bis required\b|\brequired field\b|\bthis (?:question|field) is required\b|\bplease (?:answer|select|choose|enter|provide|complete)\b|\byou must (?:answer|select|choose|provide|complete)\b/i;
+
 /**
- * True when an input is required via the standard HTML attribute, ARIA, or
- * the unofficial "label ends in *" convention.
+ * Late-bound / conditional required detection. Many SPA forms (DataAnnotation,
+ * survey builders, Radix/headlessui disclosure panels) don't set `required` or
+ * `aria-required` up front — required-ness only surfaces as a visible
+ * validation message after a submit attempt, or as `aria-invalid="true"`.
+ * This catches those so get_form_fields(only_empty) stops reporting "0
+ * required-but-empty" while submit is actually blocked.
+ */
+function hasRequiredValidation(el: HTMLElement, doc: Document): boolean {
+  if (el.getAttribute("aria-invalid") === "true") return true;
+
+  // Error element referenced by the field via aria-errormessage/-describedby.
+  for (const attr of ["aria-errormessage", "aria-describedby"]) {
+    const ids = (el.getAttribute(attr) ?? "").split(/\s+/).filter(Boolean);
+    for (const id of ids) {
+      const node =
+        doc.getElementById(id) ?? queryAllDeep<HTMLElement>(doc, `#${CSS.escape(id)}`)[0];
+      if (
+        node &&
+        REQUIRED_VALIDATION_RE.test(node.textContent ?? "") &&
+        !isAncestorHidden(node, doc)
+      ) {
+        return true;
+      }
+    }
+  }
+
+  // Walk up to the nearest question/group container and look for a visible
+  // error-styled element whose text reads as a required-validation message.
+  let node: Element | null = el.parentElement;
+  for (let d = 0; d < 6 && node && node !== doc.body; d++) {
+    const errs = node.querySelectorAll(
+      "[role='alert'],[aria-live],[class*='error'],[class*='invalid'],[class*='required']"
+    );
+    for (const m of Array.from(errs)) {
+      if (
+        REQUIRED_VALIDATION_RE.test(m.textContent ?? "") &&
+        !isAncestorHidden(m, doc)
+      ) {
+        return true;
+      }
+    }
+    // Stop once we've climbed to a recognisable question/group boundary so we
+    // don't attribute a sibling question's error to this field.
+    if (
+      node.matches?.(
+        "fieldset,[role='group'],[role='radiogroup'],[id*='question'],[class*='question'],[data-question],[class*='form-group']"
+      )
+    ) {
+      break;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
+/**
+ * True when an input is required via the standard HTML attribute, ARIA, the
+ * unofficial "label ends in *" convention, or a late-bound validation message
+ * / aria-invalid state (see hasRequiredValidation).
  */
 function isRequiredField(el: HTMLElement, doc: Document): boolean {
   if (el.hasAttribute("required")) return true;
@@ -196,6 +261,7 @@ function isRequiredField(el: HTMLElement, doc: Document): boolean {
   if (parentLabel && /[*✱∗]\s*$/.test((parentLabel.textContent ?? "").trim())) {
     return true;
   }
+  if (hasRequiredValidation(el, doc)) return true;
   return false;
 }
 
@@ -206,7 +272,10 @@ function isRequiredField(el: HTMLElement, doc: Document): boolean {
  */
 function isFieldEmpty(el: HTMLElement): boolean {
   if (el instanceof HTMLSelectElement) {
-    return !el.value || el.selectedIndex < 0;
+    // Compare against "" explicitly — a legitimate selected option with value
+    // "0" (e.g. a numeric quantity dropdown) is NOT empty, but `!el.value`
+    // would treat it as empty.
+    return el.value === "" || el.selectedIndex < 0;
   }
   if (el instanceof HTMLInputElement) {
     if (el.type === "checkbox" || el.type === "radio") return !el.checked;

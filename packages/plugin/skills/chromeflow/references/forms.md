@@ -45,11 +45,16 @@ get_form_fields(only_empty=true)
 ```
 
 Filters the inventory to required-but-empty fields. Required-ness is
-detected via the `required` attribute, `aria-required="true"`, or a
-trailing `*` in the associated `<label>` text. Replaces the "walk every
-field manually" diagnostic on dense forms. If `only_empty` returns
-nothing but Submit is still disabled, the page likely uses a custom
-validation hook — try `react_call_prop` on the validation function.
+detected via the `required` attribute, `aria-required="true"`, a
+trailing `*` in the associated `<label>` text, OR a late-bound
+validation signal: `aria-invalid="true"` on the field, or a visible
+"This question is required" / "Please select…" message in the field's
+question container. That last case catches SPA forms (DataAnnotation,
+survey builders, headlessui/Radix disclosure panels) that only mark a
+field required after a failed submit attempt — so run a submit first,
+then `get_form_fields(only_empty=true)` surfaces exactly what's still
+blocking. If it still returns nothing but Submit is disabled, the page
+likely uses a custom validation hook — try `react_call_prop` on it.
 
 ## Single fill — `fill_input`
 
@@ -74,6 +79,13 @@ Disambiguate via `exact: true`, an explicit `nth`, or `selector="<css>"`.
 The selector path bypasses fuzzy matching entirely. It also pierces
 closed shadow DOM via content-script tagging, so selectors that target
 inputs inside Radix/Stencil/Lit web components work.
+
+**Zero values:** writing `"0"` to a controlled number input that renders
+`value={n || ""}` reads back as empty — chromeflow now recognises this
+(and pure numeric reformats like `"0.50"` → `"0.5"`) as accepted, with a
+"normalised" note, instead of the misleading "value may not have been
+accepted by React" warning. So `fill_form([{label:"Hours", value:"0"}])`
+is reliable.
 
 **Frame support:**
 ```
@@ -175,9 +187,17 @@ set_file_input("Photos", "/path", verify_selector=".thumbnail")
 
 Hint accepts label text OR CSS selector. Pierces closed shadow DOM.
 Default 3000ms commit-wait; pass `verify_selector` or bump `wait_ms`
-for slow uploaders. Reports `page-level file count: N → M` in the
-response so you can spot uploaders that consume-and-reset the input vs.
-those that retain the file.
+for slow uploaders. Reports `targeted <id>` and `page-level file count:
+N → M` in the response so you can confirm which slot received the file
+and spot uploaders that consume-and-reset the input vs. retain it.
+
+**A "#"/"."/"["-prefixed hint is an exact selector, not a search term.**
+When several sibling file inputs each have a unique id (a common
+multi-upload form), `set_file_input("#screenshot-uuid", ...)` targets
+exactly that input. If the selector matches no file input, the call now
+FAILS LOUDLY rather than silently routing the file to a different
+(e.g. first-empty) input — so you never upload to the wrong slot. Use a
+text-label hint only when you want fuzzy matching.
 
 **Replacing an already-uploaded file:**
 ```
