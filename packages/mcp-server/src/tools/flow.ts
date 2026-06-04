@@ -1,8 +1,9 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { WsBridge } from "../ws-bridge.js";
+import { FlowStore, isFragileSelector, type Atom } from "../flow-store.js";
 
-export function registerFlowTools(server: McpServer, bridge: WsBridge) {
+export function registerFlowTools(server: McpServer, bridge: WsBridge, flowStore: FlowStore) {
   server.tool(
     "click_element",
     `Click an interactive element by its visible text/aria-label (textHint) OR by direct CSS selector (selector). Pass exactly one.
@@ -165,6 +166,8 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         scope_missed?: boolean;
         silently_rejected?: boolean;
         fiber_attempted?: boolean;
+        recovered_via?: string;
+        request_in_flight?: boolean;
         focused_after?: {
           tag: string;
           id: string;
@@ -192,19 +195,60 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         const valueBit = f.value_preview ? ` value="${f.value_preview.slice(0, 30)}"` : "";
         focusLine = `\n→ Focused: <${f.tag}${idBit}${nameBit}${aria}${valueBit}>`;
       }
+      // Flow memory. Record this click as a notable "resolution" only when it
+      // cost something to discover — a fallback fired, it navigated, or a
+      // verified until_* clause was satisfied. Ordinary first-try clicks are
+      // skipped (rediscovery is free; persisting them is noise). Recall surfaces
+      // known flows for the origin once per session; capturable nudges a save.
+      // Key the atom to where the click HAPPENED (before_url), not where it
+      // landed — a submit on /submit that navigates to the new post page must
+      // be recalled next time we're on /submit, not on the post page.
+      const actionUrl = r.before_url ?? r.after_url;
+      const nowUrl = r.after_url ?? r.before_url;
+      const usedUntil = !!(until_selector || until_url_contains || until_text_contains || until_url_changes);
+      if (r.success && (r.recovered_via || r.navigated || usedUntil)) {
+        flowStore.observe({
+          tool: "click_element",
+          target: textHint ?? `selector=${selector}`,
+          selector,
+          recovered_via: r.recovered_via,
+          signal: r.navigated ? "navigated" : until_url_changes ? "until_url_change" : usedUntil ? "until_*" : r.recovered_via,
+          fragile: isFragileSelector(selector),
+          reason: r.recovered_via ? `click recovered via ${r.recovered_via}` : r.navigated ? "navigating submit/link" : "verified terminal click",
+        } as Atom, actionUrl);
+      }
+      flowStore.noteUrl(nowUrl);
+      // Recall for where we are NOW; nudge save against where the steps accrued.
+      const recall = flowStore.recallHint(nowUrl);
+      const capturable = flowStore.capturableHint(actionUrl);
+
       if (!r.success) {
         return {
           content: [
             {
               type: "text",
-              text: `Could not click "${targetLabel}": ${r.message}${navLine}${focusLine}`,
+              text: `Could not click "${targetLabel}": ${r.message}${navLine}${focusLine}${recall}`,
             },
           ],
         };
       }
       return {
-        content: [{ type: "text", text: `${r.message}${navLine}${focusLine}` }],
+        content: [{ type: "text", text: `${r.message}${navLine}${focusLine}${recall}${capturable}` }],
       };
+    }
+  );
+
+  server.tool(
+    "save_flow",
+    `Persist the hard-won interaction steps chromeflow buffered for the current site as a reusable, named flow. chromeflow auto-buffers only NOTABLE resolutions (a click that needed a fallback, a verified submit, a field that needed real keystrokes) — so you just give the task a label and it commits whatever is buffered for the current origin. Next session, those steps are surfaced back as a known_flow hint so you skip the trial-and-error.
+
+Call this when a response shows \`flow_capturable\`. Stored locally only (~/.chromeflow/flows.json), selectors/signals only — never typed text. Guidance, not autopilot: recalled steps are still verified on replay.`,
+    {
+      task_label: z.string().describe('Short human label for what this flow accomplishes, e.g. "submit text post", "set flair and submit", "log report time".'),
+    },
+    async ({ task_label }) => {
+      const res = flowStore.commit(task_label);
+      return { content: [{ type: "text", text: res.message }] };
     }
   );
 

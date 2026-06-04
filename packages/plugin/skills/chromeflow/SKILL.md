@@ -182,6 +182,19 @@ References live alongside this skill at `references/<topic>.md`:
 - **`references/discovery.md`** — Finding things on a page: `find_text` vs.
   `get_page_text` vs. `get_form_fields` vs. `list_frames`, `whole_word`
   matching, `visible_only`, `scope_selector`, `in_dialog` / `dialog_query`.
+- **`references/flow-memory.md`** — Learned per-site flows. When a response
+  shows `known_flow`, prefer those proven steps (still verify with `until_*`).
+  When it shows `flow_capturable` and the task worked, call
+  `save_flow("<label>")` so the next session skips the trial-and-error.
+
+## Flow memory (act on the hints)
+
+chromeflow learns the hard-won way to drive a site. Two response signals:
+- **`known_flow`** (on `open_page` / first click): follow the listed steps
+  instead of rediscovering; they're guidance, so keep your `until_*` clauses.
+- **`flow_capturable`** (after a notable success): call
+  `save_flow("<task label>")` to persist it. One call — chromeflow already
+  buffered the steps. See `references/flow-memory.md`.
 
 ## Common quick recipes
 

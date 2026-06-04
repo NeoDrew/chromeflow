@@ -2944,6 +2944,10 @@ async function handleMcpMessage(msg: {
       // Phase 3: inspect post-click state (radio/checkbox check state, 0×0 warnings)
       // and untag. Best-effort — skip if the click caused navigation.
       let postNote = "";
+      // Structured record of which fallback (if any) actually fired, so the MCP
+      // server's flow-memory can tell a hard-won click apart from a trivial one
+      // without parsing the free-text message.
+      let recoveredVia = "";
       let postClickStateChanged = false;
       try {
         const post = await forwardToContentScript(tab, {
@@ -3131,6 +3135,7 @@ async function handleMcpMessage(msg: {
             });
             if (probeTap.activity) {
               postNote += ` (fired via CDP synthesizeTapGesture after dispatchMouseEvent silently_rejected)`;
+              recoveredVia = "tap-gesture";
               probe.activity = true;
               probe.after_url = probeTap.after_url;
               probe.focused_after = probeTap.focused_after;
@@ -3195,6 +3200,7 @@ async function handleMcpMessage(msg: {
               });
               if (probeKB.activity) {
                 postNote += ` (fired via CDP keyboard Enter after mouse silently_rejected)`;
+                recoveredVia = "keyboard-enter";
                 probe.activity = true;
                 probe.after_url = probeKB.after_url;
                 probe.focused_after = probeKB.focused_after;
@@ -3250,6 +3256,7 @@ async function handleMcpMessage(msg: {
 
             if (probePC.activity) {
               postNote += ` (fired via pointer chain fallback after CDP silently_rejected inside shadow DOM)`;
+              recoveredVia = "pointer-chain";
               probe.activity = true;
               probe.after_url = probePC.after_url;
               probe.focused_after = probePC.focused_after;
@@ -3306,6 +3313,7 @@ async function handleMcpMessage(msg: {
 
             if (probeDom.activity) {
               postNote += ` (fired via DOM .click() fallback after CDP silently_rejected)`;
+              recoveredVia = "dom-click";
               // Refresh probe with the post-fallback state so the until_*
               // poll below sees the right after_url / focused_after.
               probe.activity = true;
@@ -3362,6 +3370,7 @@ async function handleMcpMessage(msg: {
             // poll lower down). Stash a note so the success message records
             // that the fiber path was used.
             postNote += ` (fired via React fiber after CDP silently_rejected)`;
+            recoveredVia = "react-fiber";
           } else {
             return {
               type: "click_element_response",
@@ -3407,6 +3416,7 @@ async function handleMcpMessage(msg: {
         ).catch(() => null) as { committed: boolean; kind?: string } | null;
         if (committed?.committed) {
           result.message += ` (synced stale React ${committed.kind ?? "control"} state via onChange)`;
+          if (!recoveredVia) recoveredVia = `react-onchange-${committed.kind ?? "control"}`;
         }
       }
 
@@ -3766,6 +3776,7 @@ async function handleMcpMessage(msg: {
           after_url,
           navigated,
           focused_after: probe.focused_after,
+          ...(recoveredVia ? { recovered_via: recoveredVia } : {}),
           ...(untilResult.request_in_flight ? { request_in_flight: true } : {}),
           ...(untilResult.dialog ? { dialog_opened: untilResult.dialog } : {}),
         };
@@ -3779,7 +3790,7 @@ async function handleMcpMessage(msg: {
         message += `\n\nPAGE ALERT: "${alertMessage}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
       }
 
-      return { type: "click_element_response", success: true, message, before_url, after_url, navigated, focused_after: probe.focused_after };
+      return { type: "click_element_response", success: true, message, before_url, after_url, navigated, focused_after: probe.focused_after, ...(recoveredVia ? { recovered_via: recoveredVia } : {}) };
       }; // end runClickFlow
 
       // Wrap the entire post-prep flow in an outer withDebugger when CDP is
