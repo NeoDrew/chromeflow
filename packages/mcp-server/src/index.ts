@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WsBridge } from "./ws-bridge.js";
+import { FlowStore } from "./flow-store.js";
 import { registerBrowserTools } from "./tools/browser.js";
 import { registerHighlightTools } from "./tools/highlight.js";
 import { registerCaptureTools } from "./tools/capture.js";
@@ -14,16 +15,17 @@ main().catch((err) => { console.error("[chromeflow] Fatal error:", err); process
 
 async function main() {
   const bridge = new WsBridge();
+  const flowStore = new FlowStore(PACKAGE_VERSION);
 
   const server = new McpServer({
     name: "chromeflow",
     version: PACKAGE_VERSION,
   });
 
-  registerBrowserTools(server, bridge);
+  registerBrowserTools(server, bridge, flowStore);
   registerHighlightTools(server, bridge);
   registerCaptureTools(server, bridge);
-  registerFlowTools(server, bridge);
+  registerFlowTools(server, bridge, flowStore);
 
   const registered = (server as unknown as { _registeredTools?: Record<string, unknown> })._registeredTools ?? {};
   const toolNames = Object.keys(registered).sort();

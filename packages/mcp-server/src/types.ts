@@ -194,6 +194,9 @@ export type ClientMessage =
       scope_missed?: boolean;
       silently_rejected?: boolean;
       fiber_attempted?: boolean;
+      recovered_via?: string;
+      request_in_flight?: boolean;
+      dialog_opened?: { kind: string; label: string; primary_action: string };
       phase_timed_out?: string;
       target_disabled?: boolean;
       disabled_state?: {
