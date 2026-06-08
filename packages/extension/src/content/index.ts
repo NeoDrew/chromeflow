@@ -371,6 +371,39 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         .replace(/[ \t]+/g, " ")
         .replace(/\n\s*\n+/g, "\n\n")
         .trim();
+      // Surface open modal dialogs. A page-scoped read roots at <main>, but
+      // modals (native <dialog>, Radix/MUI/ARIA dialogs, and ones rendered inside
+      // a web-component shadow host like LinkedIn's #interop-outlet Easy Apply)
+      // render OUTSIDE <main> at body level, so the main walk misses them. The
+      // dialog is the user's active focus, so extract it shadow-deep and put it
+      // first. Dedup against the main text in case a body-rooted read already
+      // included it.
+      if (!selector) {
+        try {
+          const dialogs = queryAllDeep(
+            document,
+            "dialog[open], [aria-modal='true'], [role='dialog']",
+          );
+          const chunks: string[] = [];
+          for (const d of dialogs) {
+            const dt = extractTextDeep(d)
+              .replace(/[ \t]+/g, " ")
+              .replace(/\n\s*\n+/g, "\n\n")
+              .trim();
+            if (dt.length < 2) continue;
+            const head = dt.slice(0, 60);
+            if (text.includes(head)) continue; // already in the main text
+            if (chunks.some((c) => c.includes(head))) continue; // nested/duplicate
+            chunks.push(dt);
+          }
+          if (chunks.length) {
+            text =
+              chunks.map((c) => `[open dialog]\n${c}`).join("\n\n") + "\n\n" + text;
+          }
+        } catch {
+          /* best-effort: never let dialog capture break the main read */
+        }
+      }
       // Redact high-confidence secret patterns (API keys, JWTs, etc.) so they
       // don't silently end up in Claude's context. Claude still sees a
       // [REDACTED:KIND] placeholder and can ask the user or use read_element.
