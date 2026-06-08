@@ -9,6 +9,14 @@
 
 import { parseDoc, detectFormat, type SupportedFormat } from "./lib/parse-doc";
 import { markerIds } from "./markers";
+import {
+  CONNECTIONS_STORAGE_KEY,
+  CONFIG_MSG_SOURCE,
+  SET_FILE_FROM_CONTENT,
+  scopeBlocks,
+  type ConnConfig,
+  type ConnScope,
+} from "./connections";
 
 const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 
@@ -17,6 +25,12 @@ const OFFSCREEN_URL = chrome.runtime.getURL("offscreen.html");
 // Populated via the offscreen "status" broadcast so the background can push
 // instance info to the content script for the info box overlay.
 const portMeta = new Map<number, { label?: string; host?: string }>();
+
+// Per-connection domain scope (allow/deny host globs), keyed by connId (== the
+// routing "port"). Only scoped connections get an entry; default/unscoped
+// connections are absent here so scopeBlocks never restricts them. Kept in sync
+// with chrome.storage.local by refreshConnScope.
+const connScope = new Map<number, ConnScope>();
 
 // Each Claude Code instance is identified by the WebSocket port it connects on
 // (7878-7888). Each instance can be assigned its own Chrome window so multiple
@@ -31,10 +45,19 @@ chrome.storage.local.get(["claudeInstances", "claudeWindowId"]).then(async ({ cl
     await chrome.storage.local.set({ claudeInstances });
     await chrome.storage.local.remove("claudeWindowId");
   }
+  // Seed the scope map and hand offscreen its connection set on boot. (Offscreen
+  // also asks for it via request-config, but pushing here covers the case where
+  // offscreen is already up when the service worker restarts.)
+  await pushConnectionsToOffscreen();
 });
 chrome.storage.onChanged.addListener((changes) => {
   if ("claudeInstances" in changes) {
     claudeInstances = (changes.claudeInstances.newValue as Record<string, number>) ?? {};
+  }
+  // Popup edits write CONNECTIONS_STORAGE_KEY; re-derive scope and re-push so
+  // offscreen reconciles sockets and enforcement updates in one place.
+  if (CONNECTIONS_STORAGE_KEY in changes) {
+    pushConnectionsToOffscreen();
   }
 });
 
@@ -45,6 +68,40 @@ function getWindowId(port: number): number | null {
 async function setWindowId(port: number, windowId: number): Promise<void> {
   claudeInstances[String(port)] = windowId;
   await chrome.storage.local.set({ claudeInstances });
+}
+
+// ─── Configured connections (scope + offscreen push) ───────────────────────
+
+async function loadConnections(): Promise<ConnConfig[]> {
+  const { [CONNECTIONS_STORAGE_KEY]: stored } = await chrome.storage.local.get(CONNECTIONS_STORAGE_KEY);
+  return Array.isArray(stored) ? (stored as ConnConfig[]) : [];
+}
+
+// Rebuild the connScope map from the stored configs. Only configs that carry a
+// non-empty allow OR deny become entries — a config with neither stays
+// unrestricted (absent from the map), preserving the "absent = unrestricted"
+// contract scopeBlocks relies on.
+function refreshConnScope(configs: ConnConfig[]): void {
+  connScope.clear();
+  for (const cfg of configs) {
+    const hasAllow = Array.isArray(cfg.allow) && cfg.allow.length > 0;
+    const hasDeny = Array.isArray(cfg.deny) && cfg.deny.length > 0;
+    if (hasAllow || hasDeny) {
+      connScope.set(cfg.connId, { allow: cfg.allow, deny: cfg.deny });
+    }
+  }
+}
+
+// Background owns the connection config: it loads from storage, refreshes the
+// local scope map, and forwards the full set to offscreen (which owns socket
+// lifecycle). Offscreen requests this on boot and we re-push on any storage
+// change, so the two stay reconciled without offscreen ever touching storage.
+async function pushConnectionsToOffscreen(): Promise<void> {
+  const configs = await loadConnections();
+  refreshConnScope(configs);
+  chrome.runtime
+    .sendMessage({ source: CONFIG_MSG_SOURCE, type: "connections", connections: configs })
+    .catch(() => {});
 }
 
 // Pending click-watch callbacks keyed by requestId. Each entry tracks the
@@ -112,6 +169,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         portMeta.set(lp.port, { label: lp.label, host: lp.host });
       }
       sendResponse({ ok: true });
+      return true;
+    }
+    // Offscreen asks for the connection set on its boot. Answer asynchronously
+    // (load from storage, refresh scope, push) and ack once dispatched.
+    if (msg.type === "request-config") {
+      pushConnectionsToOffscreen().finally(() => sendResponse({ ok: true }));
       return true;
     }
     const port: number = typeof msg.port === "number" ? msg.port : 7878;
@@ -1563,11 +1626,41 @@ async function pushInstanceInfoIfNeeded(portOrTab: number | chrome.tabs.Tab, por
   } catch { /* best-effort */ }
 }
 
+// Extract the hostname of an http(s) URL, or null for anything else. Non-http(s)
+// schemes (about:blank, chrome://, file://, data:) are treated as unscoped, so a
+// scoped connection can still operate on internal pages.
+function httpHostname(url: string | undefined): string | null {
+  if (!url || !/^https?:\/\//i.test(url)) return null;
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return null;
+  }
+}
+
 async function handleMcpMessage(msg: {
   type: string;
   requestId: string;
   [key: string]: unknown;
 }, port: number): Promise<unknown> {
+  // Domain-scope choke point: if this connection is scoped, refuse any action
+  // whose active tab is on a host the scope blocks. This runs before every
+  // handler so a single check covers click/type/read/etc. without touching each
+  // case. navigate/fetch_url additionally guard their TARGET url below so the
+  // agent can't escape scope by navigating out. The thrown error flows to the
+  // dispatch .catch and becomes an ok:false response.
+  if (connScope.has(port)) {
+    const wid = getWindowId(port);
+    if (wid) {
+      const [tab] = await chrome.tabs.query({ active: true, windowId: wid });
+      const host = httpHostname(tab?.url);
+      if (host) {
+        const v = scopeBlocks(connScope.get(port), host);
+        if (v.blocked) throw new Error("chromeflow: " + v.reason);
+      }
+    }
+  }
+
   switch (msg.type) {
     case "navigate": {
       // Navigation reloads the page, destroying any injected info box.
@@ -1582,6 +1675,15 @@ async function handleMcpMessage(msg: {
       const blockNav = isBlockedUrl(targetUrl);
       if (blockNav.blocked) {
         throw new Error(blockNav.reason!);
+      }
+      // Scope guard on the DESTINATION, not just the current tab: without this a
+      // scoped connection could navigate out of its allowed domains.
+      if (connScope.has(port)) {
+        const navHost = httpHostname(targetUrl);
+        if (navHost) {
+          const v = scopeBlocks(connScope.get(port), navHost);
+          if (v.blocked) throw new Error("chromeflow: " + v.reason);
+        }
       }
       const background = msg.background === true;
 
@@ -4288,7 +4390,13 @@ async function handleMcpMessage(msg: {
 
       const tabId = tab.id!;
       const fileAttr = tagResult.attr ?? "data-cf-file";
-      const filename = (msg.filePath as string).split("/").pop() ?? "";
+      // Inline-content mode (feature 4): when fileContent is supplied the bytes
+      // come from the caller (no local path), and the committed filename is
+      // msg.fileName. Path mode keeps deriving the name from msg.filePath.
+      const inlineContent = typeof msg.fileContent === "string" && (msg.fileContent as string).length > 0;
+      const filename = inlineContent
+        ? ((msg.fileName as string | undefined) ?? "")
+        : ((msg.filePath as string).split("/").pop() ?? "");
       const waitMs = (msg.waitMs as number | undefined) ?? 3000;
       const verifySelector = msg.verifySelector as string | undefined;
 
@@ -4313,25 +4421,40 @@ async function handleMcpMessage(msg: {
       // (Runtime.evaluate's document.querySelector is MAIN-world and doesn't
       // pierce open OR closed shadow boundaries).
       try {
-        await withDebugger(tabId, async () => {
-          const backendNodeId = await findShadowMarkedBackendNodeId(tabId, fileAttr);
-          if (!backendNodeId) throw new Error("Could not locate tagged file input via CDP");
+        if (inlineContent) {
+          // Inline-content path: hand the base64 bytes to the content script,
+          // which reconstructs a File and assigns it via DataTransfer on the
+          // already-tagged input (pierce-aware), then dispatches its own
+          // change/input events. No CDP DOM.setFileInputFiles — there is no
+          // local file for CDP to point at.
+          await forwardToContentScript(tab, {
+            type: SET_FILE_FROM_CONTENT,
+            attr: fileAttr,
+            fileContent: msg.fileContent as string,
+            fileName: filename,
+            mimeType: msg.mimeType as string | undefined,
+          }).catch(() => {});
+        } else {
+          await withDebugger(tabId, async () => {
+            const backendNodeId = await findShadowMarkedBackendNodeId(tabId, fileAttr);
+            if (!backendNodeId) throw new Error("Could not locate tagged file input via CDP");
 
-          await (chrome.debugger as any).sendCommand({ tabId }, "DOM.setFileInputFiles", {
-            backendNodeId,
-            files: [msg.filePath],
+            await (chrome.debugger as any).sendCommand({ tabId }, "DOM.setFileInputFiles", {
+              backendNodeId,
+              files: [msg.filePath],
+            });
           });
-        });
 
-        // Dispatch change + input events from the content script so the
-        // pierce-aware queryAllDeep can find the tagged input. Doing this from
-        // CDP Runtime.evaluate would silently no-op on closed-shadow-rooted
-        // inputs.
-        await forwardToContentScript(tab, {
-          type: "dispatch_file_change_events",
-          requestId: msg.requestId + "-dispatch",
-          attr: fileAttr,
-        }).catch(() => {});
+          // Dispatch change + input events from the content script so the
+          // pierce-aware queryAllDeep can find the tagged input. Doing this from
+          // CDP Runtime.evaluate would silently no-op on closed-shadow-rooted
+          // inputs.
+          await forwardToContentScript(tab, {
+            type: "dispatch_file_change_events",
+            requestId: msg.requestId + "-dispatch",
+            attr: fileAttr,
+          }).catch(() => {});
+        }
       } finally {
         // Clean up the tag regardless of success/failure
         await forwardToContentScript(tab, {
@@ -4908,6 +5031,15 @@ async function handleMcpMessage(msg: {
       const blockFetch = isBlockedUrl(url);
       if (blockFetch.blocked) {
         throw new Error(blockFetch.reason!);
+      }
+      // fetch_url targets an arbitrary url (not the active tab), so scope it on
+      // the request target. The top-of-handler guard only covers the active tab.
+      if (connScope.has(port)) {
+        const fetchHost = httpHostname(url);
+        if (fetchHost) {
+          const v = scopeBlocks(connScope.get(port), fetchHost);
+          if (v.blocked) throw new Error("chromeflow: " + v.reason);
+        }
       }
       const method = (msg.method as string | undefined) ?? "GET";
       const reqHeaders = (msg.headers as Record<string, string> | undefined) ?? {};

@@ -15,6 +15,7 @@ import { enumerateFormFields } from "./forms.js";
 import { findText, findInputs, waitForText } from "./find.js";
 import { markerIds } from "../markers.js";
 import { redactSecrets } from "./redact.js";
+import { SET_FILE_FROM_CONTENT, type SetFileFromContentMessage } from "../connections.js";
 
 type IncomingMessage = {
   type: string;
@@ -931,6 +932,40 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
         return { type: "action_done", requestId: msg.requestId, found: true };
       }
       return { type: "action_done", requestId: msg.requestId, found: false };
+    }
+
+    case SET_FILE_FROM_CONTENT: {
+      // Inline-content file mode: rather than CDP DOM.setFileInputFiles (which
+      // needs a real on-disk path), the file bytes arrive base64 on the wire and
+      // we materialize a File entirely in-page. This is the only way to upload
+      // content the agent generated/holds in memory without first writing it to
+      // the user's disk. The target input was already marked with msg.attr by an
+      // earlier tag step; queryAllDeep pierces open AND closed shadow roots (via
+      // chrome.dom.openOrClosedShadowRoot) so inputs inside Stencil/Radix/Lit
+      // web components resolve, matching dispatch_file_change_events above.
+      const m = msg as unknown as SetFileFromContentMessage & { requestId: string };
+      const input = queryAllDeep<HTMLInputElement>(document, `[${m.attr}="true"]`)[0] ?? null;
+      if (!input) {
+        return { type: "action_done", requestId: msg.requestId, found: false };
+      }
+      // base64 -> bytes. atob yields a binary string (one char per byte); map
+      // each charCode into a Uint8Array so binary payloads (images, PDFs) round
+      // trip intact rather than being mangled by UTF-8 decoding.
+      const binary = atob(m.fileContent);
+      const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+      const file = new File([bytes], m.fileName, {
+        type: m.mimeType || "application/octet-stream",
+      });
+      // FileList is read-only and can't be constructed directly; DataTransfer is
+      // the only standard way to synthesize one and assign input.files.
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      input.files = dt.files;
+      // Same change+input dispatch the path-mode commit uses, so React/Vue form
+      // bindings notice the upload identically across both upload paths.
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return { type: "action_done", requestId: msg.requestId, found: true, name: m.fileName };
     }
 
     case "clear": {

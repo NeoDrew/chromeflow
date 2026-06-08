@@ -78,7 +78,14 @@ export class WsBridge {
           return;
         }
         if (msg.type === "ready") {
-          console.error("[chromeflow] Extension ready");
+          // A remote connection may include a bearer token in its ready handshake.
+          // We accept it as-is here; verifying it (and gating on it) is the remote
+          // operator's responsibility, not this local bridge's. Bare { type: "ready" }
+          // from the default local extension stays valid.
+          const token = typeof (msg as { token?: unknown }).token === "string"
+            ? (msg as { token?: string }).token
+            : undefined;
+          console.error(`[chromeflow] Extension ready${token ? " (token presented)" : ""}`);
           // Send identity so the extension knows which project this server belongs to.
           // `host` tells the popup whether this MCP server was spawned by Claude Code
           // or Codex CLI:
