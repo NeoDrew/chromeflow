@@ -73,7 +73,9 @@ export type ServerMessage =
   | { type: "restore_page_state"; requestId: string; state: PageFieldState[] }
   | { type: "list_tabs"; requestId: string }
   | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }>; exact?: boolean }
-  | { type: "set_file_input"; requestId: string; hint: string; filePath: string; waitMs?: number; verifySelector?: string }
+  // filePath XOR fileContent: filePath drives the CDP file-input path (local disk),
+  // fileContent carries base64 bytes inline for servers with no local disk access.
+  | { type: "set_file_input"; requestId: string; hint: string; filePath?: string; fileContent?: string; fileName?: string; mimeType?: string; waitMs?: number; verifySelector?: string }
   | { type: "type_text"; requestId: string; text: string; frame?: string; into_selector?: string; clear_first?: boolean }
   | { type: "inspect_request_headers"; requestId: string; url: string; new_tab?: boolean }
   | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string }
@@ -156,7 +158,9 @@ export type PageFieldState = {
 
 // Messages sent from Extension → MCP server
 export type ClientMessage =
-  | { type: "ready" }
+  // token is the optional bearer from a remote connection's ready handshake;
+  // bare { type: "ready" } from the default local extension stays valid.
+  | { type: "ready"; token?: string }
   | { type: "progress"; requestId: string; phase?: string; detail?: string }
   | {
       type: "screenshot_response";

@@ -357,6 +357,128 @@
       color: var(--accent);
       user-select: all;
     }
+
+    /* Kind badge: local / remote pill on each session card + config row. */
+    .kind-badge {
+      flex-shrink: 0;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      line-height: 1.5;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      background: var(--bg-subtle);
+    }
+    .kind-badge.kind-remote {
+      color: var(--accent);
+      background: var(--card-active);
+      border-color: var(--border-active);
+    }
+
+    .instance.paused { opacity: 0.7; }
+
+    /* Second button row on each card: pause / disconnect. */
+    .btn-row-conn { margin-top: 6px; }
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+      border-color: var(--border);
+    }
+    .btn-ghost:hover { background: var(--bg-subtle); color: var(--text); }
+    .btn-danger { color: #b91c1c; }
+    .btn-danger:hover { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+
+    /* Connections config panel: reuses .group / .group-header / .group-body
+       collapse machinery so it animates identically to the session groups. */
+    #connections { margin-top: 16px; }
+    .conn-panel { margin-bottom: 0; }
+    .conn-panel-body { padding-top: 2px; }
+    .conn-add-btn { width: 100%; margin-top: 8px; }
+
+    .conn-list { display: flex; flex-direction: column; gap: 8px; }
+    .conn-row {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 12px;
+      box-shadow: var(--shadow);
+    }
+    .conn-row.editing { padding: 12px; }
+    .conn-row-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .conn-row-text { flex: 1; min-width: 0; }
+    .conn-row-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .conn-row-url {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .conn-row-scope {
+      font-size: 11px;
+      color: var(--text-faint);
+      margin-top: 4px;
+      word-break: break-word;
+    }
+    .conn-row-actions {
+      display: flex;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .conn-row-actions .btn { flex: 0 0 auto; padding: 5px 9px; }
+
+    /* Add / edit form. */
+    .conn-form {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
+      padding: 12px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+    }
+    .conn-field { display: flex; flex-direction: column; gap: 4px; }
+    .conn-field-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .conn-field-hint {
+      font-weight: 400;
+      color: var(--text-faint);
+    }
+    .conn-input {
+      font-family: inherit;
+      font-size: 12px;
+      color: var(--text);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 7px 9px;
+      width: 100%;
+    }
+    .conn-input:focus {
+      outline: none;
+      border-color: var(--border-active);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+    }
+    .conn-form .btn-row { margin-top: 2px; }
   </style>
 </head>
 <body>
@@ -369,6 +491,7 @@
   </div>
 
   <div id="groups"></div>
+  <div id="connections"></div>
   <script src="popup.js"></script>
 </body>
 </html>

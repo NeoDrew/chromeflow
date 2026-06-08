@@ -24670,7 +24670,8 @@ var WsBridge = class {
           return;
         }
         if (msg.type === "ready") {
-          console.error("[chromeflow] Extension ready");
+          const token = typeof msg.token === "string" ? msg.token : void 0;
+          console.error(`[chromeflow] Extension ready${token ? " (token presented)" : ""}`);
           const cwd = process.cwd();
           const host = process.env.CHROMEFLOW_HOST ?? (process.env.CLAUDE_PLUGIN_ROOT ? "claude" : void 0);
           ws.send(JSON.stringify({
@@ -25142,17 +25143,51 @@ ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
   );
   server.tool(
     "set_file_input",
-    "Upload a file to a file input \u2014 works even when the input is hidden behind a custom drag-and-drop zone. Returns success=true only after an observable commit (file count goes up, input gets reset, or verify_selector appears within wait_ms). See CLAUDE.md for batch-upload guidance.",
+    `Upload a file to a file input \u2014 works even when the input is hidden behind a custom drag-and-drop zone. Returns success=true only after an observable commit (file count goes up, input gets reset, or verify_selector appears within wait_ms). See CLAUDE.md for batch-upload guidance.
+
+Two ways to supply the file:
+- file_path (CDP mode): an absolute path on the machine running this server. Reaches both open AND closed shadow roots.
+- file_content + file_name (inline-content mode): base64 file bytes plus a filename, materialized into the input directly. Use this when the server has no local disk access (e.g. a remote endpoint that can't see your filesystem). Caveat: inline-content mode reaches OPEN shadow roots only \u2014 if the input lives in a closed shadow root, use file_path instead.
+
+Provide file_path OR file_content, not both.`,
     {
       hint: external_exports.string().describe("Label text, name, or surrounding text of the file input. Use empty string to target the first file input on the page."),
-      file_path: external_exports.string().describe("Absolute path to the file to upload (e.g. /Users/you/Downloads/task.zip)"),
+      file_path: external_exports.string().optional().describe("Absolute path to the file to upload (e.g. /Users/you/Downloads/task.zip). CDP mode \u2014 reaches closed shadow roots. Provide this OR file_content."),
+      file_content: external_exports.string().optional().describe("Base64-encoded file bytes (no data: prefix) for inline-content mode. Use when the server has no local disk access. Requires file_name. Reaches OPEN shadow roots only. Provide this OR file_path."),
+      file_name: external_exports.string().optional().describe('Filename to present to the page in inline-content mode (e.g. "report.pdf"). Required when file_content is set.'),
+      mime_type: external_exports.string().optional().describe('Optional MIME type for inline-content mode (e.g. "application/pdf"). Inferred from file_name when omitted.'),
       wait_ms: external_exports.number().int().min(0).optional().describe("How long to wait for an observable change after setting the file (default 3000). Increase for slow uploaders that take a moment to render thumbnails."),
       verify_selector: external_exports.string().optional().describe('Optional CSS selector that should appear after a successful upload (e.g. ".photo-thumbnail", "[data-uploaded=true]"). When matched, set_file_input returns success immediately.')
     },
-    async ({ hint, file_path, wait_ms, verify_selector }) => {
+    async ({ hint, file_path, file_content, file_name, mime_type, wait_ms, verify_selector }) => {
+      if (!file_path && !file_content) {
+        return {
+          content: [{ type: "text", text: "Failed to set file: provide either file_path or file_content." }]
+        };
+      }
+      if (file_path && file_content) {
+        return {
+          content: [{ type: "text", text: "Failed to set file: provide file_path OR file_content, not both." }]
+        };
+      }
+      if (file_content && !file_name) {
+        return {
+          content: [{ type: "text", text: "Failed to set file: file_content requires file_name." }]
+        };
+      }
       const wsTimeout = Math.max(3e4, (wait_ms ?? 3e3) + 1e4);
       const response = await bridge.request(
-        { type: "set_file_input", hint, filePath: file_path, waitMs: wait_ms, verifySelector: verify_selector },
+        {
+          type: "set_file_input",
+          hint,
+          // snake -> camel, mirroring the existing file_path -> filePath mapping.
+          filePath: file_path,
+          fileContent: file_content,
+          fileName: file_name,
+          mimeType: mime_type,
+          waitMs: wait_ms,
+          verifySelector: verify_selector
+        },
         wsTimeout
       );
       const r = response;
