@@ -3421,13 +3421,16 @@ async function handleMcpMessage(msg: {
       }
 
       if (!probe.activity) {
-        // Opt-in last resort: walk the React fiber tree from the matched
+        // Last-resort fallback: walk the React fiber tree from the matched
         // element and invoke __reactProps$.onClick directly. Helps on React-
-        // heavy SPAs whose action buttons pass through isTrusted=true checks
-        // even on CDP-dispatched events. Auto-disabled (caller opts in via
-        // try_fiber=true) because the fiber-prop path is undocumented and
-        // could no-op or misbehave on non-React or mangled-prod builds.
-        if (msg.try_fiber === true) {
+        // heavy SPAs whose action buttons need the synthetic React handler and
+        // don't respond to a coordinate CDP click even when isTrusted (e.g.
+        // LinkedIn's Easy Apply "Submit application" button). Fires by default
+        // for via:"auto" now, since it only runs after every isTrusted fallback
+        // above already silently_rejected, so double-firing is well gated. The
+        // explicit via:"cdp" opt-out still skips it (for callers who never want
+        // the undocumented fiber-prop path on non-React / mangled-prod builds).
+        if (via !== "cdp") {
           const fiberResult = await phaseRace("react_fiber_click", 3500, forwardToContentScript(tab, {
             type: "react_fiber_click",
             requestId: msg.requestId + "-fiber",
@@ -3468,7 +3471,7 @@ async function handleMcpMessage(msg: {
             return {
               type: "click_element_response",
               success: false,
-              message: `Clicked "${prep.label ?? msg.textHint}" but no observable activity (DOM mutations, focus change, URL change, alert/toast/modal) within ${activityTimeoutMs}ms even after try_fiber=true (${fiberResult.fired ? "fiber onClick invoked, no DOM/URL/focus/alert change" : `no React fiber __reactProps$.onClick found: ${fiberResult.message}`}). The click MAY have succeeded for actions whose state change isn't observable in the DOM (toggling internal state, opening native dialogs). Verify with find_text or execute_script before retrying. If genuinely rejected, switch to highlight_region + wait_for_click.`,
+              message: `Clicked "${prep.label ?? msg.textHint}" but no observable activity (DOM mutations, focus change, URL change, alert/toast/modal) within ${activityTimeoutMs}ms even after the React fiber fallback (${fiberResult.fired ? "fiber onClick invoked, no DOM/URL/focus/alert change" : `no React fiber __reactProps$.onClick found: ${fiberResult.message}`}). The click MAY have succeeded for actions whose state change isn't observable in the DOM (toggling internal state, opening native dialogs). Verify with find_text or execute_script before retrying. If genuinely rejected, switch to highlight_region + wait_for_click.`,
               before_url,
               after_url: probe2.after_url,
               navigated: false,
