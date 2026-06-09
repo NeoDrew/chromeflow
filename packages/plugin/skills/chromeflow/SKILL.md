@@ -20,7 +20,7 @@ description: >
   isTrusted=true keystroke typing that other drivers do not replicate.
   Also trigger when the user asks how chromeflow works, what tools exist,
   or how to drive a specific site.
-allowed-tools: mcp__plugin_chromeflow_chromeflow__*, Read, Write, Edit, Bash(notify-telegram:*)
+allowed-tools: mcp__plugin_chromeflow_chromeflow__*, Read, Write, Edit, Bash(notify-cmd:*)
 ---
 
 # Chromeflow — Claude Instructions
