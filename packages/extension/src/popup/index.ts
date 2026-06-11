@@ -28,8 +28,15 @@ import {
 } from "../connections";
 
 const groupsEl = document.getElementById("groups")!;
-const statusPill = document.getElementById("status-pill")!;
+const statusPill = document.getElementById("status-pill"); // removed from the header; may be absent
 const connectionsEl = document.getElementById("connections")!;
+
+// True while the user is typing in the add/edit connection form. Background
+// "status" pushes (frequent during reconnects) must NOT re-render then, or they
+// blow away the form and the half-typed/pasted URL. See the listeners at boot.
+function formIsOpen(): boolean {
+  return addFormOpen || editingConnId !== null;
+}
 
 type Host = "claude" | "codex";
 type ConnKind = "local" | "remote";
@@ -200,7 +207,7 @@ function renderInstanceCard(
     </div>
     <div class="btn-row btn-row-conn">
       <button class="btn btn-ghost" data-action="pause" data-port="${port}" data-kind="${kind}">${pauseLabel}</button>
-      <button class="btn btn-ghost btn-danger" data-action="disconnect" data-port="${port}" data-kind="${kind}">${disconnectLabel}</button>
+      ${kind === "remote" ? `<button class="btn btn-ghost btn-danger" data-action="disconnect" data-port="${port}" data-kind="${kind}">${disconnectLabel}</button>` : ""}
     </div>
   `;
 
@@ -562,6 +569,7 @@ function render(state: State) {
 }
 
 function updateStatusPill(state: State) {
+  if (!statusPill) return; // pill removed from the header
   const activeCount = state.livePorts.length;
   const pillText = statusPill.querySelector(".pill-text")!;
   if (activeCount > 0) {
@@ -720,6 +728,7 @@ connectionsEl.addEventListener("click", async (e) => {
       addFormOpen = false;
       editingConnId = null;
     }
+    void persistUiState();
     animateGroupToggle(connectionsEl, "connections", () => reload());
     return;
   }
@@ -730,12 +739,14 @@ connectionsEl.addEventListener("click", async (e) => {
   if (connAction === "show-add-form") {
     addFormOpen = true;
     editingConnId = null;
+    void persistUiState();
     await reload();
     return;
   }
   if (connAction === "cancel-form") {
     addFormOpen = false;
     editingConnId = null;
+    void persistUiState();
     await reload();
     return;
   }
@@ -803,6 +814,7 @@ connectionsEl.addEventListener("submit", async (e) => {
 
   addFormOpen = false;
   editingConnId = null;
+  void persistUiState();
   await reload();
 });
 
@@ -864,21 +876,52 @@ function animateGroupToggle(
 collapsedGroups.add("others");
 collapsedGroups.add("unassigned");
 
-// Listen for live-port + config changes and re-render. The storage listener
-// also fires for our own writes, so external changes and popup-driven edits
-// both converge on the same render path.
+// Remember the Connections panel / add-form open state across popup opens, so
+// configuring a remote endpoint does not reset every time the popup closes
+// (Chrome closes a browser-action popup whenever you click the page). Stored in
+// session storage so it clears when the browser restarts.
+const UI_STATE_KEY = "chromeflowPopupUi";
+async function persistUiState(): Promise<void> {
+  try {
+    await chrome.storage.session.set({
+      [UI_STATE_KEY]: { connectionsOpen, addFormOpen },
+    });
+  } catch {
+    // session storage may be unavailable; non-fatal
+  }
+}
+async function restoreUiState(): Promise<void> {
+  try {
+    const { [UI_STATE_KEY]: ui } = await chrome.storage.session.get(UI_STATE_KEY);
+    if (ui && typeof ui === "object") {
+      connectionsOpen = !!(ui as { connectionsOpen?: boolean }).connectionsOpen;
+      addFormOpen = !!(ui as { addFormOpen?: boolean }).addFormOpen;
+    }
+  } catch {
+    // non-fatal
+  }
+}
+
+// Listen for live-port + config changes and re-render. CRUCIAL: while the
+// add/edit connection form is open, skip these re-renders. They rebuild the
+// form's markup and would wipe the URL/token the user is mid-typing or pasting,
+// which is the "the box keeps clearing" bug.
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.source === "chromeflow-offscreen" && msg.type === "status") {
+    if (formIsOpen()) return;
     loadState().then((s) => { render(s); resizePopup(); });
   }
 });
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes[CONNECTIONS_STORAGE_KEY]) {
+    if (formIsOpen()) return;
     loadState().then((s) => { render(s); resizePopup(); });
   }
 });
 
-loadState().then((s) => {
-  render(s);
-  requestAnimationFrame(() => document.body.classList.add("ready"));
-});
+restoreUiState()
+  .then(() => loadState())
+  .then((s) => {
+    render(s);
+    requestAnimationFrame(() => document.body.classList.add("ready"));
+  });
