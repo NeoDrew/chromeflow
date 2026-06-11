@@ -34,7 +34,11 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
 
-function render(configs: ConnConfig[], message?: string): void {
+function render(
+  configs: ConnConfig[],
+  message?: string,
+  prefill?: { url?: string; label?: string; origin?: string },
+): void {
   const remotes = configs
     .filter((c) => c.kind === "remote")
     .sort((a, b) => a.connId - b.connId);
@@ -56,14 +60,19 @@ function render(configs: ConnConfig[], message?: string): void {
 
   root.innerHTML = `
     <h1>Add a connection</h1>
-    <p class="lead">This window stays open while you copy your connection URL and token from the other tab. Paste them in, then click Add.</p>
+    <p class="lead">${
+      prefill?.url
+        ? "Review the connection below and click Add to connect your browser."
+        : "This window stays open while you copy your connection URL from the other tab. Paste it in, then click Add."
+    }</p>
+    ${prefill?.origin ? `<div class="origin">Requested by <strong>${esc(prefill.origin)}</strong></div>` : ""}
     ${message ? `<div class="ok">${esc(message)}</div>` : ""}
     <form id="form" autocomplete="off">
       <label>Label <span class="muted">(optional)</span>
-        <input name="label" type="text" placeholder="e.g. JobDog" />
+        <input name="label" type="text" placeholder="e.g. JobDog" value="${esc(prefill?.label ?? "")}" />
       </label>
       <label>Connection URL
-        <input name="url" type="text" spellcheck="false" placeholder="wss://...onrender.com/ws?token=..." required />
+        <input name="url" type="text" spellcheck="false" placeholder="wss://...onrender.com/ws?token=..." value="${esc(prefill?.url ?? "")}" required />
       </label>
       <label>Token <span class="muted">(optional, only if the URL has no ?token=)</span>
         <input name="token" type="text" spellcheck="false" placeholder="paste token" />
@@ -128,4 +137,15 @@ root.addEventListener("click", async (e) => {
   await reload("Connection removed.");
 });
 
-reload();
+// On open, pre-fill from query params when a page requested the connection
+// (background passes ?url=&label=&origin=). After the first submit/delete,
+// reload() re-renders with an empty form.
+const params = new URLSearchParams(location.search);
+const prefill = params.get("url")
+  ? {
+      url: params.get("url") ?? "",
+      label: params.get("label") ?? "",
+      origin: params.get("origin") ?? "",
+    }
+  : undefined;
+readConfigs().then((configs) => render(configs, undefined, prefill));

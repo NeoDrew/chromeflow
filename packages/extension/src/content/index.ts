@@ -1334,3 +1334,29 @@ function startClickWatch(requestId: string) {
   document.addEventListener("pointerdown", onPointerDown, { capture: true });
   document.addEventListener("keydown", onKeyDown, { capture: true });
 }
+
+// ─── Web-page-initiated connection request ───────────────────────────────────
+// Any web page (e.g. a SaaS dashboard) can ask chromeflow to add a connection by
+// posting `window.postMessage({ type: "chromeflow:add-connection", url, label })`.
+// We relay it to the background, which opens the connection window PRE-FILLED for
+// the user to confirm. The user must still click "Add" in that trusted extension
+// window, so a page can never silently attach the browser to an arbitrary server.
+window.addEventListener("message", (event) => {
+  if (event.source !== window) return; // same-window page messages only
+  const data = event.data as
+    | { type?: unknown; url?: unknown; label?: unknown }
+    | null;
+  if (!data || typeof data !== "object") return;
+  if (data.type !== "chromeflow:add-connection") return;
+  if (typeof data.url !== "string" || !data.url) return;
+  try {
+    chrome.runtime.sendMessage({
+      type: "chromeflow-web-connect",
+      url: data.url,
+      label: typeof data.label === "string" ? data.label : "",
+      origin: event.origin,
+    });
+  } catch {
+    // extension context may be gone (reload); ignore
+  }
+});
