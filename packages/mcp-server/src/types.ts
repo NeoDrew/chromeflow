@@ -199,6 +199,14 @@ export type ClientMessage =
       silently_rejected?: boolean;
       fiber_attempted?: boolean;
       phase_timed_out?: string;
+      // The click fired a network request that was still resolving when the
+      // until-clause timed out: the click DID register (do not retry — a
+      // double-submit risk on POST-style buttons).
+      request_in_flight?: boolean;
+      // A dialog opened after the click instead of the awaited navigation.
+      // kind: "confirmation" (two-step action — click primary_action to
+      // complete) vs "required-input" (supply a value first) vs "dialog".
+      dialog_opened?: { kind: string; label: string; primary_action: string };
       target_disabled?: boolean;
       disabled_state?: {
         disabled: boolean;

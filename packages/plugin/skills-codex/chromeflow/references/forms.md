@@ -49,8 +49,8 @@ detected via the `required` attribute, `aria-required="true"`, a
 trailing `*` in the associated `<label>` text, OR a late-bound
 validation signal: `aria-invalid="true"` on the field, or a visible
 "This question is required" / "Please select…" message in the field's
-question container. That last case catches SPA forms (DataAnnotation,
-survey builders, headlessui/Radix disclosure panels) that only mark a
+question container. That last case catches SPA forms (survey builders,
+annotation dashboards, headlessui/Radix disclosure panels) that only mark a
 field required after a failed submit attempt — so run a submit first,
 then `get_form_fields(only_empty=true)` surfaces exactly what's still
 blocking. If it still returns nothing but Submit is disabled, the page

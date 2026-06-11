@@ -421,7 +421,13 @@ export function waitForText(
 
   // Stable identity for a match so we can tell a genuinely NEW occurrence apart
   // from pre-existing text that an unrelated mutation merely re-surfaced.
-  const matchKey = (m: FindTextMatch) => `${m.selector} ${m.text} ${m.context}`;
+  // Deliberately keyed on selector + text only, NOT surrounding context: a
+  // React re-render of the SAME text node frequently shifts the neighbouring
+  // text (a sibling count, a relative timestamp), which would change a
+  // context-inclusive key and make since:"now" fire on text that was already
+  // present at call time — the exact false positive this baseline exists to
+  // prevent. \x00 separates the fields so selector/text can't run together.
+  const matchKey = (m: FindTextMatch) => `${m.selector}\x00${m.text}`;
 
   const findCandidates = (): Array<{ match: FindTextMatch; query: string; index: number }> => {
     const out: Array<{ match: FindTextMatch; query: string; index: number }> = [];

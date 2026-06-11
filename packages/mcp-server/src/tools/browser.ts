@@ -545,7 +545,7 @@ Provide file_path OR file_content, not both.`,
 **Shadow-piercing helpers are pre-injected** into every script:
 - \`$deep(selector, root?)\` — querySelector that walks open shadow roots
 - \`$deepAll(selector, root?)\` — querySelectorAll equivalent, returns an array
-- \`shadowDocument\` — the open shadow root with the most interactive elements (buttons, inputs, links), or \`document\` if none. Useful when an SPA mounts ALL of its UI inside a single root shadow host (Outlier-style annotation dashboards): replace every \`document.querySelector*\` call with \`shadowDocument.querySelector*\` and the same code now reaches the SPA's content. On pages with multiple shadow roots (e.g. one for CSS theme vars, one for content), this picks the content root automatically.
+- \`shadowDocument\` — the open shadow root with the most interactive elements (buttons, inputs, links), or \`document\` if none. Useful when an SPA mounts ALL of its UI inside a single root shadow host (annotation-style dashboards that wrap the whole app in one web component): replace every \`document.querySelector*\` call with \`shadowDocument.querySelector*\` and the same code now reaches the SPA's content. On pages with multiple shadow roots (e.g. one for CSS theme vars, one for content), this picks the content root automatically.
 - \`shadowDocuments\` — array of ALL open shadow roots on the page (in DOM order). Use when you need to search across multiple shadow roots or when the automatic pick is wrong.
 
 The helpers pierce OPEN shadow roots only — MAIN world can't reach closed roots. For closed roots, use find_text / get_page_text / click_element / fill_input which pierce both kinds via chrome.dom.openOrClosedShadowRoot.

@@ -520,6 +520,84 @@ async function getSubmitSignalCounts(tabId: number): Promise<{ alert: number; to
 }
 
 /**
+ * Classify the first VISIBLE dialog/modal on the page, piercing open AND closed
+ * shadow roots. Distinguishes a two-step "confirmation" dialog (the click
+ * worked; click the primary action to complete) from a "required-input" prompt
+ * (supply a value first) and surfaces the primary action label. Returns null
+ * when no visible dialog is present. Shared by the post-timeout blocker
+ * diagnosis and the in-loop early-dialog detection so a two-step submit doesn't
+ * burn the whole until-timeout before the dialog is recognised.
+ */
+async function classifyTopDialog(
+  tabId: number,
+): Promise<{ kind: string; label: string; primary_action: string } | null> {
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+        function getShadowRoot(el: Element): ShadowRoot | null {
+          if (chromeDom?.openOrClosedShadowRoot) {
+            try { const sr = chromeDom.openOrClosedShadowRoot(el); if (sr) return sr; } catch { /* ignore */ }
+          }
+          return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+        }
+        function deepAllWithin(root: Element, sel: string): Element[] {
+          const out: Element[] = [];
+          const stack: (Element | ShadowRoot)[] = [root];
+          while (stack.length) {
+            const r = stack.pop()!;
+            for (const el of Array.from(r.querySelectorAll(sel))) out.push(el);
+            const scope = r instanceof Element ? [r, ...Array.from(r.querySelectorAll("*"))] : Array.from(r.querySelectorAll("*"));
+            for (const el of scope) {
+              const sr = getShadowRoot(el);
+              if (sr) stack.push(sr);
+            }
+          }
+          return out;
+        }
+        // First VISIBLE dialog: skip stale hidden dialog nodes that SPAs
+        // (Radix/headless) leave mounted but display:none, which would
+        // otherwise mask the real one that just opened.
+        const dialogSel = '[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"], dialog[open], faceplate-dialog:not([hidden])';
+        let dialog: Element | null = null;
+        for (const cand of deepAllWithin(document.documentElement, dialogSel)) {
+          const cr = (cand as HTMLElement).getBoundingClientRect?.();
+          if (cr && cr.width === 0 && cr.height === 0) continue;
+          dialog = cand;
+          break;
+        }
+        if (!dialog) return null;
+        const heading = dialog.querySelector("h1, h2, h3, [role='heading']")?.textContent?.trim() ?? "";
+        const aria = dialog.getAttribute("aria-label") ?? "";
+        const label = (heading || aria || dialog.tagName.toLowerCase()).slice(0, 80);
+
+        // Does the dialog ask for input?
+        const hasField = deepAllWithin(dialog,
+          'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]), textarea, select, [contenteditable="true"], [role="radio"], [role="checkbox"], [role="textbox"], [role="combobox"], [role="listbox"]'
+        ).length > 0;
+        const txt = (dialog.textContent ?? "").slice(0, 2000);
+        const validationText = /\b(is required|required field|please (?:answer|select|choose|enter|provide|complete)|you must (?:answer|select|choose|provide|complete))\b/i.test(txt);
+
+        // Primary action button: prefer an affirmative verb, else the last
+        // button (dialogs usually order [Cancel][Confirm]).
+        const btns = deepAllWithin(dialog, 'button, [role="button"], a[href]')
+          .map((b) => (b.textContent ?? "").replace(/\s+/g, " ").trim())
+          .filter((t) => t.length > 0 && t.length < 40);
+        const affirmative = btns.find((t) => /\b(confirm|submit|continue|proceed|yes|ok|okay|accept|save|delete|got it|next)\b/i.test(t));
+        const primary = (affirmative || btns[btns.length - 1] || "").slice(0, 40);
+
+        const kind = (hasField || validationText) ? "required-input" : (primary ? "confirmation" : "dialog");
+        return { kind, label, primary_action: primary };
+      },
+    });
+    return (r[0]?.result as { kind: string; label: string; primary_action: string } | null | undefined) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Per-click activity probe. Watches the page for a short window after a
  * click dispatch and reports whether ANY observable side-effect happened —
  * DOM mutation, focus change, URL change, value/checked change on the
@@ -936,6 +1014,74 @@ async function snapshotVisibleCount(tabId: number): Promise<number | null> {
   }
 }
 
+/**
+ * Re-read the tagged click target's CURRENT viewport center, scrolling it into
+ * view first if it sits outside the viewport. The coordinate captured by
+ * prepareClickTarget can go stale before the CDP click dispatches: a tall modal
+ * (the Easy Apply Review step) puts its primary button BELOW THE FOLD, and a
+ * smooth scroll-into-view may not have settled when prep read x/y, so the
+ * coordinate click lands on the wrong element (or misses entirely) and the
+ * action never fires. Reading fresh here, after a settle, makes the humanlike
+ * bezier click land on the button it actually resolved. Shadow-piercing so it
+ * works on web-component modals. Returns null if the element is gone or 0x0.
+ */
+async function freshTargetPoint(
+  tabId: number,
+  markerAttr: string,
+): Promise<{ x: number; y: number; in_view: boolean } | null> {
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: async (attr: string) => {
+        const cd = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+        const getSR = (el: Element): ShadowRoot | null => {
+          try { if (cd?.openOrClosedShadowRoot) { const sr = cd.openOrClosedShadowRoot(el); if (sr) return sr; } } catch { /* ignore */ }
+          return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+        };
+        const stack: (Document | ShadowRoot)[] = [document];
+        let el: Element | null = null;
+        while (stack.length) {
+          const root = stack.pop()!;
+          const f = root.querySelector(`[${attr}]`);
+          if (f) { el = f; break; }
+          for (const e of Array.from(root.querySelectorAll("*"))) { const sr = getSR(e); if (sr) stack.push(sr); }
+        }
+        if (!el) return null;
+        const target = el as HTMLElement;
+        let rect = target.getBoundingClientRect();
+        const outside = rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth
+          || rect.top < 0 || rect.bottom > innerHeight;
+        if (outside) {
+          // behavior:"instant" forces a synchronous scroll, but prepareClickTarget
+          // already started a SMOOTH scroll that keeps animating; if we read the
+          // rect while either is still moving, the click lands at a stale interim
+          // position and misses (the Easy Apply below-fold "Submit" bug). So
+          // scroll, then POLL until the element's position stops changing (two
+          // consecutive reads match) before returning the coordinate, capped so a
+          // perpetually-animating page can't hang the click. Cast because some
+          // lib.dom versions still type ScrollBehavior as only "auto" | "smooth".
+          try { target.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" } as ScrollIntoViewOptions); } catch { /* ignore */ }
+          let prevTop = NaN;
+          for (let i = 0; i < 12; i++) {
+            await new Promise((r) => setTimeout(r, 50));
+            const t = target.getBoundingClientRect().top;
+            if (t === prevTop) break;
+            prevTop = t;
+          }
+          rect = target.getBoundingClientRect();
+        }
+        if (rect.width === 0 && rect.height === 0) return null;
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, in_view: rect.top >= 0 && rect.bottom <= innerHeight };
+      },
+      args: [markerAttr],
+    });
+    const v = r[0]?.result as { x: number; y: number; in_view: boolean } | null | undefined;
+    return v ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function runActivityProbe(
   tabId: number,
   beforeUrl: string,
@@ -1261,13 +1407,22 @@ async function commitReactControlState(
           }
           if (!input) return { committed: false };
 
-          // Walk up from the input looking for __reactProps$ with an onChange.
-          // Use the INPUT's controlled `checked` prop for the desync test.
+          // Walk up from the input looking for __reactProps$ with an onChange,
+          // piercing shadow boundaries (parentElement is null at a shadow root,
+          // so hop to the host). Use the INPUT's controlled `checked` prop for
+          // the desync test, and note whether the subtree is React-managed at
+          // all so the native fallback below can run even when no onChange prop
+          // is directly reachable.
           let node: Element | null = input;
           let onChange: ((e: unknown) => void) | null = null;
           let controlledChecked: boolean | undefined;
-          for (let depth = 0; depth < 6 && node; depth++) {
-            const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
+          let reactManaged = false;
+          for (let depth = 0; depth < 8 && node; depth++) {
+            const keys = Object.keys(node);
+            if (keys.some((k) => k.startsWith("__reactProps$") || k.startsWith("__reactFiber$"))) {
+              reactManaged = true;
+            }
+            const key = keys.find((k) => k.startsWith("__reactProps$"));
             const props = key ? (node as unknown as Record<string, { onChange?: unknown; checked?: unknown }>)[key] : undefined;
             if (props) {
               if (controlledChecked === undefined && typeof props.checked === "boolean") {
@@ -1278,30 +1433,56 @@ async function commitReactControlState(
               }
             }
             if (onChange && controlledChecked !== undefined) break;
-            node = node.parentElement;
+            node = node.parentElement
+              ?? (node.parentNode instanceof ShadowRoot ? node.parentNode.host : null);
           }
 
-          // Only act on a genuine controlled-state desync.
-          if (!onChange || controlledChecked === undefined) return { committed: false };
-          if (controlledChecked === input.checked) return { committed: false };
+          // Path 1: standard React controlled input with a directly callable
+          // onChange — fire it on a genuine prop/DOM desync.
+          if (onChange && controlledChecked !== undefined) {
+            if (controlledChecked === input.checked) return { committed: false, kind: input.type };
+            const ev = {
+              target: input,
+              currentTarget: input,
+              type: "change",
+              bubbles: true,
+              cancelable: true,
+              defaultPrevented: false,
+              nativeEvent: { isTrusted: true },
+              preventDefault() { /* noop */ },
+              stopPropagation() { /* noop */ },
+              stopImmediatePropagation() { /* noop */ },
+              persist() { /* noop */ },
+              isDefaultPrevented: () => false,
+              isPropagationStopped: () => false,
+            };
+            onChange(ev);
+            return { committed: true, kind: input.type };
+          }
 
-          const ev = {
-            target: input,
-            currentTarget: input,
-            type: "change",
-            bubbles: true,
-            cancelable: true,
-            defaultPrevented: false,
-            nativeEvent: { isTrusted: true },
-            preventDefault() { /* noop */ },
-            stopPropagation() { /* noop */ },
-            stopImmediatePropagation() { /* noop */ },
-            persist() { /* noop */ },
-            isDefaultPrevented: () => false,
-            isPropagationStopped: () => false,
-          };
-          onChange(ev);
-          return { committed: true, kind: input.type };
+          // Path 2: the subtree is React-managed but onChange wasn't directly
+          // reachable (event delegated to the React root, or the prop lives
+          // beyond our walk). Re-assert `checked` through the NATIVE setter, then
+          // dispatch input+change. The native setter matters: `input.checked = x`
+          // goes through React's OWN setter, which records the value in React's
+          // value-tracker, so the subsequent change reads as a no-op and the
+          // store never updates (this is exactly why a plain synthetic click
+          // doesn't commit these radios). Going through the prototype's native
+          // setter leaves the tracker stale, so the dispatched change is detected
+          // and the controlled state commits. Same trick react_set_input uses for
+          // text values. Gated on reactManaged so plain radios — whose click
+          // already fired a real change — don't get a duplicate event.
+          if (reactManaged) {
+            const proto = Object.getPrototypeOf(input);
+            const setter = Object.getOwnPropertyDescriptor(proto, "checked")?.set;
+            try { input.focus(); } catch { /* focus may be denied */ }
+            if (setter) setter.call(input, input.checked);
+            input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+            return { committed: true, kind: input.type + " (native)" };
+          }
+
+          return { committed: false };
         } catch {
           return { committed: false };
         }
@@ -2863,7 +3044,31 @@ async function handleMcpMessage(msg: {
       }
 
       if (!prep || !prep.success) {
-        return { type: "click_element_response", success: false, message: prep?.message ?? "click failed", before_url, after_url: before_url, navigated: false, scope_missed: prep?.scope_missed };
+        let failMsg = prep?.message ?? "click failed";
+        // Dotted-id pitfall: a selector like "#a.b" (or "input#a.b") parses ".b"
+        // as a CLASS, so an id with a literal dot in it (e.g. a UUID-style
+        // "id1.id2") silently matches nothing. If the attribute form DOES
+        // resolve, tell the caller to use it; otherwise this looks like a
+        // missing element when it's really a selector-syntax trap.
+        const selStr = typeof msg.selector === "string" ? msg.selector : "";
+        const dotted = selStr.match(/#([\w-]+(?:\.[\w-]+)+)/);
+        if (dotted && !prep?.scope_missed && tab.id && isScriptableUrl(tab.url)) {
+          const literalId = dotted[1];
+          try {
+            const probe = await chrome.scripting.executeScript({
+              target: { tabId: tab.id },
+              func: (id: string) => {
+                try { return !!document.querySelector(`[id="${id.replace(/"/g, '\\"')}"]`); }
+                catch { return false; }
+              },
+              args: [literalId],
+            });
+            if (probe[0]?.result) {
+              failMsg += ` Hint: "${selStr}" has a literal "." in the id, which CSS reads as a class selector. Use the attribute form instead: [id="${literalId}"].`;
+            }
+          } catch { /* best-effort diagnostic */ }
+        }
+        return { type: "click_element_response", success: false, message: failMsg, before_url, after_url: before_url, navigated: false, scope_missed: prep?.scope_missed };
       }
 
       // Pre-flight skip: matched element resolved to an already-checked radio.
@@ -3013,12 +3218,26 @@ async function handleMcpMessage(msg: {
       // The probe is implicitly skipped when an until-clause is set (the until
       // poll IS the verification) or the caller passes skip_activity_probe.
       // Compute this here, BEFORE the click, so we can skip the expensive
-      // pre-click snapshotVisibleCount baseline walk. On a heavy Outlier-class
+      // pre-click snapshotVisibleCount baseline walk. On a deeply-nested SPA
       // page this deep walk costs 50-150ms per click; wasting it when the
       // probe won't run accounts for a measurable chunk of perceived slowness.
       const willSkipProbe =
         msg.skip_activity_probe === true ||
         !!(msg.until_selector || msg.until_url_contains || msg.until_text_contains || msg.until_url_changes);
+      // Re-read the target's CURRENT center (scrolling it into view if it sits
+      // outside the viewport) just before the click. prepareClickTarget's x/y
+      // can be stale by now: a tall modal puts its primary button below the
+      // fold, so the captured coordinate misses and the action never fires
+      // (the Easy Apply "Submit" case). Done BEFORE the visible-count snapshot
+      // so any scroll is reflected in the probe baseline rather than read as
+      // post-click activity. Falls back to prep's coordinate if the re-read
+      // fails.
+      let clickX = typeof prep.x === "number" ? Math.round(prep.x) : 0;
+      let clickY = typeof prep.y === "number" ? Math.round(prep.y) : 0;
+      if (canCdp && tab.id) {
+        const fresh = await freshTargetPoint(tab.id, markerIds.clickTargetAttr()).catch(() => null);
+        if (fresh) { clickX = Math.round(fresh.x); clickY = Math.round(fresh.y); }
+      }
       // Snapshot the shadow-pierce visible-element count BEFORE dispatching
       // the click, so the activity probe has a baseline that pre-dates any
       // synchronous Lit / Stencil render the click might trigger. See
@@ -3033,7 +3252,7 @@ async function handleMcpMessage(msg: {
           // Per-phase budget: bezier + settle + press/release usually completes
           // in well under 2s. Cap at 8s so a hung CDP attach reports the phase
           // explicitly instead of dragging the whole click to the 30s WS cap.
-          await phaseRace("cdp_click", 8000, dispatchHumanMouseClick(tabId, Math.round(prep.x!), Math.round(prep.y!)));
+          await phaseRace("cdp_click", 8000, dispatchHumanMouseClick(tabId, clickX, clickY));
           usedCdp = true;
         } catch (e) {
           const err = e as Error & { phase?: string; phaseTimedOut?: boolean };
@@ -3426,15 +3645,24 @@ async function handleMcpMessage(msg: {
         // heavy SPAs whose action buttons need the synthetic React handler and
         // don't respond to a coordinate CDP click even when isTrusted (e.g.
         // LinkedIn's Easy Apply "Submit application" button). Fires by default
-        // for via:"auto" now, since it only runs after every isTrusted fallback
-        // above already silently_rejected, so double-firing is well gated. The
-        // explicit via:"cdp" opt-out still skips it (for callers who never want
-        // the undocumented fiber-prop path on non-React / mangled-prod builds).
-        if (via !== "cdp") {
+        // for via:"auto" on textHint clicks, since it only runs after every
+        // isTrusted fallback above already silently_rejected.
+        //
+        // SELECTOR-mode clicks require an explicit try_fiber=true. The activity
+        // probe can be blind to a CDP click that DID land inside a shadow-DOM
+        // modal (a step-swap changes too few visible elements to cross the
+        // probe's delta threshold), so auto-firing onClick on a precisely
+        // selected element risks DOUBLE-FIRING an action the CDP click already
+        // performed. textHint clicks re-resolve by visible text and carry the
+        // same long-standing accepted risk; selector clicks are the precise
+        // path where the user can opt in deliberately. via:"cdp" skips it
+        // entirely (callers who never want the undocumented fiber-prop path).
+        if (via !== "cdp" && (!msg.selector || msg.try_fiber === true)) {
           const fiberResult = await phaseRace("react_fiber_click", 3500, forwardToContentScript(tab, {
             type: "react_fiber_click",
             requestId: msg.requestId + "-fiber",
             textHint: msg.textHint,
+            selector: msg.selector,
             nth: msg.nth,
             within_selector: msg.within_selector,
             near_text: msg.near_text,
@@ -3511,7 +3739,7 @@ async function handleMcpMessage(msg: {
           commitReactControlState(tab.id, markerIds.clickTargetAttr()),
         ).catch(() => null) as { committed: boolean; kind?: string } | null;
         if (committed?.committed) {
-          result.message += ` (synced stale React ${committed.kind ?? "control"} state via onChange)`;
+          result.message += ` (synced stale React ${committed.kind ?? "control"} state)`;
         }
       }
 
@@ -3563,7 +3791,23 @@ async function handleMcpMessage(msg: {
         const maxDeadline = start + Math.max(untilTimeoutMs, untilUrlChanges ? 30000 : untilTimeoutMs);
         let deadline = start + untilTimeoutMs;
         let sawInFlight = false;
+        // Pre-loop visible-modal count so the in-loop early-dialog check can
+        // tell a dialog that opened in RESPONSE to this click from one that was
+        // already on screen before it.
+        const preModalCount = (untilUrlChanges && isScriptableUrl(tab.url) && tab.id)
+          ? (await getSubmitSignalCounts(tab.id)).modal
+          : 0;
+        // Pre-click top dialog (shadow-aware) so the post-timeout blocker
+        // diagnosis only attributes a dialog to THIS click when one genuinely
+        // appeared. Without it, a modal already open before the click would be
+        // misreported as "the click opened a dialog" on any until-timeout.
+        const preDialog = (untilUrlChanges && isScriptableUrl(tab.url) && tab.id)
+          ? await classifyTopDialog(tab.id)
+          : null;
+        let earlyDialog: { kind: string; label: string; primary_action: string } | undefined;
+        let iter = 0;
         while (Date.now() < deadline) {
+          iter++;
           // Pull the current tab state each iteration (URL may change after navigation).
           const [currentTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
           const currentUrl = currentTab?.url ?? "";
@@ -3584,50 +3828,110 @@ async function handleMcpMessage(msg: {
             break;
           }
 
-          if (currentTab?.id && isScriptableUrl(currentUrl)) {
+          if (currentTab?.id && isScriptableUrl(currentUrl) && (untilSelector || untilTextContains)) {
             try {
-              if (untilSelector) {
-                const r = await chrome.scripting.executeScript({
-                  target: { tabId: currentTab.id },
-                  func: (sel: string) => !!document.querySelector(sel),
-                  args: [untilSelector],
-                });
-                if (r[0]?.result) {
-                  untilResult = { ok: true, reason: `Selector "${untilSelector}" appeared` };
-                  break;
-                }
-              }
-              if (untilTextContains) {
-                const r = await chrome.scripting.executeScript({
-                  target: { tabId: currentTab.id },
-                  func: (needle: string) => (document.body?.innerText ?? "").includes(needle),
-                  args: [untilTextContains],
-                });
-                if (r[0]?.result) {
-                  untilResult = { ok: true, reason: `Text "${untilTextContains}" appeared` };
-                  break;
-                }
-              }
+              // Selector + text checks in ONE round-trip. The light-DOM checks
+              // (document.querySelector / body.innerText) run EVERY 250ms tick
+              // and are cheap + visible-text-correct. The shadow-pierce walk is
+              // the part that costs real CPU on 1000+ shadow-host pages, so it
+              // runs only on a ~1Hz throttle (doShadow) and only for whatever the
+              // light DOM hasn't already satisfied. It exists so until_selector /
+              // until_text_contains can see inside web-component modals (LinkedIn
+              // Easy Apply, Radix portals, Reddit faceplate) that the old
+              // light-DOM-only checks were blind to. Shadow TEXT is read via each
+              // root's children innerText (rendered/visible), NOT textContent, so
+              // it keeps the "visible page text" contract and never matches a
+              // display:none / hidden subtree the user can't see.
+              const r = await chrome.scripting.executeScript({
+                target: { tabId: currentTab.id },
+                func: (sel: string | null, needle: string | null, doShadow: boolean) => {
+                  // Light DOM, every tick.
+                  let selOk = sel ? !!document.querySelector(sel) : false;
+                  let textOk = needle ? (document.body?.innerText ?? "").includes(needle) : false;
+                  const needSel = !!sel && !selOk;
+                  const needText = !!needle && !textOk;
+                  if (doShadow && (needSel || needText)) {
+                    const cd = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
+                    const getSR = (el: Element): ShadowRoot | null => {
+                      try { if (cd?.openOrClosedShadowRoot) { const sr = cd.openOrClosedShadowRoot(el); if (sr) return sr; } } catch { /* ignore */ }
+                      return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
+                    };
+                    const stack: (Document | ShadowRoot)[] = [document];
+                    while (stack.length && ((needSel && !selOk) || (needText && !textOk))) {
+                      const root = stack.pop()!;
+                      for (const el of Array.from(root.querySelectorAll("*"))) {
+                        const sr = getSR(el);
+                        if (!sr) continue;
+                        if (needSel && !selOk) { try { if (sr.querySelector(sel!)) selOk = true; } catch { /* bad selector */ } }
+                        if (needText && !textOk) {
+                          let vis = "";
+                          for (const c of Array.from(sr.children)) vis += " " + ((c as HTMLElement).innerText ?? "");
+                          if (vis.includes(needle!)) textOk = true;
+                        }
+                        stack.push(sr);
+                      }
+                    }
+                  }
+                  return { selOk, textOk };
+                },
+                args: [untilSelector ?? null, untilTextContains ?? null, iter % 4 === 1],
+              });
+              const res = r[0]?.result as { selOk: boolean; textOk: boolean } | undefined;
+              if (res?.selOk) { untilResult = { ok: true, reason: `Selector "${untilSelector}" appeared` }; break; }
+              if (res?.textOk) { untilResult = { ok: true, reason: `Text "${untilTextContains}" appeared` }; break; }
             } catch { /* page may be navigating — keep polling */ }
           }
 
           // Network-aware deadline extension. A click whose handler fired an
           // API request (submit, save) often navigates only AFTER the request
-          // resolves — sometimes past the base timeout. If a fresh fetch/XHR is
-          // in flight when we'd otherwise give up, keep waiting (up to
-          // maxDeadline) instead of reporting "click may not have registered"
-          // and inviting a dangerous double-submit retry.
-          if (currentTab?.id && isScriptableUrl(currentUrl) && Date.now() >= deadline - 500) {
-            const inflight = await countInFlightRequests(currentTab.id);
+          // resolves, sometimes past the base timeout. Probe for a fresh
+          // fetch/XHR on EVERY iteration once we're past the first second (not
+          // only in the final 500ms: a submit that runs client-side validation
+          // before firing its POST can have that request in flight well before
+          // the old single-check window, so a lone probe at deadline-500 missed
+          // it entirely). While a request is in flight, keep the deadline ahead
+          // of now (capped at maxDeadline) so a genuinely-fired submit isn't
+          // reported as "click may not have registered" and retried into a
+          // double-submit. The 1s grace skips the initial fast-match window so
+          // quick navigations/selector matches don't pay for the probe.
+          if (currentTab?.id && isScriptableUrl(currentUrl) && Date.now() - start >= 1000) {
+            const inflight = await countInFlightRequests(currentTab.id).catch(() => 0);
             if (inflight > 0) {
               sawInFlight = true;
               deadline = Math.min(maxDeadline, Date.now() + 4000);
             }
           }
 
+          // Early two-step-submit detection. On an until_url_changes wait, a
+          // click that opens a confirmation / required-input dialog (instead of
+          // navigating) would otherwise sit here for the ENTIRE timeout before
+          // the post-loop classifier runs. Check ~once a second for a NEW
+          // visible modal; if an actionable one appeared (not a bare spinner),
+          // record it and stop waiting; the post-loop block turns earlyDialog
+          // into the blocker hint and dialog_opened field. The pre-loop count
+          // guard means a modal already open before the click won't trip this.
+          if (untilUrlChanges && currentTab?.id && isScriptableUrl(currentUrl) && iter % 4 === 0) {
+            const modalNow = (await getSubmitSignalCounts(currentTab.id)).modal;
+            if (modalNow > preModalCount) {
+              const d = await classifyTopDialog(currentTab.id);
+              if (d && (d.kind === "confirmation" || d.kind === "required-input")) {
+                earlyDialog = d;
+                break;
+              }
+            }
+          }
+
           await new Promise((r) => setTimeout(r, 250));
         }
         if (!untilResult) {
+          // One last in-flight probe to catch a request that fired in the final
+          // poll gap (between the loop's last iteration and the deadline). This
+          // flips the message below from the dangerous "may not have registered"
+          // (which invites a double-submit retry) to "request in flight".
+          if (!sawInFlight && tab.id && isScriptableUrl(tab.url)) {
+            const finalInflight = await countInFlightRequests(tab.id).catch(() => 0);
+            if (finalInflight > 0) sawInFlight = true;
+          }
           const conditions = [
             untilSelector && `selector "${untilSelector}"`,
             untilUrlContains && `URL containing "${untilUrlContains}"`,
@@ -3648,96 +3952,43 @@ async function handleMcpMessage(msg: {
           // click next.
           let blockerHint = "";
           let dialogInfo: { kind: string; label: string; primary_action: string } | undefined;
-          if (isScriptableUrl(tab.url) && tab.id) {
-            try {
-              const r = await chrome.scripting.executeScript({
-                target: { tabId: tab.id },
-                func: () => {
-                  const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
-                  function getShadowRoot(el: Element): ShadowRoot | null {
-                    if (chromeDom?.openOrClosedShadowRoot) {
-                      try { const sr = chromeDom.openOrClosedShadowRoot(el); if (sr) return sr; } catch { /* ignore */ }
-                    }
-                    return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
-                  }
-                  function deepFind(sel: string): Element | null {
-                    const stack: (Document | ShadowRoot)[] = [document];
-                    while (stack.length) {
-                      const root = stack.pop()!;
-                      const found = root.querySelector(sel);
-                      if (found) return found;
-                      for (const el of Array.from(root.querySelectorAll("*"))) {
-                        const sr = getShadowRoot(el);
-                        if (sr) stack.push(sr);
-                      }
-                    }
-                    return null;
-                  }
-                  function deepAllWithin(root: Element, sel: string): Element[] {
-                    const out: Element[] = [];
-                    const stack: (Element | ShadowRoot)[] = [root];
-                    while (stack.length) {
-                      const r = stack.pop()!;
-                      for (const el of Array.from(r.querySelectorAll(sel))) out.push(el);
-                      const scope = r instanceof Element ? [r, ...Array.from(r.querySelectorAll("*"))] : Array.from(r.querySelectorAll("*"));
-                      for (const el of scope) {
-                        const sr = getShadowRoot(el);
-                        if (sr) stack.push(sr);
-                      }
-                    }
-                    return out;
-                  }
-                  // First VISIBLE dialog — skip stale hidden dialog nodes that
-                  // SPAs (Radix/headless) leave mounted but display:none, which
-                  // would otherwise mask the real one that just opened.
-                  const dialogSel = '[role="dialog"]:not([aria-hidden="true"]), [aria-modal="true"], dialog[open], faceplate-dialog:not([hidden])';
-                  let dialog: Element | null = null;
-                  for (const cand of deepAllWithin(document.documentElement, dialogSel)) {
-                    const cr = (cand as HTMLElement).getBoundingClientRect?.();
-                    if (cr && cr.width === 0 && cr.height === 0) continue;
-                    dialog = cand;
-                    break;
-                  }
-                  if (!dialog) return null;
-                  const heading = dialog.querySelector("h1, h2, h3, [role='heading']")?.textContent?.trim() ?? "";
-                  const aria = dialog.getAttribute("aria-label") ?? "";
-                  const label = (heading || aria || dialog.tagName.toLowerCase()).slice(0, 80);
-
-                  // Does the dialog ask for input?
-                  const hasField = deepAllWithin(dialog,
-                    'input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=reset]), textarea, select, [contenteditable="true"], [role="radio"], [role="checkbox"], [role="textbox"], [role="combobox"], [role="listbox"]'
-                  ).length > 0;
-                  const txt = (dialog.textContent ?? "").slice(0, 2000);
-                  const validationText = /\b(is required|required field|please (?:answer|select|choose|enter|provide|complete)|you must (?:answer|select|choose|provide|complete))\b/i.test(txt);
-
-                  // Primary action button: prefer an affirmative verb, else the
-                  // last button (dialogs usually order [Cancel][Confirm]).
-                  const btns = deepAllWithin(dialog, 'button, [role="button"], a[href]')
-                    .map((b) => (b.textContent ?? "").replace(/\s+/g, " ").trim())
-                    .filter((t) => t.length > 0 && t.length < 40);
-                  const affirmative = btns.find((t) => /\b(confirm|submit|continue|proceed|yes|ok|okay|accept|save|delete|got it|next)\b/i.test(t));
-                  const primary = (affirmative || btns[btns.length - 1] || "").slice(0, 40);
-
-                  const kind = (hasField || validationText) ? "required-input" : (primary ? "confirmation" : "dialog");
-                  return { kind, label, primary_action: primary };
-                },
-              });
-              const d = r[0]?.result as { kind: string; label: string; primary_action: string } | null | undefined;
-              if (d) {
-                dialogInfo = d;
-                if (d.kind === "confirmation") {
-                  blockerHint = ` A confirmation dialog opened: "${d.label}". This is a two-step action, not a validation error — the first click worked. Click its primary action${d.primary_action ? ` ("${d.primary_action}")` : ""} to complete, e.g. click_element with textHint="${d.primary_action || "Confirm"}".`;
-                } else if (d.kind === "required-input") {
-                  blockerHint = ` A required-input dialog opened: "${d.label}". Supply the missing value inside it${d.primary_action ? `, then click "${d.primary_action}"` : ""}, before retrying the original action.`;
-                } else {
-                  blockerHint = ` A dialog opened post-click: "${d.label}".`;
-                }
-              }
-            } catch { /* best-effort */ }
+          // Reuse the dialog detected mid-loop (early-dialog path below) if one
+          // was already classified; otherwise probe now.
+          if (earlyDialog) {
+            dialogInfo = earlyDialog;
+          } else if (isScriptableUrl(tab.url) && tab.id) {
+            const d = await classifyTopDialog(tab.id);
+            // Only attribute the dialog to this click when it is actually new;
+            // a dialog already open before the click (same label) was not
+            // opened by it, so don't claim "the click opened a dialog".
+            if (d && (!preDialog || d.label !== preDialog.label)) dialogInfo = d;
+          }
+          if (dialogInfo) {
+            const d = dialogInfo;
+            if (d.kind === "confirmation") {
+              blockerHint = ` A confirmation dialog opened: "${d.label}". This is a two-step action, not a validation error; the first click worked. Click its primary action${d.primary_action ? ` ("${d.primary_action}")` : ""} to complete, e.g. click_element with textHint="${d.primary_action || "Confirm"}".`;
+            } else if (d.kind === "required-input") {
+              blockerHint = ` A required-input dialog opened: "${d.label}". Supply the missing value inside it${d.primary_action ? `, then click "${d.primary_action}"` : ""}, before retrying the original action.`;
+            } else {
+              blockerHint = ` A dialog opened post-click: "${d.label}".`;
+            }
           }
 
           const waited = Date.now() - start;
-          if (sawInFlight && !dialogInfo) {
+          if (dialogInfo) {
+            // A dialog opened in response to the click (caught mid-loop or at
+            // timeout) instead of the awaited ${conditions}. The click DID
+            // register; blockerHint says what to do next (click the dialog's
+            // primary action). Do NOT tell the caller to re-click the original
+            // element: on a submit that is the double-submit this code works to
+            // avoid. Preserve request_in_flight when a request was also pending.
+            untilResult = {
+              ok: false,
+              dialog: dialogInfo,
+              ...(sawInFlight ? { request_in_flight: true } : {}),
+              reason: `Click fired and opened a dialog instead of ${conditions} within ${waited}ms; the click DID register, do NOT re-click it.${blockerHint}`,
+            };
+          } else if (sawInFlight) {
             // The click fired a network request that was still resolving — it
             // DID register. Surface that instead of "may not have registered",
             // which on a submit invites a double-submit retry.
@@ -3749,8 +4000,7 @@ async function handleMcpMessage(msg: {
           } else {
             untilResult = {
               ok: false,
-              dialog: dialogInfo,
-              reason: `Click fired but ${conditions} did not appear within ${waited}ms — the click may not have registered.${blockerHint} Try execute_script with a direct .click() on the matched element, or pass a different until_* value.`,
+              reason: `Click fired but ${conditions} did not appear within ${waited}ms; the click may not have registered. Try execute_script with a direct .click() on the matched element, or pass a different until_* value.`,
             };
           }
         }
