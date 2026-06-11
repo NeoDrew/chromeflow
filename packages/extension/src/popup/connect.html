@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Chromeflow — Add connection</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #f6f5f3;
+      --border: #e6e3de;
+      --text: #1f1d1b;
+      --muted: #6b6660;
+      --accent: #d97718;
+      --accent-press: #b8610f;
+      --ok-bg: #e9f6ec;
+      --ok-text: #1f7a37;
+      --danger: #c0392b;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1c1a18; --panel: #25221f; --border: #34302b;
+        --text: #f1ece6; --muted: #a79f96; --ok-bg: #16301f; --ok-text: #7fd29a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      margin: 0; background: var(--bg); color: var(--text);
+      font-size: 14px; line-height: 1.45;
+    }
+    #root { max-width: 460px; margin: 0 auto; padding: 22px 20px 32px; }
+    h1 { font-size: 18px; margin: 0 0 6px; }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 26px 0 10px; }
+    .muted { color: var(--muted); font-weight: 400; }
+    p.lead { margin: 0 0 18px; color: var(--muted); }
+    form { display: flex; flex-direction: column; gap: 14px; }
+    label { display: flex; flex-direction: column; gap: 5px; font-weight: 600; font-size: 13px; }
+    input[type="text"] {
+      font: inherit; font-weight: 400; padding: 9px 11px; border-radius: 9px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      width: 100%;
+    }
+    input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(217,119,24,.18); }
+    details { background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 8px 12px; }
+    details summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--muted); }
+    details[open] { display: flex; flex-direction: column; gap: 12px; }
+    details[open] summary { margin-bottom: 6px; }
+    .btn-add {
+      font: inherit; font-weight: 700; color: #fff; background: var(--accent);
+      border: none; border-radius: 9px; padding: 11px; cursor: pointer; margin-top: 4px;
+    }
+    .btn-add:hover { background: var(--accent-press); }
+    .ok { background: var(--ok-bg); color: var(--ok-text); border-radius: 9px; padding: 10px 12px; margin: 0 0 16px; font-size: 13px; }
+    .conn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+    .conn-item { display: flex; align-items: center; gap: 10px; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 9px 11px; }
+    .conn-item-main { min-width: 0; flex: 1; }
+    .conn-item-title { font-weight: 600; font-size: 13px; }
+    .conn-item-url { color: var(--muted); font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .btn-del { font: inherit; font-size: 12px; color: var(--danger); background: none; border: 1px solid var(--border); border-radius: 7px; padding: 5px 9px; cursor: pointer; }
+    .btn-del:hover { border-color: var(--danger); }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="connect.js"></script>
+</body>
+</html>

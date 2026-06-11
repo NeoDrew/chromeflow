@@ -448,7 +448,7 @@ function renderConnectionsPanel(state: State) {
   const formHtml = addFormOpen ? renderConnForm() : "";
   const addBtn = addFormOpen
     ? ""
-    : `<button class="btn btn-secondary conn-add-btn" data-conn-action="show-add-form">+ Add connection</button>`;
+    : `<button class="btn btn-secondary conn-add-btn" data-conn-action="show-add-form">+ Add connection ↗</button>`;
 
   const panelClass = ["group", "conn-panel"];
   if (!connectionsOpen) panelClass.push("collapsed");
@@ -737,10 +737,15 @@ connectionsEl.addEventListener("click", async (e) => {
   if (!connAction) return;
 
   if (connAction === "show-add-form") {
-    addFormOpen = true;
-    editingConnId = null;
-    void persistUiState();
-    await reload();
+    // Open a dedicated window for adding a connection. A browser-action popup
+    // closes the instant you click the page, which makes it impossible to tab
+    // away, copy the URL + token, and paste them back. A real window stays open.
+    chrome.windows.create({
+      url: chrome.runtime.getURL("connect.html"),
+      type: "popup",
+      width: 480,
+      height: 700,
+    });
     return;
   }
   if (connAction === "cancel-form") {
