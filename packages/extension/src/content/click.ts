@@ -43,15 +43,17 @@ export async function prepareClickTarget(
   };
 }> {
   // Clear any stale tags from a previous click. Shadow-piercing because the
-  // previous click may have tagged an element inside a shadow root.
-  for (const el of queryAllDeep(document, `[${markerIds.clickTargetAttr()}]`)) {
-    el.removeAttribute(markerIds.clickTargetAttr());
-  }
-  for (const el of queryAllDeep(document, `[${markerIds.preCheckedAttr()}]`)) {
-    el.removeAttribute(markerIds.preCheckedAttr());
-  }
-  for (const el of queryAllDeep(document, `[${markerIds.preDimensionsAttr()}]`)) {
-    el.removeAttribute(markerIds.preDimensionsAttr());
+  // previous click may have tagged an element inside a shadow root. ONE walk
+  // over the union of all three marker attributes instead of three separate
+  // shadow-tree walks (each ~50-150ms on a 1000+ shadow-host page); we then
+  // strip whichever marker(s) the element actually carries.
+  const ct = markerIds.clickTargetAttr();
+  const pc = markerIds.preCheckedAttr();
+  const pd = markerIds.preDimensionsAttr();
+  for (const el of queryAllDeep(document, `[${ct}], [${pc}], [${pd}]`)) {
+    el.removeAttribute(ct);
+    el.removeAttribute(pc);
+    el.removeAttribute(pd);
   }
 
   let scope: Document | Element = document;
@@ -375,6 +377,12 @@ function firePointerChain(el: Element) {
   const baseOpts = {
     bubbles: true,
     cancelable: true,
+    // composed:true lets the event cross shadow boundaries in its propagation
+    // path, so a handler bound OUTSIDE the shadow root (the React root in a
+    // web-component modal's host light DOM) still receives it. Real user events
+    // are composed; without this the chain can no-op on shadow-DOM action
+    // buttons (the LinkedIn Easy Apply "Submit application" case).
+    composed: true,
     view: window,
     clientX: cx,
     clientY: cy,
@@ -422,7 +430,8 @@ export function reactFiberClick(el: Element): { fired: boolean; component?: stri
   // eventually crosses the shadow boundary and reaches light DOM elements
   // that have no __reactProps$ keys, causing the walk to fail. Worse, some
   // shadow root implementations expose non-Element nodes on the boundary
-  // that crash on property access (the "toLowerCase" TypeError on Outlier).
+  // that crash on property access (the "toLowerCase" TypeError seen on some
+  // shadow-DOM-heavy annotation dashboards).
   //
   // Fix: detect if el is inside a shadow root. If so, also search siblings
   // and children of the shadow root for a React root container, and walk
@@ -556,7 +565,14 @@ export function reactFiberClickByHint(
     }
     scope = sectionScope;
   }
-  const lower = textHint.toLowerCase().trim();
+  // Defensive: selector-mode clicks reach the fiber fallback with no textHint.
+  // They should be routed to reactFiberClick on the resolved element (see the
+  // react_fiber_click handler), but guard here too so a stray undefined can
+  // never throw `undefined.toLowerCase()` and mask the real result.
+  const lower = (textHint ?? "").toLowerCase().trim();
+  if (!lower) {
+    return { success: false, message: "react_fiber_click by-hint: no textHint provided (selector-mode should resolve the element directly)", fired: false };
+  }
   const matches = findClickableAll(lower, scope);
   const merged = [...matches.visible, ...matches.hidden];
   const idx = (nth && nth >= 1 ? nth : 1) - 1;
@@ -728,7 +744,13 @@ function findClickableAll(lower: string, scope: Document | Element = document): 
   const interactiveSelectors =
     'button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], input[type="submit"], input[type="button"], label, [onclick], [tabindex]';
 
-  const candidates = queryAllDeep(scope, interactiveSelectors);
+  // ONE shadow-pierced tree walk over the union of every selector the tiers
+  // below need, instead of 4 separate queryAllDeep passes. On a page with
+  // 1000+ shadow hosts (LinkedIn) each pass cost 50-150ms, so collapsing
+  // 4 -> 1 saves ~200-600ms per text-hint click. The per-tier element SETS are
+  // preserved exactly by re-testing each candidate with el.matches(...) (O(1),
+  // no tree traversal) so ranking/ordering is byte-for-byte identical.
+  const candidates = queryAllDeep(scope, interactiveSelectors + ", [aria-label], [title], [data-testid]");
   const ranked: Element[] = [];
   // Track which label-strength tier each candidate came from so the visual
   // sort below preserves "exact match beats partial" while still ordering
@@ -743,29 +765,30 @@ function findClickableAll(lower: string, scope: Document | Element = document): 
     }
   }
 
-  // Exact text matches
+  // Exact text matches (interactive elements only — matches the original
+  // text-tier candidate set, which was interactiveSelectors-scoped).
   candidates.forEach((el) => {
-    if (el.textContent?.toLowerCase().trim() === lower) addIfNew(el, 1);
+    if (el.matches(interactiveSelectors) && el.textContent?.toLowerCase().trim() === lower) addIfNew(el, 1);
   });
 
   // Partial text matches (sorted shortest first for specificity), deduplicated
   const partials = candidates
-    .filter((el) => !ranked.includes(el) && el.textContent?.toLowerCase().includes(lower))
+    .filter((el) => el.matches(interactiveSelectors) && !ranked.includes(el) && el.textContent?.toLowerCase().includes(lower))
     .sort((a, b) => (a.textContent?.length ?? 0) - (b.textContent?.length ?? 0));
   partials.forEach((el) => addIfNew(el, 2));
 
-  // aria-label matches
-  queryAllDeep(scope, "[aria-label]").forEach((el) => {
+  // aria-label matches (any element with an aria-label)
+  candidates.forEach((el) => {
     if (el.getAttribute("aria-label")?.toLowerCase().includes(lower)) addIfNew(el, 3);
   });
 
   // value attribute (input[type=submit], input[type=button])
-  queryAllDeep<HTMLInputElement>(scope, "input[type=submit], input[type=button]").forEach((el) => {
-    if (el.value.toLowerCase().includes(lower)) addIfNew(el, 4);
+  candidates.forEach((el) => {
+    if (el.matches("input[type=submit], input[type=button]") && (el as HTMLInputElement).value?.toLowerCase().includes(lower)) addIfNew(el, 4);
   });
 
   // title / data-testid
-  queryAllDeep(scope, "[title], [data-testid]").forEach((el) => {
+  candidates.forEach((el) => {
     const v = el.getAttribute("title") ?? el.getAttribute("data-testid") ?? "";
     if (v.toLowerCase().includes(lower)) addIfNew(el, 5);
   });

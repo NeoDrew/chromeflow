@@ -182,6 +182,10 @@ References live alongside this skill at `references/<topic>.md`:
 - **`references/discovery.md`** — Finding things on a page: `find_text` vs.
   `get_page_text` vs. `get_form_fields` vs. `list_frames`, `whole_word`
   matching, `visible_only`, `scope_selector`, `in_dialog` / `dialog_query`.
+- **`references/linkedin.md`** — Driving LinkedIn: Easy Apply (shadow modal
+  read, per-step job-drift guard, precise aria-label buttons, pointer-chain
+  submit), job search + scraping, connections / outreach, people search,
+  and account-safety rate caps. Load before any LinkedIn automation.
 
 ## Common quick recipes
 

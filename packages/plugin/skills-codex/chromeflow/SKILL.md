@@ -156,6 +156,10 @@ When the simple flow isn't enough, load the relevant `references/<topic>.md`:
   `phase_timed_out`, `stuck_spinner`, debugging wrong-field matches.
 - **`references/discovery.md`** — Finding things on a page without
   dumping the whole document.
+- **`references/linkedin.md`** — Driving LinkedIn: Easy Apply (shadow modal
+  read, per-step job-drift guard, precise aria-label buttons, pointer-chain
+  submit), job search + scraping, connections / outreach, and account-safety
+  rate caps. Load before any LinkedIn automation.
 
 ## Common quick recipes
 

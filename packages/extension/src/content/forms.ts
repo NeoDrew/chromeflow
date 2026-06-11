@@ -58,23 +58,39 @@ export interface CaptchaInfo {
  * but is invisible because of an ancestor.
  */
 function isAncestorHidden(el: Element, doc: Document): boolean {
-  const view = doc.defaultView;
-  if (!view) return false;
+  // aria-hidden is a SEMANTIC flag, not a visual one (checkVisibility ignores
+  // it), so walk ancestors for it, piercing shadow boundaries: parentElement is
+  // null at the shadow root, so jump to the host via parentNode.
   let cur: Element | null = el;
   while (cur && cur !== doc.documentElement) {
     if (cur.getAttribute("aria-hidden") === "true") return true;
-    const s = view.getComputedStyle(cur);
-    if (s.display === "none") return true;
-    if (s.visibility === "hidden") return true;
-    // Climb past shadow boundaries — parentElement is null at the shadow root,
-    // so jump to the host via parentNode. Without this, an input inside a
-    // shadow-rooted hidden wrapper would be reported as visible.
-    if (cur.parentElement) {
-      cur = cur.parentElement;
-    } else {
-      const pn: Node | null = cur.parentNode;
-      cur = pn instanceof ShadowRoot ? pn.host : null;
-    }
+    cur = cur.parentElement
+      ?? (cur.parentNode instanceof ShadowRoot ? cur.parentNode.host : null);
+  }
+
+  // Visual visibility: prefer the browser's own checkVisibility(), which
+  // resolves display:none anywhere up the tree AND visibility:hidden WITH
+  // descendant overrides. The old manual walk returned true the moment ANY
+  // ancestor was visibility:hidden — but a child can re-show with
+  // visibility:visible under a visibility:hidden parent, so a genuinely-visible
+  // (and submit-blocking) required field was wrongly dropped from
+  // get_form_fields(only_empty). Opacity is intentionally NOT treated as hidden
+  // (matches the prior behaviour). Extra option keys are ignored by older
+  // Chrome builds, so passing both naming schemes is safe.
+  const cv = (el as Element & { checkVisibility?: (o?: object) => boolean }).checkVisibility;
+  if (typeof cv === "function") {
+    return !cv.call(el, { checkVisibilityCSS: true, visibilityProperty: true, contentVisibilityAuto: true });
+  }
+
+  // Fallback for engines without checkVisibility: the original ancestor walk.
+  const view = doc.defaultView;
+  if (!view) return false;
+  let c: Element | null = el;
+  while (c && c !== doc.documentElement) {
+    const s = view.getComputedStyle(c);
+    if (s.display === "none" || s.visibility === "hidden") return true;
+    c = c.parentElement
+      ?? (c.parentNode instanceof ShadowRoot ? (c.parentNode as ShadowRoot).host : null);
   }
   return false;
 }
@@ -189,8 +205,22 @@ const REQUIRED_VALIDATION_RE =
   /\bis required\b|\brequired field\b|\bthis (?:question|field) is required\b|\bplease (?:answer|select|choose|enter|provide|complete)\b|\byou must (?:answer|select|choose|provide|complete)\b/i;
 
 /**
- * Late-bound / conditional required detection. Many SPA forms (DataAnnotation,
- * survey builders, Radix/headlessui disclosure panels) don't set `required` or
+ * The element's OWN text (concatenation of its direct text-node children only),
+ * not its descendants'. Lets us pin a validation message to the specific
+ * element that renders it (a leaf `<div>This question is required</div>`)
+ * without also matching every ancestor that merely contains it.
+ */
+function directText(el: Element): string {
+  let s = "";
+  for (const n of Array.from(el.childNodes)) {
+    if (n.nodeType === 3 /* TEXT_NODE */) s += n.textContent ?? "";
+  }
+  return s.trim();
+}
+
+/**
+ * Late-bound / conditional required detection. Many SPA forms (survey builders,
+ * annotation dashboards, Radix/headlessui disclosure panels) don't set `required` or
  * `aria-required` up front — required-ness only surfaces as a visible
  * validation message after a submit attempt, or as `aria-invalid="true"`.
  * This catches those so get_form_fields(only_empty) stops reporting "0
@@ -227,6 +257,23 @@ function hasRequiredValidation(el: HTMLElement, doc: Document): boolean {
         REQUIRED_VALIDATION_RE.test(m.textContent ?? "") &&
         !isAncestorHidden(m, doc)
       ) {
+        return true;
+      }
+    }
+
+    // Fallback for messages rendered in a plain element with no role / class
+    // hook (a bare <div>This question is required</div> inside a disclosure
+    // panel) — the styled-error selector above can't see those. Scan this
+    // level's descendants by their OWN text only (so we match the leaf message
+    // node, never a huge ancestor), capped to stay cheap, visible-only to skip
+    // hidden template copies. The break-at-boundary below keeps this from
+    // climbing into a sibling question's territory.
+    const kids = node.querySelectorAll("*");
+    const cap = Math.min(kids.length, 40);
+    for (let i = 0; i < cap; i++) {
+      const k = kids[i] as HTMLElement;
+      const own = directText(k);
+      if (own && REQUIRED_VALIDATION_RE.test(own) && !isAncestorHidden(k, doc)) {
         return true;
       }
     }

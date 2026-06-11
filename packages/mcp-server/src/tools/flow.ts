@@ -95,7 +95,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       via: z
         .enum(["auto", "cdp", "fiber"])
         .optional()
-        .describe(`Click dispatch mode. "auto" (default): CDP click, then fiber fallback when try_fiber=true and the activity probe failed. "cdp": CDP click only, no fiber fallback ever. "fiber": skip the CDP bezier + activity probe entirely and invoke __reactProps$.onClick directly. Use "fiber" on React-heavy SPAs (Outlier-style dashboards) where you already know the site is fiber-only — cuts ~3 seconds of ceremony off the round trip. The fiber path is undocumented React internal access, prefer "auto" until you've confirmed the site needs it.`),
+        .describe(`Click dispatch mode. "auto" (default): CDP click, then fiber fallback when try_fiber=true and the activity probe failed. "cdp": CDP click only, no fiber fallback ever. "fiber": skip the CDP bezier + activity probe entirely and invoke __reactProps$.onClick directly. Use "fiber" on React-heavy SPAs (fiber-only annotation dashboards) where you already know the site is fiber-only — cuts ~3 seconds of ceremony off the round trip. The fiber path is undocumented React internal access, prefer "auto" until you've confirmed the site needs it.`),
       in_dialog: z
         .boolean()
         .optional()

@@ -9,7 +9,7 @@ import {
 } from "./highlight.js";
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
-import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView, reactFiberClickByHint, findTopmostDialog, findDialogByQuery, pointerChainOnTagged } from "./click.js";
+import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView, reactFiberClick, reactFiberClickByHint, findTopmostDialog, findDialogByQuery, pointerChainOnTagged } from "./click.js";
 import { collectShadowHosts, countShadowHosts, extractTextDeep, queryAllDeep } from "./shadow.js";
 import { enumerateFormFields } from "./forms.js";
 import { findText, findInputs, waitForText } from "./find.js";
@@ -97,7 +97,7 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
       // If a selector is provided, resolve coordinates from the DOM.
       // Uses queryAllDeep to pierce open AND closed shadow roots so
-      // selectors targeting shadow DOM elements (Outlier panels,
+      // selectors targeting shadow DOM elements (annotation-dashboard panels,
       // Reddit faceplate-*, Radix portals) resolve correctly.
       if (msg.selector) {
         const el = queryAllDeep<HTMLElement>(document, msg.selector as string)[0] ?? null;
@@ -204,16 +204,37 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
 
     case "react_fiber_click": {
       // Opt-in fallback used by background.click_element when the activity
-      // probe reports silently_rejected. Re-resolves the target with the same
-      // match logic and invokes __reactProps$.onClick directly.
-      const result = reactFiberClickByHint(
-        msg.textHint as string,
-        msg.nth as number | undefined,
-        msg.within_selector as string | undefined,
-        msg.near_text as string | undefined,
-        msg.in_dialog as boolean | undefined,
-        msg.dialog_query as string | undefined,
-      );
+      // probe reports silently_rejected. SELECTOR-mode clicks resolve the
+      // element directly via the CSS selector and invoke __reactProps$.onClick
+      // on it — they have no textHint, so the by-hint matcher would crash on
+      // `undefined.toLowerCase()` (this is the bug that left LinkedIn's Easy
+      // Apply "Submit application" un-fired). textHint-mode re-resolves with the
+      // same match logic the original click used.
+      const fiberSelector = msg.selector as string | undefined;
+      let result: { success: boolean; message: string; fired: boolean; component?: string; label?: string };
+      if (fiberSelector) {
+        const all = queryAllDeep<Element>(document, fiberSelector);
+        const nth = msg.nth as number | undefined;
+        const el = all[(nth && nth >= 1 ? nth : 1) - 1];
+        if (!el) {
+          result = { success: false, message: `react_fiber_click: selector "${fiberSelector}" matched no element`, fired: false };
+        } else {
+          const fiber = reactFiberClick(el);
+          const label = (el as HTMLElement).innerText?.trim() || el.getAttribute("aria-label") || fiberSelector;
+          result = fiber.fired
+            ? { success: true, message: `Invoked React fiber onClick on "${label}"${fiber.component ? ` (component: ${fiber.component})` : ""}`, fired: true, component: fiber.component, label }
+            : { success: false, message: `Found "${label}" but no React fiber __reactProps$.onClick exists on it or its ancestors. Bound via addEventListener, or React's prop key was mangled. Fall back to highlight_region + wait_for_click.`, fired: false, label };
+        }
+      } else {
+        result = reactFiberClickByHint(
+          msg.textHint as string,
+          msg.nth as number | undefined,
+          msg.within_selector as string | undefined,
+          msg.near_text as string | undefined,
+          msg.in_dialog as boolean | undefined,
+          msg.dialog_query as string | undefined,
+        );
+      }
       return { type: "action_done", requestId: msg.requestId, ...result };
     }
 
@@ -571,9 +592,13 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       filtered.forEach((f, i) => { f.index = i + 1; });
       if (onlyEmpty) {
         const skipped = fields.length - filtered.length;
-        warning += skipped > 0
-          ? `\n\nℹ only_empty=true: showing ${filtered.length} required-but-empty field(s); ${skipped} other field(s) skipped.`
-          : `\n\nℹ only_empty=true: no required-but-empty fields detected. If Submit is still disabled, the page may use a custom validation hook (try react_call_prop on the validation handler) or required-ness comes from radio/checkbox groups not flagged with required.`;
+        // Branch on what was FOUND, not on whether other fields were skipped:
+        // when every enumerated field is required-but-empty, skipped is 0 yet
+        // there ARE matches, so the old `skipped > 0` test wrongly printed
+        // "no required-but-empty fields detected" above a non-empty list.
+        warning += filtered.length === 0
+          ? `\n\nℹ only_empty=true: no required-but-empty fields detected. If Submit is still disabled, the page may use a custom validation hook (try react_call_prop on the validation handler) or required-ness comes from radio/checkbox groups not flagged with required.`
+          : `\n\nℹ only_empty=true: showing ${filtered.length} required-but-empty field(s)${skipped > 0 ? `; ${skipped} other field(s) skipped.` : "."}`;
       }
 
       return { type: "form_fields_response", requestId: msg.requestId, fields: filtered, warning, captcha, oauthIndicators };
@@ -1259,8 +1284,8 @@ function startClickWatch(requestId: string) {
   };
 
   // Shadow DOM fallback: MutationObserver on document catches main-document
-  // mutations, but misses state changes inside shadow roots (Outlier panels,
-  // Lit components flipping visibility). Poll a shadow-pierce visible-element
+  // mutations, but misses state changes inside shadow roots (annotation-dashboard
+  // panels, Lit components flipping visibility). Poll a shadow-pierce visible-element
   // count as a backup signal: if the count changes by >= 5 after the watch
   // starts, the user likely clicked and something happened.
   const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
