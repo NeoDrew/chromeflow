@@ -159,6 +159,25 @@ chrome.runtime.onStartup.addListener(async () => { await ensureOffscreen(); });
 // ─── Inbound messages ──────────────────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  // A web page asked (via the content-script relay) to add a connection. Open
+  // the connection window PRE-FILLED with the URL so the user only has to click
+  // "Add" (the consent step) - no copy-paste, but a page still cannot connect
+  // the browser without that explicit confirmation.
+  if (msg.type === "chromeflow-web-connect" && typeof msg.url === "string" && msg.url) {
+    const params = new URLSearchParams({ url: msg.url });
+    if (typeof msg.label === "string" && msg.label) params.set("label", msg.label);
+    if (typeof msg.origin === "string" && msg.origin) params.set("origin", msg.origin);
+    chrome.windows.create({
+      url: chrome.runtime.getURL("connect.html") + "?" + params.toString(),
+      type: "popup",
+      width: 480,
+      height: 720,
+      focused: true,
+    });
+    sendResponse({ ok: true });
+    return true;
+  }
+
   if (msg.source === "chromeflow-offscreen") {
     // Status broadcasts carry the list of currently-connected WS ports.
     // Persist to chrome.storage.local so the popup can render them.
