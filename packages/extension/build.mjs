@@ -15,6 +15,7 @@ async function build() {
 
   // Copy static assets
   cpSync("src/popup/index.html", "dist/popup.html");
+  cpSync("src/popup/connect.html", "dist/connect.html");
   cpSync("src/offscreen.html", "dist/offscreen.html");
   cpSync("manifest.json", "dist/manifest.json");
   cpSync("src/icons", "dist/icons", { recursive: true });
@@ -45,6 +46,13 @@ async function build() {
       ...sharedConfig,
       entryPoints: ["src/popup/index.ts"],
       outfile: "dist/popup.js",
+      format: "iife",
+      platform: "browser",
+    }),
+    esbuild.context({
+      ...sharedConfig,
+      entryPoints: ["src/popup/connect.ts"],
+      outfile: "dist/connect.js",
       format: "iife",
       platform: "browser",
     }),
