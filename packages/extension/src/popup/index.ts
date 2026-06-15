@@ -200,11 +200,19 @@ function renderInstanceCard(
   const pauseLabel = isPaused ? "Resume" : "Pause";
   const disconnectLabel = kind === "remote" ? "Disconnect" : "Pause";
 
-  const buttons = `
-    <div class="btn-row">
+  // Remote (hosted) connections always run in their own auto-created window and
+  // never the user's, so the manual "Use this window" assignment is gone for them
+  // (it would be ignored anyway) - it stays only for local Claude Code instances.
+  const windowRow =
+    kind === "remote"
+      ? `<div class="btn-row"><span class="meta-tag">Runs in its own window</span></div>`
+      : `<div class="btn-row">
       <button class="btn btn-primary" data-action="set" data-port="${port}"${primaryDisabled ? " disabled" : ""}>${primaryBtn}</button>
       ${assignedWindowId ? `<button class="btn btn-secondary" data-action="clear" data-port="${port}">Clear</button>` : ""}
-    </div>
+    </div>`;
+
+  const buttons = `
+    ${windowRow}
     <div class="btn-row btn-row-conn">
       <button class="btn btn-ghost" data-action="pause" data-port="${port}" data-kind="${kind}">${pauseLabel}</button>
       ${kind === "remote" ? `<button class="btn btn-ghost btn-danger" data-action="disconnect" data-port="${port}" data-kind="${kind}">${disconnectLabel}</button>` : ""}
