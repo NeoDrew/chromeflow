@@ -112,8 +112,17 @@ root.addEventListener("submit", async (e) => {
   const deny = parseDomainList(get("deny"));
 
   const configs = await readConfigs();
+  // Dedup by URL: re-adding the same connection (which happens on every
+  // reconnect from a dashboard's one-click connect) must REPLACE the existing
+  // entry, not stack another duplicate. Collapse any prior remote configs with
+  // this exact URL, reusing the first one's connId for stable routing.
+  const sameUrl = configs.filter((c) => c.kind === "remote" && c.url === url);
+  const others = configs.filter((c) => !(c.kind === "remote" && c.url === url));
+  const connId = sameUrl.length
+    ? sameUrl[0].connId
+    : allocateConnId(configs.map((c) => c.connId));
   const next: ConnConfig = {
-    connId: allocateConnId(configs.map((c) => c.connId)),
+    connId,
     kind: "remote",
     url,
     enabled: true,
@@ -122,9 +131,11 @@ root.addEventListener("submit", async (e) => {
     ...(allow.length ? { allow } : {}),
     ...(deny.length ? { deny } : {}),
   };
-  await writeConfigs([...configs, next]);
+  await writeConfigs([...others, next]);
   await reload(
-    "Connection added. It should go live within a few seconds. You can add another or close this window."
+    sameUrl.length
+      ? "Connection updated (replaced the existing entry for this URL). It should go live within a few seconds."
+      : "Connection added. It should go live within a few seconds. You can add another or close this window."
   );
 });
 

@@ -37,8 +37,27 @@ const connScope = new Map<number, ConnScope>();
 // CC instances can run automations in parallel without colliding.
 let claudeInstances: Record<string, number> = {};
 
-chrome.storage.local.get(["claudeInstances", "claudeWindowId"]).then(async ({ claudeInstances: stored, claudeWindowId: legacy }) => {
+// Windows chromeflow itself created for a connection (vs. a window the user
+// hand-assigned via the popup's "Use this window"). Remote connections only ever
+// drive a chromeflow-owned window, so a hosted agent can never take over the
+// user's own tabs (e.g. their JobDog dashboard window). Persisted so it survives
+// service-worker restarts mid-run.
+let ownedWindows = new Set<number>();
+
+async function persistOwnedWindows(): Promise<void> {
+  await chrome.storage.local.set({ chromeflowOwnedWindows: [...ownedWindows] });
+}
+
+/** Drop a connection's window assignment (frees the window for nothing). */
+async function clearWindowId(port: number): Promise<void> {
+  if (claudeInstances[String(port)] === undefined) return;
+  delete claudeInstances[String(port)];
+  await chrome.storage.local.set({ claudeInstances });
+}
+
+chrome.storage.local.get(["claudeInstances", "claudeWindowId", "chromeflowOwnedWindows"]).then(async ({ claudeInstances: stored, claudeWindowId: legacy, chromeflowOwnedWindows: owned }) => {
   claudeInstances = (stored as Record<string, number>) ?? {};
+  ownedWindows = new Set(Array.isArray(owned) ? (owned as number[]) : []);
   // Migrate legacy single-window storage → port 7878 instance
   if (typeof legacy === "number" && claudeInstances["7878"] === undefined) {
     claudeInstances["7878"] = legacy;
@@ -59,6 +78,21 @@ chrome.storage.onChanged.addListener((changes) => {
   if (CONNECTIONS_STORAGE_KEY in changes) {
     pushConnectionsToOffscreen();
   }
+});
+
+// When a window closes (the user, or a run's close_window), forget it: drop any
+// connection assignment pointing at it and remove it from the owned set, so a
+// freed window is never reused stale and assignments do not leak.
+chrome.windows.onRemoved.addListener((windowId) => {
+  let changed = false;
+  for (const [portStr, wid] of Object.entries(claudeInstances)) {
+    if (wid === windowId) {
+      delete claudeInstances[portStr];
+      changed = true;
+    }
+  }
+  if (changed) chrome.storage.local.set({ claudeInstances }).catch(() => {});
+  if (ownedWindows.delete(windowId)) persistOwnedWindows().catch(() => {});
 });
 
 function getWindowId(port: number): number | null {
@@ -461,32 +495,34 @@ async function withDebugger<T>(tabId: number, fn: () => Promise<T>): Promise<T> 
 }
 
 async function getActiveTab(port: number): Promise<chrome.tabs.Tab> {
+  // Remote (hosted) connections must ONLY ever drive a window chromeflow created
+  // for them - never the user's own window. A user-assigned window (e.g. the one
+  // their JobDog dashboard is in, set via "Use this window") is ignored for
+  // remotes, so the agent can't take over their tabs. Local Claude Code
+  // connections keep the existing behaviour (they may hand-assign a window).
+  const isRemote = port >= SYNTHETIC_CONNID_BASE;
   let wid = getWindowId(port);
 
-  // If we have an assignment, validate the window still exists. If the user
-  // closed it since assignment, fall through to creating a fresh one.
   if (wid) {
-    const [tab] = await chrome.tabs.query({ active: true, windowId: wid });
-    if (tab?.id) return tab;
-    // Stale assignment — window was closed. Drop it and re-assign below.
+    const trusted = !isRemote || ownedWindows.has(wid);
+    if (trusted) {
+      const [tab] = await chrome.tabs.query({ active: true, windowId: wid });
+      if (tab?.id) return tab;
+    }
+    // Stale (window gone) or untrusted (remote pointed at a user window): drop
+    // the assignment and create a dedicated window below.
     wid = null;
-    try {
-      const { claudeInstances } = await chrome.storage.local.get("claudeInstances");
-      const instances = (claudeInstances as Record<string, number>) ?? {};
-      if (instances[String(port)] !== undefined) {
-        delete instances[String(port)];
-        await chrome.storage.local.set({ claudeInstances: instances });
-      }
-    } catch { /* best-effort cleanup */ }
+    await clearWindowId(port);
   }
 
-  // UNASSIGNED path: do NOT touch the user's currently-focused window.
-  // Creating a brand-new window means chromeflow only ever operates on
-  // tabs it opened itself. Overwriting a user's existing tab (e.g. an
-  // open report, a live chat) would be destructive — they could lose work.
-  const win = await chrome.windows.create({ focused: true, url: "about:blank" });
-  if (!win?.id) throw new Error("Failed to create a new Chrome window for this Claude Code instance.");
+  // Create a brand-new window so chromeflow only ever operates on tabs it opened
+  // itself. Remote runs open it UNFOCUSED so a background agent never yanks the
+  // user's view to it; local connections stay focused as before.
+  const win = await chrome.windows.create({ focused: !isRemote, url: "about:blank" });
+  if (!win?.id) throw new Error("Failed to create a new Chrome window for this connection.");
   await setWindowId(port, win.id);
+  ownedWindows.add(win.id);
+  await persistOwnedWindows();
 
   // Poll briefly for the new window's active tab to be ready.
   for (let i = 0; i < 20; i++) {
@@ -2189,6 +2225,32 @@ async function handleMcpMessage(msg: {
       await chrome.tabs.remove(target.id);
       const closeDismissed = closeCtx ? (await closeCtx.release()).dismissed : false;
       return { type: "action_done", closed: [snapshot], dismissed_beforeunload: closeDismissed };
+    }
+
+    // Close the whole window this connection was driving and free its assignment,
+    // so a finished run leaves nothing behind. Only closes a window chromeflow
+    // owns (never a user's hand-assigned window); always frees the assignment so
+    // the next run starts fresh. The WS connection itself stays alive.
+    case "close_window": {
+      const wid = getWindowId(port);
+      let closed = false;
+      if (wid && ownedWindows.has(wid)) {
+        // Dismiss any beforeunload guard on the active tab first, so a posting
+        // with unsaved form state can't block window removal.
+        try {
+          const [active] = await chrome.tabs.query({ active: true, windowId: wid });
+          const ctx = active?.id && isScriptableUrl(active.url)
+            ? await setupBeforeunloadAutoDismiss(active.id)
+            : null;
+          await chrome.windows.remove(wid);
+          if (ctx) await ctx.release();
+          closed = true;
+        } catch { /* window may already be gone */ }
+        ownedWindows.delete(wid);
+        await persistOwnedWindows();
+      }
+      await clearWindowId(port);
+      return { type: "action_done", closed_window: closed ? wid : null };
     }
 
     case "close_other_tabs": {
