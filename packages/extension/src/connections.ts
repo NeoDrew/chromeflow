@@ -95,8 +95,12 @@ function escapeRegExp(s: string): string {
  * subdomains only; `*` matches anything).
  */
 export function hostMatchesGlob(host: string, pattern: string): boolean {
-  const h = host.trim().toLowerCase();
-  const p = pattern.trim().toLowerCase();
+  // Strip a single trailing dot: `example.com.` is the fully-qualified form of
+  // `example.com` and Chrome treats them as the same site, so a deny rule for
+  // `example.com` must also block `example.com.` (otherwise the trailing-dot
+  // form is a scope bypass).
+  const h = host.trim().toLowerCase().replace(/\.$/, "");
+  const p = pattern.trim().toLowerCase().replace(/\.$/, "");
   if (!h || !p) return false;
   if (!p.includes("*")) {
     return h === p || h.endsWith("." + p);
@@ -139,6 +143,30 @@ export function allocateConnId(existing: number[]): number {
 
 export function isDefaultPort(connId: number): boolean {
   return connId >= DEFAULT_PORT_BASE && connId <= DEFAULT_PORT_MAX;
+}
+
+/**
+ * A remote endpoint must be reached over TLS (wss://) so the bearer token (sent
+ * in the URL query and the ready-handshake) is never exposed in cleartext on the
+ * wire. Plain ws:// is permitted ONLY to loopback, for local development. Any
+ * other scheme, or ws:// to a non-loopback host, is rejected. Used both by the
+ * popup (reject at save time, with an explanation) and by offscreen (refuse to
+ * open the socket regardless of how the config got there, e.g. a page-initiated
+ * prefill).
+ */
+export function isSafeRemoteUrl(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return false;
+  }
+  if (u.protocol === "wss:") return true;
+  if (u.protocol === "ws:") {
+    const h = u.hostname.toLowerCase();
+    return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
+  }
+  return false;
 }
 
 /** Parse a comma/space/newline-separated domain list from a popup text field. */

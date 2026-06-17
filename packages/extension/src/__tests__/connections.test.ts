@@ -4,6 +4,7 @@ import {
   scopeBlocks,
   allocateConnId,
   isDefaultPort,
+  isSafeRemoteUrl,
   parseDomainList,
   SYNTHETIC_CONNID_BASE,
   DEFAULT_PORT_BASE,
@@ -67,6 +68,17 @@ describe("hostMatchesGlob", () => {
     expect(hostMatchesGlob("www.example.com", ".example.com")).toBe(false);
     expect(hostMatchesGlob(".example.com", ".example.com")).toBe(true);
   });
+
+  it("treats a fully-qualified trailing-dot host as the same site (no bypass)", () => {
+    // `example.com.` is the FQDN form of `example.com`; Chrome treats them as the
+    // same site, so a rule for `example.com` must also match the trailing-dot
+    // form. Otherwise `https://example.com./` is a scope/deny bypass.
+    expect(hostMatchesGlob("example.com.", "example.com")).toBe(true);
+    expect(hostMatchesGlob("www.example.com.", "example.com")).toBe(true);
+    expect(hostMatchesGlob("www.example.com.", "*.example.com")).toBe(true);
+    // Symmetric: a trailing-dot pattern still matches the bare host.
+    expect(hostMatchesGlob("example.com", "example.com.")).toBe(true);
+  });
 });
 
 describe("scopeBlocks", () => {
@@ -108,6 +120,38 @@ describe("scopeBlocks", () => {
   it("does not block when host is outside deny and there is no allow restriction", () => {
     const scope: ConnScope = { deny: ["evil.com"] };
     expect(scopeBlocks(scope, "example.com").blocked).toBe(false);
+  });
+
+  it("still denies a trailing-dot FQDN form of a denied host", () => {
+    // Regression guard for the trailing-dot deny bypass.
+    const scope: ConnScope = { deny: ["secret.internal"] };
+    expect(scopeBlocks(scope, "secret.internal.").blocked).toBe(true);
+  });
+});
+
+describe("isSafeRemoteUrl", () => {
+  it("accepts wss:// to any host", () => {
+    expect(isSafeRemoteUrl("wss://agent.onrender.com/ws?token=abc")).toBe(true);
+    expect(isSafeRemoteUrl("wss://example.com")).toBe(true);
+  });
+
+  it("rejects ws:// to a non-loopback host (cleartext token leak)", () => {
+    expect(isSafeRemoteUrl("ws://attacker.example.com/ws?token=abc")).toBe(false);
+    expect(isSafeRemoteUrl("ws://192.168.1.5:9000")).toBe(false);
+  });
+
+  it("permits ws:// only to loopback for local dev", () => {
+    expect(isSafeRemoteUrl("ws://localhost:8787/ws")).toBe(true);
+    expect(isSafeRemoteUrl("ws://127.0.0.1:8787")).toBe(true);
+    expect(isSafeRemoteUrl("ws://[::1]:8787")).toBe(true);
+  });
+
+  it("rejects non-websocket schemes and garbage", () => {
+    expect(isSafeRemoteUrl("https://example.com")).toBe(false);
+    expect(isSafeRemoteUrl("http://localhost")).toBe(false);
+    expect(isSafeRemoteUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeRemoteUrl("not a url")).toBe(false);
+    expect(isSafeRemoteUrl("")).toBe(false);
   });
 });
 

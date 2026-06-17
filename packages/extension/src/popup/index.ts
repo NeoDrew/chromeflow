@@ -23,6 +23,7 @@ import {
   CONNECTIONS_STORAGE_KEY,
   allocateConnId,
   isDefaultPort,
+  isSafeRemoteUrl,
   parseDomainList,
   type ConnConfig,
 } from "../connections";
@@ -787,6 +788,21 @@ connectionsEl.addEventListener("submit", async (e) => {
     (form.querySelector<HTMLInputElement>(`[name="${name}"]`)?.value ?? "").trim();
   const url = get("url");
   if (!url) return; // required; the browser also enforces via the required attr
+
+  if (!isSafeRemoteUrl(url)) {
+    // Surface inline without losing the typed values (no reload). The offscreen
+    // layer would refuse the socket anyway; this tells the user why.
+    let err = form.querySelector<HTMLElement>(".conn-form-error");
+    if (!err) {
+      err = document.createElement("div");
+      err.className = "conn-form-error";
+      err.setAttribute("role", "alert");
+      form.appendChild(err);
+    }
+    err.textContent =
+      "Remote connections must use wss:// (plain ws:// only to localhost) so the token isn't sent in cleartext.";
+    return;
+  }
 
   const label = get("label");
   const token = get("token");

@@ -1875,6 +1875,39 @@ function httpHostname(url: string | undefined): string | null {
   }
 }
 
+// Gate the privileged-fetch tools (read_attachment, download_file, fetch_url,
+// inspect_request_headers). These act with the EXTENSION's authority and the
+// user's full cookie jar, and never open a tab, so the owned-window sandbox does
+// not constrain them. A REMOTE connection must therefore be confined to its
+// configured scope; an UNSCOPED remote is denied outright (fail closed) so a
+// hosted agent can't read arbitrary authenticated origins (Gmail, Stripe,
+// internal admin, etc.). Local connections keep full access, scoped only if the
+// user explicitly set a scope. Throws (→ ok:false) when the fetch is not allowed.
+function guardPrivilegedFetch(port: number, url: string): void {
+  const blocked = isBlockedUrl(url);
+  if (blocked.blocked) throw new Error(blocked.reason!);
+
+  const isRemote = port >= SYNTHETIC_CONNID_BASE;
+  if (isRemote && !connScope.has(port)) {
+    throw new Error(
+      "chromeflow: this remote connection has no domain scope, so privileged fetch " +
+        "(read_attachment / download_file / fetch_url / inspect_request_headers) is " +
+        "denied. Configure an allow-scope on the connection to enable it.",
+    );
+  }
+  if (connScope.has(port)) {
+    const host = httpHostname(url);
+    if (isRemote && !host) {
+      // file:/data:/blob:/chrome: — unscopable and off-limits for a remote.
+      throw new Error("chromeflow: remote privileged fetch is limited to in-scope http(s) URLs.");
+    }
+    if (host) {
+      const v = scopeBlocks(connScope.get(port), host);
+      if (v.blocked) throw new Error("chromeflow: " + v.reason);
+    }
+  }
+}
+
 async function handleMcpMessage(msg: {
   type: string;
   requestId: string;
@@ -2094,6 +2127,29 @@ async function handleMcpMessage(msg: {
             currentUrl = res.current_url;
           }
         } catch { /* non-scriptable or unloaded — skip settle check */ }
+      }
+
+      // Post-navigation scope re-check: the approved target URL may have
+      // redirected (3xx / JS) onto an out-of-scope host. Refuse here, BEFORE we
+      // read any page content below, so a redirect can't be used to escape scope
+      // or leak the landed page. Read the tab's authoritative committed URL
+      // (chrome.tabs.get) rather than the in-page settle probe's location.href,
+      // which is skipped on non-scriptable pages or if the probe threw.
+      if (connScope.has(port)) {
+        let landedUrl = currentUrl;
+        try {
+          if (targetTab.id) {
+            const fresh = await chrome.tabs.get(targetTab.id);
+            if (fresh.url) landedUrl = fresh.url;
+          }
+        } catch { /* tab closed mid-nav — fall back to the probed url */ }
+        const landedHost = httpHostname(landedUrl);
+        if (landedHost) {
+          const v = scopeBlocks(connScope.get(port), landedHost);
+          if (v.blocked) {
+            throw new Error("chromeflow: navigation redirected out of scope — " + v.reason);
+          }
+        }
       }
 
       // Anti-bot block-page detection: read the page's outerHTML (capped at
@@ -5169,10 +5225,10 @@ async function handleMcpMessage(msg: {
 
     case "inspect_request_headers": {
       const targetUrl = msg.url as string;
-      const blockInspect = isBlockedUrl(targetUrl);
-      if (blockInspect.blocked) {
-        throw new Error(blockInspect.reason!);
-      }
+      // Captures the request's Cookie header for targetUrl — confine remotes to
+      // scope, deny unscoped remotes (a hosted agent must not read arbitrary
+      // origins' session cookies).
+      guardPrivilegedFetch(port, targetUrl);
       const useNewTab = msg.new_tab !== false; // default true
 
       // Pick the tab we'll attach the debugger to. When useNewTab is true,
@@ -5284,10 +5340,7 @@ async function handleMcpMessage(msg: {
 
     case "read_attachment": {
       const url = msg.url as string;
-      const blockRead = isBlockedUrl(url);
-      if (blockRead.blocked) {
-        throw new Error(blockRead.reason!);
-      }
+      guardPrivilegedFetch(port, url);
       const formatHint = msg.format as string | undefined;
       const maxChars = (msg.max_chars as number | undefined) ?? 50_000;
 
@@ -5323,10 +5376,7 @@ async function handleMcpMessage(msg: {
 
     case "download_file": {
       const url = msg.url as string;
-      const blockDl = isBlockedUrl(url);
-      if (blockDl.blocked) {
-        throw new Error(blockDl.reason!);
-      }
+      guardPrivilegedFetch(port, url);
       const filename = msg.filename as string | undefined;
       const timeoutMs = (msg.timeout_ms as number | undefined) ?? 60000;
 
@@ -5374,19 +5424,10 @@ async function handleMcpMessage(msg: {
 
     case "fetch_url": {
       const url = msg.url as string;
-      const blockFetch = isBlockedUrl(url);
-      if (blockFetch.blocked) {
-        throw new Error(blockFetch.reason!);
-      }
-      // fetch_url targets an arbitrary url (not the active tab), so scope it on
-      // the request target. The top-of-handler guard only covers the active tab.
-      if (connScope.has(port)) {
-        const fetchHost = httpHostname(url);
-        if (fetchHost) {
-          const v = scopeBlocks(connScope.get(port), fetchHost);
-          if (v.blocked) throw new Error("chromeflow: " + v.reason);
-        }
-      }
+      // Privileged fetch (extension authority + cookie jar, no tab): confine
+      // remotes to scope, deny unscoped remotes. The top-of-handler guard only
+      // covers the active tab, not this arbitrary target url.
+      guardPrivilegedFetch(port, url);
       const method = (msg.method as string | undefined) ?? "GET";
       const reqHeaders = (msg.headers as Record<string, string> | undefined) ?? {};
       const body = msg.body as string | undefined;
@@ -5412,6 +5453,17 @@ async function handleMcpMessage(msg: {
         });
       } finally {
         clearTimeout(timer);
+      }
+
+      // Redirect re-check: fetch() follows 3xx by default, so an in-scope target
+      // can land on an out-of-scope origin. Re-validate the FINAL url before
+      // exposing any response data.
+      if (connScope.has(port)) {
+        const landedHost = httpHostname(resp.url);
+        if (landedHost) {
+          const v = scopeBlocks(connScope.get(port), landedHost);
+          if (v.blocked) throw new Error("chromeflow: fetch redirected out of scope — " + v.reason);
+        }
       }
 
       const headers: Record<string, string> = {};
