@@ -95,6 +95,9 @@ async function main() {
   //      reparented to init (orphaned). Polled every 5s.
   const exitClean = (reason: string) => {
     console.error(`[chromeflow] host disconnected (${reason}), exiting.`);
+    // Autosave any buffered hard-won steps before we go — a single-origin
+    // session never crosses an origin boundary, so this is its only flush.
+    try { flowStore.flushAll(); } catch { /* best-effort */ }
     process.exit(0);
   };
   process.stdin.on("end", () => exitClean("stdin end"));
