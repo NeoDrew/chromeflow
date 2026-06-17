@@ -1,9 +1,26 @@
 # Flow memory — learned site flows
 
 chromeflow remembers the hard-won way to drive a site so you don't
-rediscover it every session. It is **local, guidance-only, and explicit**:
-nothing replays autonomously, nothing leaves the machine, and only steps
-that *cost something to discover* are stored.
+rediscover it every session. It is **local and guidance-only**: nothing
+replays autonomously, nothing leaves the machine, and only steps that
+*cost something to discover* are stored.
+
+Capture is **automatic, with earned trust** (a two-tier, MCTS-style
+lifecycle), so memory works even if you never call a tool:
+
+1. **Autosave → provisional.** Buffered hard-won steps are written to disk
+   automatically when you leave a site (cross to a different origin) or when
+   the session ends. They land as a *provisional* flow.
+2. **Provisional flows are NOT recalled.** A one-off or wrong autosave can
+   never misdirect a later run; it just sits unused.
+3. **Earned promotion → trusted.** A provisional flow is promoted to
+   *trusted* once its exact step-signature is independently re-observed a
+   second time, OR the moment you `save_flow()` it (an explicit vouch).
+4. **Only trusted flows are recalled.**
+5. **Failure feedback.** A recalled step that fails on replay raises the
+   flow's fail count; after two failures the flow is dropped, so a flow that
+   stops working self-heals out of the store. Provisional flows also expire
+   after 30 days if never promoted.
 
 ## Two signals you'll see in tool responses
 
@@ -29,13 +46,17 @@ came from older click logic.
 resolution:
 
 ```
-ℹ flow_capturable: 2 hard-won step(s) on https://www.reddit.com/submit not yet saved
-  (click recovered via dom-click; field needs real keystrokes). Call save_flow("...") to persist them.
+ℹ flow_capturable: 2 hard-won step(s) on https://www.reddit.com/submit buffered
+  (click recovered via dom-click; field needs real keystrokes). They autosave on
+  leaving the site; call save_flow("...") to trust them immediately.
 ```
 
-When you see this and the task succeeded, call `save_flow("<task label>")`.
-You don't list the steps — chromeflow commits whatever it buffered for the
-current origin. One call, done.
+These steps **will autosave** on their own. Calling `save_flow("<task label>")`
+is the optional fast path: it promotes them straight to *trusted* (so they are
+recalled next session instead of waiting to be re-observed) and gives them a
+human label. Do it when you are confident the task genuinely succeeded. You
+don't list the steps — chromeflow commits whatever it buffered for the current
+origin. One call, done.
 
 ## What gets buffered (and what doesn't)
 
@@ -54,5 +75,7 @@ Skipped (rediscovery is free, persisting them is noise):
 ## Storage
 
 `~/.chromeflow/flows.json`, keyed by origin + path (query string stripped).
-Selectors and success-signals only — **never** the typed text. Repeated
-saves of the same flow bump its success count rather than duplicating.
+Each flow carries a `tier` (`provisional` / `trusted`), `success_count`, and
+`fail_count`. Selectors and success-signals only — **never** the typed text.
+Repeated observations of the same flow bump its success count (and promote it)
+rather than duplicating.

@@ -223,6 +223,10 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       const capturable = flowStore.capturableHint(actionUrl);
 
       if (!r.success) {
+        // Failure feedback: if a step we RECALLED for this origin just failed on
+        // replay, that's evidence the stored flow has drifted — ding it so a
+        // repeatedly-broken flow self-prunes.
+        flowStore.observeFailure(actionUrl, selector ?? textHint);
         return {
           content: [
             {
@@ -240,9 +244,9 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
 
   server.tool(
     "save_flow",
-    `Persist the hard-won interaction steps chromeflow buffered for the current site as a reusable, named flow. chromeflow auto-buffers only NOTABLE resolutions (a click that needed a fallback, a verified submit, a field that needed real keystrokes) — so you just give the task a label and it commits whatever is buffered for the current origin. Next session, those steps are surfaced back as a known_flow hint so you skip the trial-and-error.
+    `Trust the hard-won interaction steps chromeflow buffered for the current site, immediately, as a named flow. chromeflow auto-buffers only NOTABLE resolutions (a click that needed a fallback, a verified submit, a field that needed real keystrokes), and AUTOSAVES them as a provisional flow when you leave the site — so memory works even if you never call this. Provisional flows are not recalled until they have been independently re-observed, or until you vouch for them here. Calling save_flow promotes the buffered steps to TRUSTED right away (an explicit "I confirm this worked"), so they are recalled next session instead of waiting to earn it.
 
-Call this when a response shows \`flow_capturable\`. Stored locally only (~/.chromeflow/flows.json), selectors/signals only — never typed text. Guidance, not autopilot: recalled steps are still verified on replay.`,
+Call this when a response shows \`flow_capturable\` and you are confident the task genuinely succeeded. Stored locally only (~/.chromeflow/flows.json), selectors/signals only — never typed text. Guidance, not autopilot: recalled steps are still verified on replay.`,
     {
       task_label: z.string().describe('Short human label for what this flow accomplishes, e.g. "submit text post", "set flair and submit", "log report time".'),
     },
