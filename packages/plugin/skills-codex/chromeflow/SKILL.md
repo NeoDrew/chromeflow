@@ -160,6 +160,19 @@ When the simple flow isn't enough, load the relevant `references/<topic>.md`:
   read, per-step job-drift guard, precise aria-label buttons, pointer-chain
   submit), job search + scraping, connections / outreach, and account-safety
   rate caps. Load before any LinkedIn automation.
+- **`references/flow-memory.md`** — Learned per-site flows. When a response
+  shows `known_flow`, prefer those proven steps (still verify with `until_*`).
+  When it shows `flow_capturable` and the task worked, call
+  `save_flow("<label>")` so the next session skips the trial-and-error.
+
+## Flow memory (act on the hints)
+
+chromeflow learns the hard-won way to drive a site. Two response signals:
+- **`known_flow`** (on `open_page` / first click): follow the listed steps
+  instead of rediscovering; they're guidance, so keep your `until_*` clauses.
+- **`flow_capturable`** (after a notable success): call
+  `save_flow("<task label>")` to persist it. One call — chromeflow already
+  buffered the steps. See `references/flow-memory.md`.
 
 ## Common quick recipes
 

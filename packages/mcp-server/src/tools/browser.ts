@@ -6,8 +6,9 @@ import { join } from "path";
 import { execSync } from "child_process";
 import type { WsBridge } from "../ws-bridge.js";
 import { isBlockedUrl } from "../policy.js";
+import { FlowStore, isFragileSelector, type Atom } from "../flow-store.js";
 
-export function registerBrowserTools(server: McpServer, bridge: WsBridge) {
+export function registerBrowserTools(server: McpServer, bridge: WsBridge, flowStore: FlowStore) {
   server.tool(
     "open_page",
     `Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it. After navigating, call get_page_text to read the page — do NOT take a screenshot.
@@ -61,6 +62,10 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
       if (r.dismissed_beforeunload) {
         text += `\n\nℹ dismissed_beforeunload: true — the previous page had unsaved content (typed text in a composer, form draft, etc.) and Chrome's "Are you sure you want to leave?" dialog was auto-dismissed so navigation could proceed. If that draft was load-bearing, navigate back and re-capture before continuing.`;
       }
+      // Flow memory: surface any known good flow for this destination so the
+      // agent follows the proven steps instead of rediscovering them.
+      flowStore.noteUrl(r.current_url ?? url);
+      text += flowStore.recallHint(r.current_url ?? url);
       return { content: [{ type: "text", text }] };
     }
   );
@@ -452,8 +457,24 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
         timeoutMs
       );
       const r = response as { success?: boolean; message?: string };
+      // Flow memory: typing into a specific selector with type_text (rather than
+      // fill_input) is a deliberate "this field needs real isTrusted keystrokes"
+      // decision worth remembering — the canonical Reddit title/body case. Only
+      // notable when an explicit target was given and the type succeeded.
+      let capturable = "";
+      if (into_selector && r.success !== false) {
+        flowStore.observe({
+          tool: "type_text",
+          target: into_selector,
+          selector: into_selector,
+          signal: clear_first ? "type_text(clear_first)" : "type_text",
+          fragile: isFragileSelector(into_selector),
+          reason: "field needs real keystrokes (type_text, not fill_input)",
+        } as Atom);
+        capturable = flowStore.capturableHint(undefined);
+      }
       return {
-        content: [{ type: "text", text: r.message ?? (r.success ? "Text typed successfully" : "Failed to type text") }],
+        content: [{ type: "text", text: (r.message ?? (r.success ? "Text typed successfully" : "Failed to type text")) + capturable }],
       };
     }
   );
