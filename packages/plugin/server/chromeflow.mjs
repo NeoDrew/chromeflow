@@ -24756,10 +24756,153 @@ var WsBridge = class {
   }
 };
 
+// packages/mcp-server/src/flow-store.ts
+import { homedir } from "node:os";
+import { join, dirname } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+function originKey(url) {
+  if (!url) return void 0;
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return void 0;
+    const path2 = u.pathname && u.pathname !== "/" ? u.pathname.replace(/\/+$/, "") : "";
+    return u.origin + path2;
+  } catch {
+    return void 0;
+  }
+}
+var FRAGILE_RE = /:nth-(of-type|child)\(|>\s*\w+:nth/;
+var FlowStore = class {
+  path;
+  data;
+  version;
+  // In-memory, per-session state (never persisted):
+  buffer = /* @__PURE__ */ new Map();
+  // notable atoms not yet committed, by origin
+  surfaced = /* @__PURE__ */ new Set();
+  // origins whose recall hint already fired this session
+  lastOrigin;
+  constructor(version2, baseDir) {
+    this.version = version2;
+    this.path = join(baseDir ?? join(homedir(), ".chromeflow"), "flows.json");
+    this.data = this.load();
+  }
+  load() {
+    try {
+      if (existsSync(this.path)) {
+        const parsed = JSON.parse(readFileSync(this.path, "utf-8"));
+        if (parsed && parsed.version === 1 && parsed.origins) return parsed;
+      }
+    } catch {
+      try {
+        renameSync(this.path, this.path + ".corrupt");
+      } catch {
+      }
+    }
+    return { version: 1, origins: {} };
+  }
+  persist() {
+    try {
+      mkdirSync(dirname(this.path), { recursive: true });
+      const tmp = this.path + ".tmp";
+      writeFileSync(tmp, JSON.stringify(this.data, null, 2), "utf-8");
+      renameSync(tmp, this.path);
+    } catch {
+    }
+  }
+  /** Update the "current origin" from any URL chromeflow observed. */
+  noteUrl(url) {
+    const k = originKey(url);
+    if (k) this.lastOrigin = k;
+  }
+  /** Buffer a notable atom against an origin (defaults to last-seen origin). */
+  observe(atom, url) {
+    if (!atom) return;
+    const k = originKey(url) ?? this.lastOrigin;
+    if (!k) return;
+    const list = this.buffer.get(k) ?? [];
+    const sig = `${atom.tool}|${atom.target}|${atom.selector ?? ""}`;
+    if (list.some((a) => `${a.tool}|${a.target}|${a.selector ?? ""}` === sig)) return;
+    list.push(atom);
+    this.buffer.set(k, list);
+  }
+  /** Compact recall hint for an origin, at most once per origin per session. */
+  recallHint(url) {
+    const k = originKey(url);
+    if (!k || this.surfaced.has(k)) return "";
+    const flows = this.data.origins[k];
+    if (!flows || flows.length === 0) return "";
+    this.surfaced.add(k);
+    const best = [...flows].sort((a, b) => b.success_count - a.success_count).slice(0, 3);
+    const lines = best.map((f) => {
+      const steps = f.steps.map((s, i) => {
+        const via = s.recovered_via ? ` [via ${s.recovered_via}]` : "";
+        const sig = s.signal ? ` (${s.signal})` : "";
+        const frag = s.fragile ? " \u26A0fragile-selector" : "";
+        return `   ${i + 1}. ${s.tool} ${s.target}${sig}${via}${frag}`;
+      }).join("\n");
+      const stale = f.chromeflow_version !== this.version ? ` recorded on v${f.chromeflow_version}, re-verify` : "";
+      return `  "${f.task_label}" (${f.steps.length} steps, ${f.success_count}x ok${stale}):
+${steps}`;
+    });
+    return `
+
+\u2139 known_flow for ${k} \u2014 prefer these proven steps over rediscovery (verify each as usual):
+${lines.join("\n")}`;
+  }
+  /** Nudge to save buffered hard-won steps, when there are uncommitted ones. */
+  capturableHint(url) {
+    const k = originKey(url) ?? this.lastOrigin;
+    if (!k) return "";
+    const buf = this.buffer.get(k);
+    if (!buf || buf.length === 0) return "";
+    const reasons = [...new Set(buf.map((a) => a.reason))].slice(0, 2).join("; ");
+    return `
+
+\u2139 flow_capturable: ${buf.length} hard-won step(s) on ${k} not yet saved (${reasons}). Call save_flow("<task label>") to persist them so future runs skip the trial-and-error.`;
+  }
+  /** Commit the buffered atoms for an origin as a named flow. */
+  commit(taskLabel, url) {
+    const k = originKey(url) ?? this.lastOrigin;
+    if (!k) return { saved: 0, origin: null, message: "No origin known yet \u2014 navigate or interact with a page first." };
+    const buf = this.buffer.get(k) ?? [];
+    if (buf.length === 0) {
+      return { saved: 0, origin: k, message: `Nothing notable buffered for ${k}. Flows capture hard-won steps (a fallback fired, a verified submit, a field needing real keystrokes) \u2014 an ordinary first-try click isn't recorded.` };
+    }
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const sig = JSON.stringify(buf.map((a) => [a.tool, a.target, a.selector ?? ""]));
+    const flows = this.data.origins[k] ?? [];
+    const existing = flows.find((f) => f.task_label === taskLabel && JSON.stringify(f.steps.map((a) => [a.tool, a.target, a.selector ?? ""])) === sig);
+    if (existing) {
+      existing.success_count += 1;
+      existing.last_verified = now;
+      existing.chromeflow_version = this.version;
+    } else {
+      flows.push({
+        id: `${k}#${flows.length + 1}`,
+        task_label: taskLabel,
+        steps: buf,
+        created_at: now,
+        last_verified: now,
+        success_count: 1,
+        fail_count: 0,
+        chromeflow_version: this.version
+      });
+    }
+    this.data.origins[k] = flows;
+    this.buffer.delete(k);
+    this.persist();
+    return { saved: buf.length, origin: k, message: `Saved flow "${taskLabel}" (${buf.length} steps) for ${k}.` };
+  }
+};
+function isFragileSelector(selector) {
+  return !!selector && FRAGILE_RE.test(selector);
+}
+
 // packages/mcp-server/src/tools/browser.ts
-import { writeFileSync, copyFileSync, readFileSync } from "fs";
-import { tmpdir, homedir } from "os";
-import { join } from "path";
+import { writeFileSync as writeFileSync2, copyFileSync, readFileSync as readFileSync2 } from "fs";
+import { tmpdir, homedir as homedir2 } from "os";
+import { join as join2 } from "path";
 import { execSync } from "child_process";
 
 // packages/mcp-server/src/policy.ts
@@ -24788,7 +24931,7 @@ function isBlockedUrl(rawUrl) {
 }
 
 // packages/mcp-server/src/tools/browser.ts
-function registerBrowserTools(server, bridge) {
+function registerBrowserTools(server, bridge, flowStore) {
   server.tool(
     "open_page",
     `Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it. After navigating, call get_page_text to read the page \u2014 do NOT take a screenshot.
@@ -24837,6 +24980,8 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
 
 \u2139 dismissed_beforeunload: true \u2014 the previous page had unsaved content (typed text in a composer, form draft, etc.) and Chrome's "Are you sure you want to leave?" dialog was auto-dismissed so navigation could proceed. If that draft was load-bearing, navigate back and re-capture before continuing.`;
       }
+      flowStore.noteUrl(r.current_url ?? url);
+      text += flowStore.recallHint(r.current_url ?? url);
       return { content: [{ type: "text", text }] };
     }
   );
@@ -24943,13 +25088,13 @@ Refuses fast on pages that are in fullscreen mode (captureVisibleTab hangs there
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const filename = `chromeflow-${timestamp}.png`;
       const imageBuffer = Buffer.from(response.image, "base64");
-      const tmpPath = join(tmpdir(), filename);
+      const tmpPath = join2(tmpdir(), filename);
       const needTmp = !shouldInline || sharing;
-      if (needTmp) writeFileSync(tmpPath, imageBuffer);
+      if (needTmp) writeFileSync2(tmpPath, imageBuffer);
       const notes = [];
       let landedPath = tmpPath;
       if (save_to !== "none") {
-        const savePath = save_to === "cwd" ? join(process.cwd(), filename) : join(homedir(), "Downloads", filename);
+        const savePath = save_to === "cwd" ? join2(process.cwd(), filename) : join2(homedir2(), "Downloads", filename);
         copyFileSync(tmpPath, savePath);
         notes.push(`Saved to ${savePath}`);
         landedPath = savePath;
@@ -24991,7 +25136,7 @@ The saved file path can be passed directly to set_file_input(hint, file_path) to
     async ({ save_to = "downloads" }) => {
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const filename = `terminal-${timestamp}.png`;
-      const savePath = save_to === "cwd" ? join(process.cwd(), filename) : join(homedir(), "Downloads", filename);
+      const savePath = save_to === "cwd" ? join2(process.cwd(), filename) : join2(homedir2(), "Downloads", filename);
       let captured = false;
       try {
         const bounds = execSync(`osascript -e '
@@ -25026,7 +25171,7 @@ The saved file path can be passed directly to set_file_input(hint, file_path) to
           content: [{ type: "text", text: "Failed to capture terminal. Ensure Screen Recording permission is granted to your terminal app in System Settings > Privacy & Security > Screen Recording." }]
         };
       }
-      const imageBuffer = readFileSync(savePath);
+      const imageBuffer = readFileSync2(savePath);
       const base642 = imageBuffer.toString("base64");
       let clipboardNote = "";
       try {
@@ -25136,8 +25281,20 @@ ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
         timeoutMs
       );
       const r = response;
+      let capturable = "";
+      if (into_selector && r.success !== false) {
+        flowStore.observe({
+          tool: "type_text",
+          target: into_selector,
+          selector: into_selector,
+          signal: clear_first ? "type_text(clear_first)" : "type_text",
+          fragile: isFragileSelector(into_selector),
+          reason: "field needs real keystrokes (type_text, not fill_input)"
+        });
+        capturable = flowStore.capturableHint(void 0);
+      }
       return {
-        content: [{ type: "text", text: r.message ?? (r.success ? "Text typed successfully" : "Failed to type text") }]
+        content: [{ type: "text", text: (r.message ?? (r.success ? "Text typed successfully" : "Failed to type text")) + capturable }]
       };
     }
   );
@@ -25317,8 +25474,8 @@ Returns whether the element was found. Set valueToType only when the user must p
 }
 
 // packages/mcp-server/src/tools/capture.ts
-import { appendFileSync, mkdirSync, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "fs";
-import { resolve, relative, isAbsolute, dirname } from "path";
+import { appendFileSync, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
+import { resolve, relative, isAbsolute, dirname as dirname2 } from "path";
 function registerCaptureTools(server, bridge) {
   server.tool(
     "fill_input",
@@ -25506,7 +25663,7 @@ ${lines.join("\n")}` }] };
         envPath = resolved;
         let existing = "";
         try {
-          existing = readFileSync2(envPath, "utf-8");
+          existing = readFileSync3(envPath, "utf-8");
         } catch {
         }
         const lines = existing.split("\n");
@@ -25514,7 +25671,7 @@ ${lines.join("\n")}` }] };
         const existingIndex = lines.findIndex((l) => keyPattern.test(l));
         if (existingIndex !== -1) {
           lines[existingIndex] = `${key}=${value}`;
-          writeFileSync2(envPath, lines.join("\n"), "utf-8");
+          writeFileSync3(envPath, lines.join("\n"), "utf-8");
         } else {
           const toAppend = (existing && !existing.endsWith("\n") ? "\n" : "") + `${key}=${value}
 `;
@@ -25648,9 +25805,9 @@ Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is r
             `Refusing to write fetch_url body outside the project directory. Target "${resolved}" is not under "${cwd}".`
           );
         }
-        mkdirSync(dirname(resolved), { recursive: true });
+        mkdirSync2(dirname2(resolved), { recursive: true });
         const buf = r.body_base64 ? Buffer.from(r.body_base64, "base64") : Buffer.from(r.body_text ?? "", "utf-8");
-        writeFileSync2(resolved, buf);
+        writeFileSync3(resolved, buf);
         const hdrLines = Object.keys(r.headers).sort().map((k) => `  ${k}: ${r.headers[k]}`).join("\n");
         return {
           content: [{
@@ -25679,7 +25836,7 @@ ${r.body_text}` : "";
 }
 
 // packages/mcp-server/src/tools/flow.ts
-function registerFlowTools(server, bridge) {
+function registerFlowTools(server, bridge, flowStore) {
   server.tool(
     "click_element",
     `Click an interactive element by its visible text/aria-label (textHint) OR by direct CSS selector (selector). Pass exactly one.
@@ -25779,19 +25936,49 @@ Current URL: ${activeTab.url}`;
         focusLine = `
 \u2192 Focused: <${f.tag}${idBit}${nameBit}${aria}${valueBit}>`;
       }
+      const actionUrl = r.before_url ?? r.after_url;
+      const nowUrl = r.after_url ?? r.before_url;
+      const usedUntil = !!(until_selector || until_url_contains || until_text_contains || until_url_changes);
+      if (r.success && (r.recovered_via || r.navigated || usedUntil)) {
+        flowStore.observe({
+          tool: "click_element",
+          target: textHint ?? `selector=${selector}`,
+          selector,
+          recovered_via: r.recovered_via,
+          signal: r.navigated ? "navigated" : until_url_changes ? "until_url_change" : usedUntil ? "until_*" : r.recovered_via,
+          fragile: isFragileSelector(selector),
+          reason: r.recovered_via ? `click recovered via ${r.recovered_via}` : r.navigated ? "navigating submit/link" : "verified terminal click"
+        }, actionUrl);
+      }
+      flowStore.noteUrl(nowUrl);
+      const recall = flowStore.recallHint(nowUrl);
+      const capturable = flowStore.capturableHint(actionUrl);
       if (!r.success) {
         return {
           content: [
             {
               type: "text",
-              text: `Could not click "${targetLabel}": ${r.message}${navLine}${focusLine}`
+              text: `Could not click "${targetLabel}": ${r.message}${navLine}${focusLine}${recall}`
             }
           ]
         };
       }
       return {
-        content: [{ type: "text", text: `${r.message}${navLine}${focusLine}` }]
+        content: [{ type: "text", text: `${r.message}${navLine}${focusLine}${recall}${capturable}` }]
       };
+    }
+  );
+  server.tool(
+    "save_flow",
+    `Persist the hard-won interaction steps chromeflow buffered for the current site as a reusable, named flow. chromeflow auto-buffers only NOTABLE resolutions (a click that needed a fallback, a verified submit, a field that needed real keystrokes) \u2014 so you just give the task a label and it commits whatever is buffered for the current origin. Next session, those steps are surfaced back as a known_flow hint so you skip the trial-and-error.
+
+Call this when a response shows \`flow_capturable\`. Stored locally only (~/.chromeflow/flows.json), selectors/signals only \u2014 never typed text. Guidance, not autopilot: recalled steps are still verified on replay.`,
+    {
+      task_label: external_exports.string().describe('Short human label for what this flow accomplishes, e.g. "submit text post", "set flair and submit", "log report time".')
+    },
+    async ({ task_label }) => {
+      const res = flowStore.commit(task_label);
+      return { content: [{ type: "text", text: res.message }] };
     }
   );
   server.tool(
@@ -26114,14 +26301,15 @@ main().catch((err) => {
 });
 async function main() {
   const bridge = new WsBridge();
+  const flowStore = new FlowStore(PACKAGE_VERSION);
   const server = new McpServer({
     name: "chromeflow",
     version: PACKAGE_VERSION
   });
-  registerBrowserTools(server, bridge);
+  registerBrowserTools(server, bridge, flowStore);
   registerHighlightTools(server, bridge);
   registerCaptureTools(server, bridge);
-  registerFlowTools(server, bridge);
+  registerFlowTools(server, bridge, flowStore);
   const registered = server._registeredTools ?? {};
   const toolNames = Object.keys(registered).sort();
   console.error(`[chromeflow] v${PACKAGE_VERSION} \u2014 registered ${toolNames.length} tools`);

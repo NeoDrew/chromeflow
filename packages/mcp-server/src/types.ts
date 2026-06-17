@@ -198,6 +198,7 @@ export type ClientMessage =
       scope_missed?: boolean;
       silently_rejected?: boolean;
       fiber_attempted?: boolean;
+      recovered_via?: string;
       phase_timed_out?: string;
       // The click fired a network request that was still resolving when the
       // until-clause timed out: the click DID register (do not retry — a
