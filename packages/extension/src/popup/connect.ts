@@ -16,6 +16,7 @@
 import {
   CONNECTIONS_STORAGE_KEY,
   allocateConnId,
+  isSafeRemoteUrl,
   parseDomainList,
   type ConnConfig,
 } from "../connections";
@@ -107,6 +108,14 @@ root.addEventListener("submit", async (e) => {
   const url = get("url");
   if (!url) return;
   const label = get("label");
+  if (!isSafeRemoteUrl(url)) {
+    render(
+      await readConfigs(),
+      "Not added: a remote connection must use a secure wss:// URL (plain ws:// is only allowed to localhost). An insecure URL would send your token in cleartext.",
+      { url, label },
+    );
+    return;
+  }
   const token = get("token");
   const allow = parseDomainList(get("allow"));
   const deny = parseDomainList(get("deny"));
