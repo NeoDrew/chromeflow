@@ -13,6 +13,7 @@ import {
   CONNECTIONS_STORAGE_KEY,
   CONFIG_MSG_SOURCE,
   SET_FILE_FROM_CONTENT,
+  SYNTHETIC_CONNID_BASE,
   scopeBlocks,
   type ConnConfig,
   type ConnScope,
