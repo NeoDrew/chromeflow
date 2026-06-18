@@ -2988,7 +2988,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a = root.localRefs) === null || _a === void 0 ? void 0 : _a[ref];
         const { schemaId } = this.opts;
@@ -3015,7 +3015,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3590,55 +3590,55 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve2(baseURI, relativeURI, options) {
+    function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse3(baseURI, schemelessOptions), parse3(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
       return serialize(resolved, schemelessOptions);
     }
-    function resolveComponent(base, relative2, options, skipNormalization) {
+    function resolveComponent(base, relative3, options, skipNormalization) {
       const target = {};
       if (!skipNormalization) {
         base = parse3(serialize(base, options), options);
-        relative2 = parse3(serialize(relative2, options), options);
+        relative3 = parse3(serialize(relative3, options), options);
       }
       options = options || {};
-      if (!options.tolerant && relative2.scheme) {
-        target.scheme = relative2.scheme;
-        target.userinfo = relative2.userinfo;
-        target.host = relative2.host;
-        target.port = relative2.port;
-        target.path = removeDotSegments(relative2.path || "");
-        target.query = relative2.query;
+      if (!options.tolerant && relative3.scheme) {
+        target.scheme = relative3.scheme;
+        target.userinfo = relative3.userinfo;
+        target.host = relative3.host;
+        target.port = relative3.port;
+        target.path = removeDotSegments(relative3.path || "");
+        target.query = relative3.query;
       } else {
-        if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
-          target.userinfo = relative2.userinfo;
-          target.host = relative2.host;
-          target.port = relative2.port;
-          target.path = removeDotSegments(relative2.path || "");
-          target.query = relative2.query;
+        if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
+          target.userinfo = relative3.userinfo;
+          target.host = relative3.host;
+          target.port = relative3.port;
+          target.path = removeDotSegments(relative3.path || "");
+          target.query = relative3.query;
         } else {
-          if (!relative2.path) {
+          if (!relative3.path) {
             target.path = base.path;
-            if (relative2.query !== void 0) {
-              target.query = relative2.query;
+            if (relative3.query !== void 0) {
+              target.query = relative3.query;
             } else {
               target.query = base.query;
             }
           } else {
-            if (relative2.path[0] === "/") {
-              target.path = removeDotSegments(relative2.path);
+            if (relative3.path[0] === "/") {
+              target.path = removeDotSegments(relative3.path);
             } else {
               if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) {
-                target.path = "/" + relative2.path;
+                target.path = "/" + relative3.path;
               } else if (!base.path) {
-                target.path = relative2.path;
+                target.path = relative3.path;
               } else {
-                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
+                target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
               }
               target.path = removeDotSegments(target.path);
             }
-            target.query = relative2.query;
+            target.query = relative3.query;
           }
           target.userinfo = base.userinfo;
           target.host = base.host;
@@ -3646,7 +3646,7 @@ var require_fast_uri = __commonJS({
         }
         target.scheme = base.scheme;
       }
-      target.fragment = relative2.fragment;
+      target.fragment = relative3.fragment;
       return target;
     }
     function equal(uriA, uriB, options) {
@@ -3817,7 +3817,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve2,
+      resolve: resolve3,
       resolveComponent,
       equal,
       serialize,
@@ -22495,7 +22495,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error2) {
@@ -22512,7 +22512,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const earlyReject = (error2) => {
         reject(error2);
       };
@@ -22590,7 +22590,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve2(parseResult.data);
+            resolve3(parseResult.data);
           }
         } catch (error2) {
           reject(error2);
@@ -22851,12 +22851,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve2, interval);
+      const timeoutId = setTimeout(resolve3, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -23956,7 +23956,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -24599,12 +24599,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const json = serializeMessage(message);
       if (this._stdout.write(json)) {
-        resolve2();
+        resolve3();
       } else {
-        this._stdout.once("drain", resolve2);
+        this._stdout.once("drain", resolve3);
       }
     });
   }
@@ -24725,7 +24725,7 @@ var WsBridge = class {
       }
     }
     const requestId = crypto.randomUUID();
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       let lastProgressAt = Date.now();
       const fire = () => {
         this.pending.delete(requestId);
@@ -24738,7 +24738,7 @@ var WsBridge = class {
         timer = setTimeout(fire, timeoutMs);
       };
       this.pending.set(requestId, {
-        resolve: resolve2,
+        resolve: resolve3,
         reject,
         timer,
         refresh
@@ -25119,12 +25119,6 @@ function isFragileSelector(selector) {
   return FRAGILE_RE.test(selector) || selector.includes(",");
 }
 
-// src/tools/browser.ts
-import { writeFileSync as writeFileSync2, copyFileSync, readFileSync as readFileSync2 } from "fs";
-import { tmpdir, homedir as homedir2 } from "os";
-import { join as join2 } from "path";
-import { execSync } from "child_process";
-
 // src/policy.ts
 function isBlockedUrl(rawUrl) {
   let parsed;
@@ -25150,8 +25144,8 @@ function isBlockedUrl(rawUrl) {
   return { blocked: false };
 }
 
-// src/tools/browser.ts
-function registerBrowserTools(server, bridge, flowStore) {
+// src/tools/browser/navigation.ts
+function registerNavigationTools(server, bridge, flowStore) {
   server.tool(
     "open_page",
     `Navigate to a URL. By default reuses the active tab. Set new_tab=true to open alongside the current tab without losing it. After navigating, call get_page_text to read the page \u2014 do NOT take a screenshot.
@@ -25206,6 +25200,38 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
     }
   );
   server.tool(
+    "inspect_request_headers",
+    `Capture the request headers Chrome sends to a URL \u2014 useful for diagnosing server-side bot detection. Returns method, URL, and all headers. Cookie values are redacted by default to avoid leaking session tokens into the agent context; pass redact_cookies: false to see them. By default opens a background tab for the inspection so your active tab keeps its scroll position and form state \u2014 set new_tab: false to use the active tab instead.`,
+    {
+      url: external_exports.string().url().describe("URL to navigate to and capture headers for"),
+      redact_cookies: external_exports.boolean().optional().describe("Replace each cookie's value with [REDACTED]. Default true. Set false only when you genuinely need the cookie content for debugging."),
+      new_tab: external_exports.boolean().optional().describe("Open the inspection in a background tab and close it when done. Default true (preserves the active tab's state). Set false to use the active tab \u2014 the active tab WILL navigate.")
+    },
+    async ({ url, redact_cookies = true, new_tab = true }) => {
+      const block = isBlockedUrl(url);
+      if (block.blocked) {
+        return { content: [{ type: "text", text: `inspect_request_headers refused: ${block.reason}` }] };
+      }
+      const response = await bridge.request({ type: "inspect_request_headers", url, new_tab }, 3e4);
+      const r = response;
+      let text = r.message ?? "(no headers captured)";
+      if (redact_cookies) {
+        text = text.replace(/^(cookie:\s*)(.+)$/gim, (_m, prefix, body) => {
+          const pairs = String(body).split(";").map((s) => s.trim()).filter(Boolean);
+          const names = pairs.map((p) => p.split("=")[0]);
+          return `${prefix}[REDACTED \u2014 ${pairs.length} cookies: ${names.join(", ")}]`;
+        });
+      }
+      return {
+        content: [{ type: "text", text }]
+      };
+    }
+  );
+}
+
+// src/tools/browser/tabs.ts
+function registerTabTools(server, bridge, flowStore) {
+  server.tool(
     "switch_to_tab",
     `Switch the active tab to a different open tab. Use this after open_page(new_tab=true) to switch back to the original tab, or to jump between tabs.
 Accepts: a tab number (1-based), a URL substring, or a title substring.
@@ -25231,28 +25257,6 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
       return {
         content: [{ type: "text", text: `Switched to tab matching "${q}"${echo}` }]
       };
-    }
-  );
-  server.tool(
-    "interactive_snapshot",
-    `Compact, accessibility-style list of the page's ACTIONABLE elements \u2014 each as [role] name \u2014 selector. Use this INSTEAD of get_page_text or take_screenshot when your goal is to ACT (click / type / select), not to read prose: it is far cheaper in tokens than dumping page text, and every line gives a ready-to-use selector for click_element / type_text. Pierces open AND closed shadow roots (Reddit faceplate-*, Radix/Stencil/Lit), which a raw accessibility tree misses. Returns the top elements by document order; pass max to widen. For reading article/body text, still use get_page_text.`,
-    {
-      max: external_exports.number().int().min(1).optional().describe("Max elements to return (default 60).")
-    },
-    async ({ max }) => {
-      let response;
-      try {
-        response = await bridge.request({ type: "interactive_snapshot", max });
-      } catch {
-        return { content: [{ type: "text", text: "interactive_snapshot is unavailable (reload/update the chromeflow extension). Fall back to get_page_text + find_text for now." }] };
-      }
-      const items = response.items ?? [];
-      if (items.length === 0) {
-        return { content: [{ type: "text", text: "No actionable elements found (page may render inside a cross-origin iframe, or content is non-interactive)." }] };
-      }
-      const lines = items.map((it, i) => `${i + 1}. [${it.role}]${it.name ? " " + it.name : ""} \u2014 ${it.selector}`);
-      return { content: [{ type: "text", text: `Actionable elements (${items.length}):
-${lines.join("\n")}` }] };
     }
   );
   server.tool(
@@ -25310,6 +25314,40 @@ ${keptList}` }]
       };
     }
   );
+}
+
+// src/tools/browser/snapshot.ts
+function registerSnapshotTools(server, bridge) {
+  server.tool(
+    "interactive_snapshot",
+    `Compact, accessibility-style list of the page's ACTIONABLE elements \u2014 each as [role] name \u2014 selector. Use this INSTEAD of get_page_text or take_screenshot when your goal is to ACT (click / type / select), not to read prose: it is far cheaper in tokens than dumping page text, and every line gives a ready-to-use selector for click_element / type_text. Pierces open AND closed shadow roots (Reddit faceplate-*, Radix/Stencil/Lit), which a raw accessibility tree misses. Returns the top elements by document order; pass max to widen. For reading article/body text, still use get_page_text.`,
+    {
+      max: external_exports.number().int().min(1).optional().describe("Max elements to return (default 60).")
+    },
+    async ({ max }) => {
+      let response;
+      try {
+        response = await bridge.request({ type: "interactive_snapshot", max });
+      } catch {
+        return { content: [{ type: "text", text: "interactive_snapshot is unavailable (reload/update the chromeflow extension). Fall back to get_page_text + find_text for now." }] };
+      }
+      const items = response.items ?? [];
+      if (items.length === 0) {
+        return { content: [{ type: "text", text: "No actionable elements found (page may render inside a cross-origin iframe, or content is non-interactive)." }] };
+      }
+      const lines = items.map((it, i) => `${i + 1}. [${it.role}]${it.name ? " " + it.name : ""} \u2014 ${it.selector}`);
+      return { content: [{ type: "text", text: `Actionable elements (${items.length}):
+${lines.join("\n")}` }] };
+    }
+  );
+}
+
+// src/tools/browser/screenshot.ts
+import { writeFileSync as writeFileSync2, copyFileSync, readFileSync as readFileSync2 } from "fs";
+import { tmpdir, homedir as homedir2 } from "os";
+import { join as join2 } from "path";
+import { execSync } from "child_process";
+function registerScreenshotTools(server, bridge) {
   server.tool(
     "take_screenshot",
     `Capture a screenshot of the active tab. By default the image is returned to the agent inline UNLESS it exceeds ~500KB base64, in which case it's saved to a temp file and the path is returned instead (preserves the agent's context window). Set inline="always" to force inline regardless of size, or inline="never" to always write to a file. Set save_to or copy_to_clipboard to also share the image with the user. Reserved for cases where DOM lookup has already failed \u2014 use get_page_text and find_text for reading content.
@@ -25443,6 +25481,10 @@ The saved file path can be passed directly to set_file_input(hint, file_path) to
       };
     }
   );
+}
+
+// src/tools/browser/forms.ts
+function registerFormFieldTools(server, bridge) {
   server.tool(
     "get_form_fields",
     `Inventory form fields on the active page (inputs, textareas, selects, CodeMirror editors). Sorted top-to-bottom by y-position; includes fields below the fold.
@@ -25502,6 +25544,10 @@ To fill: fill_input("${r2.fields[0].label}", "<value>")` }] };
 ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
     }
   );
+}
+
+// src/tools/browser/typing.ts
+function registerTypingTools(server, bridge, flowStore) {
   server.tool(
     "type_text",
     `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). Pass \`into_selector\` to focus the target before typing (shadow-piercing CSS) \u2014 combined with \`clear_first: true\`, this collapses the old "wait_for_click \u2192 execute_script selectAll \u2192 type_text" pattern into a single call. Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.
@@ -25548,6 +25594,10 @@ ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
       };
     }
   );
+}
+
+// src/tools/browser/files.ts
+function registerFileInputTools(server, bridge) {
   server.tool(
     "set_file_input",
     `Upload a file to a file input \u2014 works even when the input is hidden behind a custom drag-and-drop zone. Returns success=true only after an observable commit (file count goes up, input gets reset, or verify_selector appears within wait_ms). See CLAUDE.md for batch-upload guidance.
@@ -25603,6 +25653,10 @@ Provide file_path OR file_content, not both.`,
       };
     }
   );
+}
+
+// src/tools/browser/scripting.ts
+function registerScriptingTools(server, bridge) {
   server.tool(
     "execute_script",
     `Execute JavaScript in a tab's MAIN world (the page's own context, not the extension's isolated world). Use for reading framework state or DOM properties not visible in text \u2014 prefer get_page_text for visible content. Top-level \`return\` and \`await\` are supported.
@@ -25651,34 +25705,18 @@ PAGE ALERT: "${alert}" \u2014 the page showed a dialog with this message. Read i
       };
     }
   );
-  server.tool(
-    "inspect_request_headers",
-    `Capture the request headers Chrome sends to a URL \u2014 useful for diagnosing server-side bot detection. Returns method, URL, and all headers. Cookie values are redacted by default to avoid leaking session tokens into the agent context; pass redact_cookies: false to see them. By default opens a background tab for the inspection so your active tab keeps its scroll position and form state \u2014 set new_tab: false to use the active tab instead.`,
-    {
-      url: external_exports.string().url().describe("URL to navigate to and capture headers for"),
-      redact_cookies: external_exports.boolean().optional().describe("Replace each cookie's value with [REDACTED]. Default true. Set false only when you genuinely need the cookie content for debugging."),
-      new_tab: external_exports.boolean().optional().describe("Open the inspection in a background tab and close it when done. Default true (preserves the active tab's state). Set false to use the active tab \u2014 the active tab WILL navigate.")
-    },
-    async ({ url, redact_cookies = true, new_tab = true }) => {
-      const block = isBlockedUrl(url);
-      if (block.blocked) {
-        return { content: [{ type: "text", text: `inspect_request_headers refused: ${block.reason}` }] };
-      }
-      const response = await bridge.request({ type: "inspect_request_headers", url, new_tab }, 3e4);
-      const r = response;
-      let text = r.message ?? "(no headers captured)";
-      if (redact_cookies) {
-        text = text.replace(/^(cookie:\s*)(.+)$/gim, (_m, prefix, body) => {
-          const pairs = String(body).split(";").map((s) => s.trim()).filter(Boolean);
-          const names = pairs.map((p) => p.split("=")[0]);
-          return `${prefix}[REDACTED \u2014 ${pairs.length} cookies: ${names.join(", ")}]`;
-        });
-      }
-      return {
-        content: [{ type: "text", text }]
-      };
-    }
-  );
+}
+
+// src/tools/browser.ts
+function registerBrowserTools(server, bridge, flowStore) {
+  registerNavigationTools(server, bridge, flowStore);
+  registerTabTools(server, bridge, flowStore);
+  registerSnapshotTools(server, bridge);
+  registerScreenshotTools(server, bridge);
+  registerFormFieldTools(server, bridge);
+  registerTypingTools(server, bridge, flowStore);
+  registerFileInputTools(server, bridge);
+  registerScriptingTools(server, bridge);
 }
 
 // src/tools/highlight.ts
@@ -25723,10 +25761,8 @@ Returns whether the element was found. Set valueToType only when the user must p
   );
 }
 
-// src/tools/capture.ts
-import { appendFileSync, mkdirSync as mkdirSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
-import { resolve, relative, isAbsolute, dirname as dirname2 } from "path";
-function registerCaptureTools(server, bridge) {
+// src/tools/capture/input.ts
+function registerInputTools(server, bridge) {
   server.tool(
     "fill_input",
     `Fill a form input by visible label / placeholder / aria-label (\`textHint\`) OR by direct CSS selector (\`selector\`). Pass exactly one.
@@ -25782,6 +25818,10 @@ Or pass selector="<css>" instead of textHint to bypass fuzzy matching entirely.`
       };
     }
   );
+}
+
+// src/tools/capture/extract.ts
+function registerExtractTools(server, bridge) {
   server.tool(
     "get_page_text",
     `Get the visible text content of the current page without taking a screenshot.
@@ -25884,6 +25924,12 @@ Pass level="error" to see only errors, or omit to see all levels.`,
 ${lines.join("\n")}` }] };
     }
   );
+}
+
+// src/tools/capture/files.ts
+import { appendFileSync, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
+import { resolve, relative, isAbsolute } from "path";
+function registerFileTools(server, bridge) {
   server.tool(
     "write_to_env",
     "Write a key=value pair to a .env file. Use this after capturing an API key or ID from the page.",
@@ -25998,6 +26044,12 @@ Size: ${r.size} bytes`
       };
     }
   );
+}
+
+// src/tools/capture/fetch.ts
+import { mkdirSync as mkdirSync2, writeFileSync as writeFileSync4 } from "fs";
+import { resolve as resolve2, relative as relative2, isAbsolute as isAbsolute2, dirname as dirname2 } from "path";
+function registerFetchTools(server, bridge) {
   server.tool(
     "fetch_url",
     `Make an HTTP request to a URL from the extension's privileged context, bypassing the page's Content-Security-Policy.
@@ -26048,16 +26100,16 @@ Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is r
 \u26A0 anti_bot_detected: "${r.anti_bot_detected}" \u2014 response body matches a known block / challenge page. Don't parse as the expected JSON/HTML; the user's IP may be challenged or the endpoint may require a real browser context.` : "";
       if (to_file) {
         const cwd = process.cwd();
-        const resolved = isAbsolute(to_file) ? to_file : resolve(cwd, to_file);
-        const rel = relative(cwd, resolved);
-        if (rel.startsWith("..") || isAbsolute(rel)) {
+        const resolved = isAbsolute2(to_file) ? to_file : resolve2(cwd, to_file);
+        const rel = relative2(cwd, resolved);
+        if (rel.startsWith("..") || isAbsolute2(rel)) {
           throw new Error(
             `Refusing to write fetch_url body outside the project directory. Target "${resolved}" is not under "${cwd}".`
           );
         }
         mkdirSync2(dirname2(resolved), { recursive: true });
         const buf = r.body_base64 ? Buffer.from(r.body_base64, "base64") : Buffer.from(r.body_text ?? "", "utf-8");
-        writeFileSync3(resolved, buf);
+        writeFileSync4(resolved, buf);
         const hdrLines = Object.keys(r.headers).sort().map((k) => `  ${k}: ${r.headers[k]}`).join("\n");
         return {
           content: [{
@@ -26085,8 +26137,16 @@ ${r.body_text}` : "";
   );
 }
 
-// src/tools/flow.ts
-function registerFlowTools(server, bridge, flowStore) {
+// src/tools/capture.ts
+function registerCaptureTools(server, bridge) {
+  registerInputTools(server, bridge);
+  registerExtractTools(server, bridge);
+  registerFileTools(server, bridge);
+  registerFetchTools(server, bridge);
+}
+
+// src/tools/flow/click.ts
+function registerClickTools(server, bridge, flowStore) {
   server.tool(
     "click_element",
     `Click an interactive element by its visible text/aria-label (textHint) OR by direct CSS selector (selector). Pass exactly one.
@@ -26222,6 +26282,33 @@ Current URL: ${activeTab.url}`;
     }
   );
   server.tool(
+    "click_at_coordinates",
+    `Dispatch a real CDP mouse click at viewport (x, y). The only way to interact with cross-origin iframes \u2014 \`click_element\` refuses cross-origin frames because \`find_text\` can't enter them, but a CDP-level mouse event resolves at the renderer process and reaches the iframe's content the way an OS-level click does.
+
+Coordinates are viewport CSS pixels, NOT screen coordinates. \`list_frames\` reports each iframe at \`(x, y, width, height)\` in this same space, so to click 50px in / 80px down inside an iframe: \`click_at_coordinates(frame.x + 50, frame.y + 80)\`.
+
+Runs the same humanlike sequence as \`click_element\` (bezier approach path, settle-hover micro-tremor, press, release, post-click micro-move) so behavioural fingerprinters can't distinguish the call from any other chromeflow click. Skips the activity probe \u2014 cross-origin iframe activity isn't observable from the parent.
+
+Refuses obviously-bad coordinates (negative, > 10000). Use this only when DOM matching has failed and you have a known target position from \`list_frames\` or a screenshot.`,
+    {
+      x: external_exports.number().describe("Viewport CSS X coordinate (left=0). Get from list_frames or a screenshot grid."),
+      y: external_exports.number().describe("Viewport CSS Y coordinate (top=0). Get from list_frames or a screenshot grid."),
+      button: external_exports.enum(["left", "right", "middle"]).optional().describe('Mouse button (default "left").'),
+      double: external_exports.boolean().optional().describe("Fire a double-click instead of a single click. Default false.")
+    },
+    async ({ x, y, button, double }) => {
+      const response = await bridge.request({ type: "click_at_coordinates", x, y, button, double });
+      const r = response;
+      const navLine = r.navigated && r.after_url ? `
+\u2192 Navigated: ${r.after_url}` : "";
+      return { content: [{ type: "text", text: `${r.message}${navLine}` }] };
+    }
+  );
+}
+
+// src/tools/flow/save.ts
+function registerSaveFlowTools(server, flowStore) {
+  server.tool(
     "save_flow",
     `Trust the hard-won interaction steps chromeflow buffered for the current site, immediately, as a named flow. chromeflow auto-buffers only NOTABLE resolutions (a click that needed a fallback, a verified submit, a field that needed real keystrokes), and AUTOSAVES them as a provisional flow when you leave the site \u2014 so memory works even if you never call this. Provisional flows are not recalled until they have been independently re-observed, or until you vouch for them here. Calling save_flow promotes the buffered steps to TRUSTED right away (an explicit "I confirm this worked"), so they are recalled next session instead of waiting to earn it.
 
@@ -26234,6 +26321,10 @@ Call this when a response shows \`flow_capturable\` and you are confident the ta
       return { content: [{ type: "text", text: res.message }] };
     }
   );
+}
+
+// src/tools/flow/wait.ts
+function registerWaitTools(server, bridge) {
   server.tool(
     "wait_for_click",
     `Wait for the user to click (or interact with) the currently highlighted element, then return.
@@ -26274,29 +26365,6 @@ CDP re-dispatched: isTrusted=true click at (${r.target?.x ?? 0}, ${r.target?.y ?
       return {
         content: [{ type: "text", text: `User clicked the highlighted element.${targetLine}${redispatchLine}` }]
       };
-    }
-  );
-  server.tool(
-    "click_at_coordinates",
-    `Dispatch a real CDP mouse click at viewport (x, y). The only way to interact with cross-origin iframes \u2014 \`click_element\` refuses cross-origin frames because \`find_text\` can't enter them, but a CDP-level mouse event resolves at the renderer process and reaches the iframe's content the way an OS-level click does.
-
-Coordinates are viewport CSS pixels, NOT screen coordinates. \`list_frames\` reports each iframe at \`(x, y, width, height)\` in this same space, so to click 50px in / 80px down inside an iframe: \`click_at_coordinates(frame.x + 50, frame.y + 80)\`.
-
-Runs the same humanlike sequence as \`click_element\` (bezier approach path, settle-hover micro-tremor, press, release, post-click micro-move) so behavioural fingerprinters can't distinguish the call from any other chromeflow click. Skips the activity probe \u2014 cross-origin iframe activity isn't observable from the parent.
-
-Refuses obviously-bad coordinates (negative, > 10000). Use this only when DOM matching has failed and you have a known target position from \`list_frames\` or a screenshot.`,
-    {
-      x: external_exports.number().describe("Viewport CSS X coordinate (left=0). Get from list_frames or a screenshot grid."),
-      y: external_exports.number().describe("Viewport CSS Y coordinate (top=0). Get from list_frames or a screenshot grid."),
-      button: external_exports.enum(["left", "right", "middle"]).optional().describe('Mouse button (default "left").'),
-      double: external_exports.boolean().optional().describe("Fire a double-click instead of a single click. Default false.")
-    },
-    async ({ x, y, button, double }) => {
-      const response = await bridge.request({ type: "click_at_coordinates", x, y, button, double });
-      const r = response;
-      const navLine = r.navigated && r.after_url ? `
-\u2192 Navigated: ${r.after_url}` : "";
-      return { content: [{ type: "text", text: `${r.message}${navLine}` }] };
     }
   );
   server.tool(
@@ -26388,6 +26456,10 @@ Examples: scroll_to_element("#submit-btn"), scroll_to_element("Billing address")
       return { content: [{ type: "text", text: msg }] };
     }
   );
+}
+
+// src/tools/flow/find.ts
+function registerFindTools(server, bridge) {
   server.tool(
     "find_text",
     `Search the active page for text and return actionable matches (text, surrounding context, best-effort CSS selector, clickable flag). Use this instead of get_page_text when checking "is X on the page?" or locating a clickable target. Pierces open AND closed shadow roots. Pass \`frame: "iframe.selector"\` for same-origin iframe search.
@@ -26457,38 +26529,6 @@ ${lines.join("\n")}` }]
     }
   );
   server.tool(
-    "fill_form",
-    `Fill multiple form fields in a single call by targeting each field by its label text.
-Use this instead of calling fill_input repeatedly \u2014 it fills all fields in one round trip and returns a per-field success report.
-Ideal for forms with many textareas or inputs where each fill would otherwise require a separate tool call.
-fields is an array of {label, value} pairs. label should match the field's visible label, placeholder, or aria-label.
-
-Each per-field result includes the matched element description (e.g. \`<input name="title" id="..." placeholder="...">\`) so Claude can spot when fill_form picked the wrong field.
-
-Pass \`exact: true\` for forms with short generic labels (like "Rate" or "Amount") that may collide with similarly-labeled neighbours \u2014 fields without an exact aria-label/placeholder/name/id/label-text match will return success=false instead of silently filling the wrong field.`,
-    {
-      fields: external_exports.array(
-        external_exports.object({
-          label: external_exports.string().describe("Visible label, placeholder, or aria-label of the field"),
-          value: external_exports.string().describe("Value to fill in")
-        })
-      ).describe("List of fields to fill"),
-      exact: external_exports.boolean().optional().describe("If true, refuse fuzzy text-walk matches for every field. Default false.")
-    },
-    async ({ fields, exact }) => {
-      const response = await bridge.request({ type: "fill_form", fields, exact });
-      const r = response;
-      const lines = r.results.map((f) => `${f.success ? "\u2713" : "\u2717"} "${f.label}": ${f.message}`);
-      return {
-        content: [{
-          type: "text",
-          text: `Filled ${r.succeeded}/${r.total} fields:
-${lines.join("\n")}`
-        }]
-      };
-    }
-  );
-  server.tool(
     "list_frames",
     `List every top-level iframe/frame on the active page, with its origin, whether its contentDocument is accessible (same-origin), and its on-screen position. Also reports shadow-host inventory so you can spot pages whose visible content is rendered inside closed shadow roots (Radix portals, Stencil/Lit, custom web components).
 
@@ -26544,6 +26584,51 @@ Shadow hosts (${hosts.length}: ${openCount} open, ${closedCount} closed):` + (cl
 ${lines.join("\n")}${shadowSection}` }] };
     }
   );
+}
+
+// src/tools/flow/forms.ts
+function registerFillFormTools(server, bridge) {
+  server.tool(
+    "fill_form",
+    `Fill multiple form fields in a single call by targeting each field by its label text.
+Use this instead of calling fill_input repeatedly \u2014 it fills all fields in one round trip and returns a per-field success report.
+Ideal for forms with many textareas or inputs where each fill would otherwise require a separate tool call.
+fields is an array of {label, value} pairs. label should match the field's visible label, placeholder, or aria-label.
+
+Each per-field result includes the matched element description (e.g. \`<input name="title" id="..." placeholder="...">\`) so Claude can spot when fill_form picked the wrong field.
+
+Pass \`exact: true\` for forms with short generic labels (like "Rate" or "Amount") that may collide with similarly-labeled neighbours \u2014 fields without an exact aria-label/placeholder/name/id/label-text match will return success=false instead of silently filling the wrong field.`,
+    {
+      fields: external_exports.array(
+        external_exports.object({
+          label: external_exports.string().describe("Visible label, placeholder, or aria-label of the field"),
+          value: external_exports.string().describe("Value to fill in")
+        })
+      ).describe("List of fields to fill"),
+      exact: external_exports.boolean().optional().describe("If true, refuse fuzzy text-walk matches for every field. Default false.")
+    },
+    async ({ fields, exact }) => {
+      const response = await bridge.request({ type: "fill_form", fields, exact });
+      const r = response;
+      const lines = r.results.map((f) => `${f.success ? "\u2713" : "\u2717"} "${f.label}": ${f.message}`);
+      return {
+        content: [{
+          type: "text",
+          text: `Filled ${r.succeeded}/${r.total} fields:
+${lines.join("\n")}`
+        }]
+      };
+    }
+  );
+}
+
+// src/tools/flow.ts
+function registerFlowTools(server, bridge, flowStore) {
+  registerClickTools(server, bridge, flowStore);
+  registerSaveFlowTools(server, flowStore);
+  registerWaitTools(server, bridge);
+  registerFindTools(server, bridge);
+  registerFillFormTools(server, bridge);
 }
 
 // src/index.ts
