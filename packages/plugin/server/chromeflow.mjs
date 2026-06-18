@@ -25234,6 +25234,23 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
     }
   );
   server.tool(
+    "interactive_snapshot",
+    `Compact, accessibility-style list of the page's ACTIONABLE elements \u2014 each as [role] name \u2014 selector. Use this INSTEAD of get_page_text or take_screenshot when your goal is to ACT (click / type / select), not to read prose: it is far cheaper in tokens than dumping page text, and every line gives a ready-to-use selector for click_element / type_text. Pierces open AND closed shadow roots (Reddit faceplate-*, Radix/Stencil/Lit), which a raw accessibility tree misses. Returns the top elements by document order; pass max to widen. For reading article/body text, still use get_page_text.`,
+    {
+      max: external_exports.number().int().min(1).optional().describe("Max elements to return (default 60).")
+    },
+    async ({ max }) => {
+      const response = await bridge.request({ type: "interactive_snapshot", max });
+      const items = response.items ?? [];
+      if (items.length === 0) {
+        return { content: [{ type: "text", text: "No actionable elements found (page may render inside a cross-origin iframe, or content is non-interactive)." }] };
+      }
+      const lines = items.map((it, i) => `${i + 1}. [${it.role}]${it.name ? " " + it.name : ""} \u2014 ${it.selector}`);
+      return { content: [{ type: "text", text: `Actionable elements (${items.length}):
+${lines.join("\n")}` }] };
+    }
+  );
+  server.tool(
     "list_tabs",
     "List all open tabs in the current window with their index, title, and URL. Use this before switch_to_tab if you're not sure which tab to switch to.",
     {},
