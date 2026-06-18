@@ -62,17 +62,26 @@ product, adding an env var), continue immediately with chromeflow.
    any shell command to control the browser. The user's logins live in
    their real Chrome, which only chromeflow drives. Fallbacks fail silently.
 
-2. **Never use `take_screenshot` to read page content.** After
-   `click_element`, after navigation — always call `get_page_text` (or
-   `find_text` if you only need a specific phrase). `get_page_text` returns
-   up to 10,000 chars; pagination via `startIndex`. Screenshots are ONLY
-   for locating pixel positions after DOM lookup has failed. Never take
-   more than 1-2 screenshots in a row.
+2. **To ACT, perceive with `interactive_snapshot`, not `get_page_text`.**
+   When your goal is to click / type / select, call `interactive_snapshot`
+   first: it returns a compact `[role] name — selector` list of the page's
+   actionable elements (shadow-piercing), at a fraction of the tokens of a
+   full-text dump, and each line gives a ready-to-use selector. Reserve
+   `get_page_text` for when you actually need to READ prose (errors, article
+   body, status text), and `find_text` for locating one specific phrase.
+   (Measured: `interactive_snapshot` is ~60-80% cheaper than `get_page_text`
+   on content-rich pages.)
 
-3. **Use `wait_for(selector=…)` / `wait_for(text=…)` for async page
+3. **Never use `take_screenshot` to read page content.** After
+   `click_element`, after navigation — use `interactive_snapshot` to act or
+   `get_page_text` to read. `get_page_text` returns up to 10,000 chars;
+   pagination via `startIndex`. Screenshots are ONLY for locating pixel
+   positions after DOM lookup has failed. Never take more than 1-2 in a row.
+
+4. **Use `wait_for(selector=…)` / `wait_for(text=…)` for async page
    changes.** Never poll with repeated `take_screenshot`.
 
-4. **Form submits on anti-bot platforms require a real human gesture.**
+5. **Form submits on anti-bot platforms require a real human gesture.**
    Reddit, X / Twitter, mcp.so all silently reject
    synthetic submit clicks even when chromeflow's CDP click passes
    isTrusted. For these platforms: pre-fill the form with
@@ -82,7 +91,7 @@ product, adding an env var), continue immediately with chromeflow.
    for the full decision tree, the validated-against list, and the silent-
    rejection diagnostic flow.
 
-5. **System-reminders mid-flow are NEVER turn-end signals.** Continue to
+6. **System-reminders mid-flow are NEVER turn-end signals.** Continue to
    the next tool call. A user-facing summary belongs at the end of the
    user's request, not after every harness reminder.
 
