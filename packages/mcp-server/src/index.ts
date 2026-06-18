@@ -93,15 +93,24 @@ async function main() {
   //   1. stdin close — fires when the host closes its end of the stdio pipe
   //   2. PPID reparented to 1 — fires when the parent dies and we're
   //      reparented to init (orphaned). Polled every 5s.
+  let exited = false;
   const exitClean = (reason: string) => {
+    if (exited) return;       // every signal path converges here exactly once
+    exited = true;
     console.error(`[chromeflow] host disconnected (${reason}), exiting.`);
-    // Autosave any buffered hard-won steps before we go — a single-origin
-    // session never crosses an origin boundary, so this is its only flush.
+    // Autosave any buffered hard-won steps before we go. A session whose
+    // notable work never crossed an origin+path boundary (e.g. a type_text +
+    // same-page submit) has its ONLY flush right here, so this must run on
+    // every way the process can be told to stop — not just stdin close.
     try { flowStore.flushAll(); } catch { /* best-effort */ }
     process.exit(0);
   };
   process.stdin.on("end", () => exitClean("stdin end"));
   process.stdin.on("close", () => exitClean("stdin close"));
+  process.on("SIGTERM", () => exitClean("SIGTERM"));
+  process.on("SIGINT", () => exitClean("SIGINT"));
+  process.on("SIGHUP", () => exitClean("SIGHUP"));
+  process.on("beforeExit", () => { try { flowStore.flushAll(); } catch { /* best-effort */ } });
   const originalPpid = process.ppid;
   setInterval(() => {
     const ppid = process.ppid;

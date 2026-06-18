@@ -24808,6 +24808,8 @@ var FlowStore = class {
   recalled = /* @__PURE__ */ new Set();
   // origins whose trusted flow was actually shown this session
   lastOrigin;
+  lastAutosaved = null;
+  // most recent autosave, for save_flow to vouch for
   constructor(version2, baseDir, now = Date.now) {
     this.version = version2;
     this.now = now;
@@ -24889,6 +24891,7 @@ var FlowStore = class {
     if (!buf || buf.length === 0) return;
     this.buffer.delete(k);
     this.upsert(k, buf, null);
+    this.lastAutosaved = { key: k, sig: signatureOf(buf) };
     this.pruneExpired();
     this.persist();
   }
@@ -24998,6 +25001,19 @@ ${lines.join("\n")}`;
     if (!k) return { saved: 0, origin: null, message: "No origin known yet \u2014 navigate or interact with a page first." };
     const buf = this.buffer.get(k) ?? [];
     if (buf.length === 0) {
+      if (this.lastAutosaved) {
+        const flows = this.data.origins[this.lastAutosaved.key] ?? [];
+        const f = flows.find((x) => signatureOf(x.steps) === this.lastAutosaved.sig);
+        if (f) {
+          f.tier = "trusted";
+          f.task_label = taskLabel;
+          f.last_verified = this.nowIso();
+          const promotedKey = this.lastAutosaved.key;
+          this.lastAutosaved = null;
+          this.persist();
+          return { saved: f.steps.length, origin: promotedKey, message: `Promoted the just-autosaved flow to trusted: "${taskLabel}" (${f.steps.length} steps) for ${promotedKey}.` };
+        }
+      }
       return { saved: 0, origin: k, message: `Nothing notable buffered for ${k}. Flows capture hard-won steps (a fallback fired, a verified submit, a field needing real keystrokes) \u2014 an ordinary first-try click isn't recorded.` };
     }
     this.buffer.delete(k);
@@ -26412,7 +26428,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // src/index.ts
-var PACKAGE_VERSION = true ? "0.12.0" : "dev";
+var PACKAGE_VERSION = true ? "0.12.1" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);
@@ -26486,7 +26502,10 @@ ${tabList}`
   );
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  let exited = false;
   const exitClean = (reason) => {
+    if (exited) return;
+    exited = true;
     console.error(`[chromeflow] host disconnected (${reason}), exiting.`);
     try {
       flowStore.flushAll();
@@ -26496,6 +26515,15 @@ ${tabList}`
   };
   process.stdin.on("end", () => exitClean("stdin end"));
   process.stdin.on("close", () => exitClean("stdin close"));
+  process.on("SIGTERM", () => exitClean("SIGTERM"));
+  process.on("SIGINT", () => exitClean("SIGINT"));
+  process.on("SIGHUP", () => exitClean("SIGHUP"));
+  process.on("beforeExit", () => {
+    try {
+      flowStore.flushAll();
+    } catch {
+    }
+  });
   const originalPpid = process.ppid;
   setInterval(() => {
     const ppid = process.ppid;

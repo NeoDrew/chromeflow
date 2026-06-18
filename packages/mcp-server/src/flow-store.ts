@@ -112,6 +112,7 @@ export class FlowStore {
   private surfaced = new Set<string>();          // origins whose recall hint already fired this session
   private recalled = new Set<string>();          // origins whose trusted flow was actually shown this session
   private lastOrigin: string | undefined;
+  private lastAutosaved: { key: string; sig: string } | null = null; // most recent autosave, for save_flow to vouch for
 
   constructor(version: string, baseDir?: string, now: () => number = Date.now) {
     this.version = version;
@@ -201,6 +202,7 @@ export class FlowStore {
     if (!buf || buf.length === 0) return;
     this.buffer.delete(k);
     this.upsert(k, buf, null);
+    this.lastAutosaved = { key: k, sig: signatureOf(buf) }; // save_flow can still vouch for this
     this.pruneExpired();
     this.persist();
   }
@@ -309,6 +311,23 @@ export class FlowStore {
     if (!k) return { saved: 0, origin: null, message: "No origin known yet — navigate or interact with a page first." };
     const buf = this.buffer.get(k) ?? [];
     if (buf.length === 0) {
+      // The steps may have already autosaved — e.g. the notable action itself
+      // navigated to a new origin+path, flushing the buffer before save_flow
+      // was called. Vouch for that freshly-autosaved provisional flow instead
+      // of reporting nothing, so the manual instant-trust still lands.
+      if (this.lastAutosaved) {
+        const flows = this.data.origins[this.lastAutosaved.key] ?? [];
+        const f = flows.find((x) => signatureOf(x.steps) === this.lastAutosaved!.sig);
+        if (f) {
+          f.tier = "trusted";
+          f.task_label = taskLabel;
+          f.last_verified = this.nowIso();
+          const promotedKey = this.lastAutosaved.key;
+          this.lastAutosaved = null; // a second save_flow shouldn't re-promote the same thing
+          this.persist();
+          return { saved: f.steps.length, origin: promotedKey, message: `Promoted the just-autosaved flow to trusted: "${taskLabel}" (${f.steps.length} steps) for ${promotedKey}.` };
+        }
+      }
       return { saved: 0, origin: k, message: `Nothing notable buffered for ${k}. Flows capture hard-won steps (a fallback fired, a verified submit, a field needing real keystrokes) — an ordinary first-try click isn't recorded.` };
     }
     this.buffer.delete(k);

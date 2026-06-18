@@ -169,11 +169,43 @@ describe("manual save_flow = instant promote / vouch", () => {
     expect(f[0].task_label).toBe("the good flow");
   });
 
-  it("reports nothing-to-save when the buffer is empty", () => {
+  it("reports nothing-to-save when the buffer is empty and nothing was autosaved", () => {
     const store = newStore();
     store.noteUrl("https://site.example/x");
     const res = store.commit("nope", "https://site.example/x");
     expect(res.saved).toBe(0);
+  });
+
+  it("promotes the just-autosaved provisional flow when the action navigated before save_flow (path-change race)", () => {
+    // Mirrors the live python.org case: a navigating click flushes the buffer to
+    // a provisional flow (origin+path changed), THEN save_flow is called.
+    const store = newStore();
+    store.noteUrl("https://app.example/");
+    store.observe(clickAtom("#downloads"), "https://app.example/");
+    store.noteUrl("https://app.example/downloads"); // path change → autosave provisional
+    expect(store._flowsFor("https://app.example/")[0].tier).toBe("provisional");
+    // save_flow now runs from the new path, buffer empty — must still vouch.
+    const res = store.commit("browse downloads", "https://app.example/downloads");
+    expect(res.saved).toBe(1);
+    const f = store._flowsFor("https://app.example/")[0];
+    expect(f.tier).toBe("trusted");
+    expect(f.task_label).toBe("browse downloads");
+  });
+});
+
+describe("shutdown flush (flushAll) covers same-key sessions", () => {
+  it("persists a type_text step that never crossed an origin+path boundary", () => {
+    // Mirrors the live duckduckgo case: type_text buffered, search stayed on the
+    // same key, so only the shutdown flush can save it.
+    const o = "https://search.example";
+    const store = newStore();
+    store.noteUrl(o);
+    store.observe({ tool: "type_text", target: "input[name=q]", selector: "input[name=q]", signal: "type_text", reason: "field needs real keystrokes" }, o);
+    expect(store._flowsFor(o)).toHaveLength(0); // nothing on disk mid-session
+    store.flushAll();                            // what exitClean must call on every exit signal
+    const f = store._flowsFor(o);
+    expect(f).toHaveLength(1);
+    expect(f[0].steps[0].tool).toBe("type_text");
   });
 });
 
