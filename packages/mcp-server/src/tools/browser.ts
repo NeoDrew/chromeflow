@@ -119,8 +119,15 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
       if (response.type !== "tabs_response") throw new Error("Unexpected response");
       const tabs = (response as { tabs: Array<{ index: number; title: string; url: string; active: boolean }> }).tabs;
       const lines = tabs.map(t => `${t.index}. ${t.active ? "[active] " : ""}${t.title} — ${t.url}`);
+      // Flow memory: list_tabs is the agent's standard orientation call when a
+      // page is ALREADY loaded (it then skips open_page), so recall must fire
+      // here too or the known_flow hint is missed on revisits. Key on the
+      // active tab; the once-per-origin gate keeps it from duplicating open_page.
+      const activeUrl = tabs.find(t => t.active)?.url;
+      flowStore.noteUrl(activeUrl);
+      const recall = flowStore.recallHint(activeUrl);
       return {
-        content: [{ type: "text", text: `Open tabs:\n${lines.join("\n")}` }],
+        content: [{ type: "text", text: `Open tabs:\n${lines.join("\n")}${recall}` }],
       };
     }
   );

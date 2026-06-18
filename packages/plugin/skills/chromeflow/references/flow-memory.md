@@ -24,8 +24,12 @@ lifecycle), so memory works even if you never call a tool:
 
 ## Two signals you'll see in tool responses
 
-**`known_flow`** — appears (once per origin per session) on `open_page`
-and the first `click_element` against a site you've succeeded on before:
+**`known_flow`** — appears (once per origin per session) as soon as you
+engage a site you've succeeded on before, whether you arrive via `open_page`,
+check an already-loaded page with `list_tabs`, or act on it with
+`click_element`. (Surfacing it on all three matters: when a page is already
+loaded the agent skips `open_page`, so keying recall to `open_page` alone
+missed roughly half of revisits.):
 
 ```
 ℹ known_flow for https://www.reddit.com/submit — prefer these proven steps over rediscovery (verify each as usual):

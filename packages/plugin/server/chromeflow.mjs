@@ -25155,9 +25155,12 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
       if (response.type !== "tabs_response") throw new Error("Unexpected response");
       const tabs = response.tabs;
       const lines = tabs.map((t) => `${t.index}. ${t.active ? "[active] " : ""}${t.title} \u2014 ${t.url}`);
+      const activeUrl = tabs.find((t) => t.active)?.url;
+      flowStore.noteUrl(activeUrl);
+      const recall = flowStore.recallHint(activeUrl);
       return {
         content: [{ type: "text", text: `Open tabs:
-${lines.join("\n")}` }]
+${lines.join("\n")}${recall}` }]
       };
     }
   );
@@ -26084,7 +26087,7 @@ Current URL: ${activeTab.url}`;
         }, actionUrl);
       }
       flowStore.noteUrl(nowUrl);
-      const recall = flowStore.recallHint(nowUrl);
+      const recall = flowStore.recallHint(actionUrl) || flowStore.recallHint(nowUrl);
       const capturable = flowStore.capturableHint(actionUrl);
       if (!r.success) {
         flowStore.observeFailure(actionUrl, selector ?? textHint);
@@ -26428,7 +26431,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // src/index.ts
-var PACKAGE_VERSION = true ? "0.12.1" : "dev";
+var PACKAGE_VERSION = true ? "0.12.2" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);
