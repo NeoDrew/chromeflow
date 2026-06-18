@@ -465,8 +465,12 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
       );
       // `landed` is the extension's post-type verification (text actually stuck);
       // it lets us treat "typed but the field reverted" as a failure, not a success.
-      const r = response as { success?: boolean; message?: string; landed?: boolean };
+      // `resolved_selector` is the canonical, single, stable selector of the element
+      // the extension actually focused — cache THAT (not the agent's loose / multi-
+      // option query) so recall replays a precise locator and lands first try.
+      const r = response as { success?: boolean; message?: string; landed?: boolean; resolved_selector?: string | null };
       const typeFailed = r.success === false || r.landed === false;
+      const locator = r.resolved_selector || into_selector;
       // Flow memory: typing into a specific selector with type_text (rather than
       // fill_input) is a deliberate "this field needs real isTrusted keystrokes"
       // decision worth remembering — the canonical Reddit title/body case. Only
@@ -475,18 +479,18 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
       if (into_selector && !typeFailed) {
         flowStore.observe({
           tool: "type_text",
-          target: into_selector,
-          selector: into_selector,
+          target: locator!,
+          selector: locator,
           signal: clear_first ? "type_text(clear_first)" : "type_text",
           clear_first: clear_first || undefined,
-          fragile: isFragileSelector(into_selector),
+          fragile: isFragileSelector(locator),
           reason: "field needs real keystrokes (type_text, not fill_input)",
         } as Atom);
         capturable = flowStore.capturableHint(undefined);
       } else if (into_selector && typeFailed) {
         // A recalled type_text step that didn't land — ding the flow so a drifted
         // shadow-DOM / React field selector self-demotes (the Reddit failure mode).
-        flowStore.observeFailure(undefined, into_selector);
+        flowStore.observeFailure(undefined, locator);
       }
       return {
         content: [{ type: "text", text: (r.message ?? (r.success ? "Text typed successfully" : "Failed to type text")) + capturable }],

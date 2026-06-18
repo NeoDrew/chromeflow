@@ -17,10 +17,33 @@ lifecycle), so memory works even if you never call a tool:
    *trusted* once its exact step-signature is independently re-observed a
    second time, OR the moment you `save_flow()` it (an explicit vouch).
 4. **Only trusted flows are recalled.**
-5. **Failure feedback.** A recalled step that fails on replay raises the
-   flow's fail count; after two failures the flow is dropped, so a flow that
-   stops working self-heals out of the store. Provisional flows also expire
-   after 30 days if never promoted.
+5. **Self-correcting recall.** A recalled step that fails on replay (a click
+   that misses, or a `type_text` that doesn't land) OR that you silently
+   rediscover with a *different* locator (a mismatch) **demotes the flow to
+   provisional on the first miss** (so it immediately stops being recalled) and
+   drops it on the second. Only *reliable* trusted flows (more successes than
+   failures, clean last replay) are surfaced. Provisional flows also expire
+   after 30 days. This is what keeps memory net-positive on dynamic / anti-bot
+   sites where a stored selector can drift between sessions.
+
+## Recalled steps are rendered as ready-to-run calls
+
+Recall surfaces the *proven strategy*, not just a selector, so on hard sites you
+skip the expensive cold rediscovery of the dispatch path:
+
+- a click that only worked via the React-fiber fallback comes back as
+  `click_element(selector="…", via="fiber", until_url_changes=true)` — issue it
+  directly instead of re-walking the CDP → silent-reject → fallback chain;
+- a field that needed real keystrokes comes back as
+  `type_text(into_selector="…", clear_first=true)`;
+- the verifying `until_*` that worked is included so you re-confirm cheaply.
+
+**Abandon-on-first-miss.** A recalled call is guidance, not gospel. If it fails
+or its element isn't found on the **first** attempt, do NOT retry it —
+*discard the hint and rediscover from scratch*. Retrying a drifted selector is
+exactly what makes memory cost more than a cold run on flaky shadow-DOM pages.
+Steps marked `⚠fragile` (positional `nth-*` or multi-option comma selectors) are
+the likeliest to have drifted — re-verify them first.
 
 ## Two signals you'll see in tool responses
 
