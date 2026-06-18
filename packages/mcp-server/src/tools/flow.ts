@@ -218,8 +218,11 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         } as Atom, actionUrl);
       }
       flowStore.noteUrl(nowUrl);
-      // Recall for where we are NOW; nudge save against where the steps accrued.
-      const recall = flowStore.recallHint(nowUrl);
+      // Recall the flow for the page we ACTED on (before_url) first — that's the
+      // page a known_flow is relevant to when the agent clicked without an
+      // open_page (already-loaded page). Fall back to the destination. Both are
+      // gated once-per-origin, so this can't double up with open_page/list_tabs.
+      const recall = flowStore.recallHint(actionUrl) || flowStore.recallHint(nowUrl);
       const capturable = flowStore.capturableHint(actionUrl);
 
       if (!r.success) {
