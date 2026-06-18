@@ -4659,6 +4659,13 @@ async function handleMcpMessage(msg: {
       // target is inside a recognised rich-text editor, fall back to
       // execCommand('insertText') which tiptap DOES accept.
       let tiptapFallback = "";
+      // `landed` = did the typed text actually end up in the target element? We
+      // already read the element's content for the TipTap guard; reuse it as a
+      // general post-type verification so the MCP layer can treat "typed but the
+      // field is still empty / reverted" (a drifted shadow-DOM selector landing
+      // on the wrong node) as a failure rather than a success. Defaults true when
+      // we can't verify (no into_selector, or iframe target).
+      let landed = true;
       if (intoSelector && intoSelectorOk && !frameSelector) {
         try {
           const r = await chrome.scripting.executeScript({
@@ -4726,9 +4733,15 @@ async function handleMcpMessage(msg: {
             | { ok: false }
             | { ok: true; fallback: boolean; isProseMirror: boolean; actualLength: number; expectedLength: number; finalLength?: number }
             | undefined;
-          if (v && v.ok && v.fallback) {
-            tiptapFallback =
-              ` — TipTap/ProseMirror silently dropped the typed text (${v.actualLength}/${v.expectedLength} chars survived), recovered via execCommand insertText (${v.finalLength ?? "?"} chars now in editor)`;
+          if (v && v.ok) {
+            const got = v.fallback ? (v.finalLength ?? 0) : v.actualLength;
+            landed = got >= v.expectedLength * 0.5;
+            if (v.fallback) {
+              tiptapFallback =
+                ` — TipTap/ProseMirror silently dropped the typed text (${v.actualLength}/${v.expectedLength} chars survived), recovered via execCommand insertText (${v.finalLength ?? "?"} chars now in editor)`;
+            }
+          } else if (v && v.ok === false) {
+            landed = false; // verification couldn't find the target — text did not land where expected
           }
         } catch { /* best-effort */ }
       }
@@ -4770,6 +4783,7 @@ async function handleMcpMessage(msg: {
         type: "action_done",
         requestId: msg.requestId,
         success: true,
+        landed,
         message: `Typed ${text.length} characters via individual keystrokes${frameSelector ? ` into iframe "${frameSelector}"${frameVerify ? " " + frameVerify : ""}` : ""}${tiptapFallback}`,
       };
     }

@@ -463,22 +463,30 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
         { type: "type_text", text, frame, into_selector, clear_first },
         timeoutMs
       );
-      const r = response as { success?: boolean; message?: string };
+      // `landed` is the extension's post-type verification (text actually stuck);
+      // it lets us treat "typed but the field reverted" as a failure, not a success.
+      const r = response as { success?: boolean; message?: string; landed?: boolean };
+      const typeFailed = r.success === false || r.landed === false;
       // Flow memory: typing into a specific selector with type_text (rather than
       // fill_input) is a deliberate "this field needs real isTrusted keystrokes"
       // decision worth remembering — the canonical Reddit title/body case. Only
-      // notable when an explicit target was given and the type succeeded.
+      // notable when an explicit target was given and the type actually landed.
       let capturable = "";
-      if (into_selector && r.success !== false) {
+      if (into_selector && !typeFailed) {
         flowStore.observe({
           tool: "type_text",
           target: into_selector,
           selector: into_selector,
           signal: clear_first ? "type_text(clear_first)" : "type_text",
+          clear_first: clear_first || undefined,
           fragile: isFragileSelector(into_selector),
           reason: "field needs real keystrokes (type_text, not fill_input)",
         } as Atom);
         capturable = flowStore.capturableHint(undefined);
+      } else if (into_selector && typeFailed) {
+        // A recalled type_text step that didn't land — ding the flow so a drifted
+        // shadow-DOM / React field selector self-demotes (the Reddit failure mode).
+        flowStore.observeFailure(undefined, into_selector);
       }
       return {
         content: [{ type: "text", text: (r.message ?? (r.success ? "Text typed successfully" : "Failed to type text")) + capturable }],

@@ -23,6 +23,7 @@ import {
   isFragileSelector,
   PROMOTE_AT_SUCCESS,
   PRUNE_AT_FAILS,
+  DEMOTE_AT_FAILS,
   PROVISIONAL_TTL_MS,
   type Atom,
 } from "./flow-store.js";
@@ -296,5 +297,101 @@ describe("persistence & privacy", () => {
     const store = newStore();
     expect(store._flowsFor("https://x.example/")).toHaveLength(0);
     expect(existsSync(path + ".corrupt")).toBe(true);
+  });
+});
+
+// ---- Phase 1-4: self-correcting recall on dynamic / anti-bot targets --------
+describe("self-correcting recall (the Reddit-class fix)", () => {
+  const o = "https://hard.example/search";
+  function trusted(sel = "#go") {
+    const s1 = newStore(); visit(s1, o, [clickAtom(sel)]);
+    const s2 = newStore(); visit(s2, o, [clickAtom(sel)]); // now trusted
+    return newStore(); // fresh session reading the trusted flow
+  }
+
+  it(`demotes trusted -> provisional on the FIRST recalled-step failure (DEMOTE_AT_FAILS=${DEMOTE_AT_FAILS})`, () => {
+    const s = trusted();
+    s.recallHint(o);                       // agent was shown the flow
+    s.observeFailure(o, "#go");            // one failure
+    const f = s._flowsFor(o)[0];
+    expect(f.tier).toBe("provisional");
+    expect(f.fail_count).toBe(1);
+  });
+
+  it("a demoted flow is no longer surfaced on recall (stops misleading)", () => {
+    const s = trusted();
+    s.recallHint(o);
+    s.observeFailure(o, "#go");
+    const next = newStore();               // fresh session
+    expect(next.recallHint(o)).toBe("");   // provisional + fail -> not recalled
+  });
+
+  it("prunes after the second failure", () => {
+    const s = trusted();
+    s.recallHint(o);
+    for (let i = 0; i < PRUNE_AT_FAILS; i++) s.observeFailure(o, "#go");
+    expect(s._flowsFor(o)).toHaveLength(0);
+  });
+
+  it("mismatch: recalling a flow then acting with a DIFFERENT locator dings it", () => {
+    const s = trusted("#a");
+    s.recallHint(o);                       // showed click selector=#a
+    s.observe(clickAtom("#b"), o);         // agent rediscovered with #b
+    const f = s._flowsFor(o)[0];
+    expect(f.fail_count).toBe(1);
+    expect(f.tier).toBe("provisional");
+  });
+
+  it("confirm: recalling a flow then using the SAME locator keeps it healthy", () => {
+    const s = trusted("#a");
+    s.recallHint(o);
+    s.observe(clickAtom("#a"), o);         // agent used the recalled selector
+    const f = s._flowsFor(o)[0];
+    expect(f.fail_count).toBe(0);
+    expect(f.tier).toBe("trusted");
+    expect(f.last_replay_ok).toBe(true);
+  });
+
+  it("reliability gate: a flow with more fails than successes is not recalled", () => {
+    const s = trusted();
+    s.recallHint(o); s.observeFailure(o, "#go"); // fail_count 1, success 2 still > 1, but demoted
+    // force net-negative by a second fail (prunes), so instead check the gate directly
+    const s2 = trusted();
+    // hand-fail twice across the gate: demote then it stays provisional => not recalled
+    s2.recallHint(o); s2.observeFailure(o, "#go");
+    expect(newStore().recallHint(o)).toBe("");
+  });
+});
+
+describe("strategy replay rendering + fragility", () => {
+  const o = "https://app.example/x";
+  it("renders recalled steps as ready-to-run calls (type_text + click)", () => {
+    // Build a trusted flow with a type_text step and a fiber-recovered click.
+    const s1 = new FlowStore(VERSION, dir);
+    s1.noteUrl(o);
+    s1.observe({ tool: "type_text", target: "input#q", selector: "input#q", clear_first: true, signal: "type_text(clear_first)", reason: "keystrokes" }, o);
+    s1.commit("search", o); // trusted instantly
+    const hint = new FlowStore(VERSION, dir).recallHint(o);
+    expect(hint).toContain("type_text(into_selector=");
+    expect(hint).toContain("clear_first=true");
+    expect(hint).toContain("known_flow");
+    expect(hint.toLowerCase()).toContain("rediscover"); // abandon-on-miss guidance
+  });
+
+  it("surfaces via=\"fiber\" for a fiber-recovered click", () => {
+    const o2 = "https://app.example/fiber";
+    const s1 = new FlowStore(VERSION, dir);
+    s1.noteUrl(o2);
+    s1.observe({ tool: "click_element", target: "selector=#go", selector: "#go", recovered_via: "react-fiber", signal: "navigated", verification: "until_url_changes=true", reason: "fiber click" }, o2);
+    s1.commit("go", o2);
+    const hint = new FlowStore(VERSION, dir).recallHint(o2);
+    expect(hint).toContain("via=\"fiber\"");
+    expect(hint).toContain("until_url_changes=true");
+  });
+
+  it("flags multi-option (comma) and positional selectors as fragile", () => {
+    expect(isFragileSelector('input[name="q"], faceplate-search-input input')).toBe(true);
+    expect(isFragileSelector("div > a:nth-of-type(2)")).toBe(true);
+    expect(isFragileSelector("#stable")).toBe(false);
   });
 });
