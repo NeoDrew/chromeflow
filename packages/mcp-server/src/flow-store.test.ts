@@ -395,3 +395,30 @@ describe("strategy replay rendering + fragility", () => {
     expect(isFragileSelector("#stable")).toBe(false);
   });
 });
+
+// ---- step-level promotion + cost-ranked recall ----------------------------
+describe("step-level promotion + cost ranking", () => {
+  it("a recurring atom promotes in 2 sessions even when the full sequence varies", () => {
+    const o = "https://multi.example/x";
+    const s1 = newStore(); visit(s1, o, [clickAtom("#a"), clickAtom("#b")]); // decomposes into #a, #b 1-step flows too
+    const s2 = newStore(); visit(s2, o, [clickAtom("#a"), clickAtom("#c")]); // #a recurs; #b/#c differ
+    const aFlow = s2._flowsFor(o).find((f) => f.steps.length === 1 && f.steps[0].selector === "#a");
+    expect(aFlow?.tier).toBe("trusted");
+    expect(aFlow?.success_count).toBe(2);
+    // the full 2-step sequences did NOT match each other -> stay provisional
+    const full = s2._flowsFor(o).filter((f) => f.steps.length === 2);
+    expect(full.every((f) => f.tier === "provisional")).toBe(true);
+  });
+
+  it("cost-ranked recall lists the cheaper flow before the expensive one", () => {
+    const o = "https://cost.example/x";
+    const cheap = newStore(); cheap.noteUrl(o); cheap.observe(clickAtom("#cheap"), o); cheap.commit("cheap", o);
+    const exp = newStore(); exp.noteUrl(o);
+    exp.observe(clickAtom("#x1"), o); exp.observe(clickAtom("#x2"), o); exp.observe(clickAtom("#x3"), o);
+    exp.commit("expensive", o);
+    const hint = newStore().recallHint(o);
+    expect(hint).toContain('"cheap"');
+    expect(hint).toContain('"expensive"');
+    expect(hint.indexOf('"cheap"')).toBeLessThan(hint.indexOf('"expensive"'));
+  });
+});
