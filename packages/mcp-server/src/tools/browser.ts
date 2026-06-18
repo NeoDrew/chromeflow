@@ -117,7 +117,13 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
       max: z.number().int().min(1).optional().describe("Max elements to return (default 60)."),
     },
     async ({ max }) => {
-      const response = await bridge.request({ type: "interactive_snapshot", max });
+      let response;
+      try {
+        response = await bridge.request({ type: "interactive_snapshot", max });
+      } catch {
+        // Old extension without the handler — degrade instead of hard-failing.
+        return { content: [{ type: "text", text: "interactive_snapshot is unavailable (reload/update the chromeflow extension). Fall back to get_page_text + find_text for now." }] };
+      }
       const items = (response as { items?: Array<{ role: string; name: string; selector: string }> }).items ?? [];
       if (items.length === 0) {
         return { content: [{ type: "text", text: "No actionable elements found (page may render inside a cross-origin iframe, or content is non-interactive)." }] };
