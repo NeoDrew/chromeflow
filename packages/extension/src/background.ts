@@ -2295,25 +2295,34 @@ async function handleMcpMessage(msg: {
             const tid = el.getAttribute("data-testid"); if (tid) return `[data-testid="${tid}"]`;
             return tag;
           }
-          const out: Array<{ role: string; name: string; selector: string }> = [];
+          // Split into CONTROLS (buttons, inputs, search boxes, menu items — the
+          // things you usually act on) vs plain navigation LINKS. Controls are
+          // kept in full; links are capped, so a content/article page (mostly
+          // links) yields a small focused snapshot instead of a giant link dump.
+          const controls: Array<{ role: string; name: string; selector: string }> = [];
+          const links: Array<{ role: string; name: string; selector: string }> = [];
+          const LINK_CAP = 15;
           const seen = new Set<string>();
           let walked = 0;
           const stack: ParentNode[] = [document];
-          while (stack.length && out.length < cap && walked < 12000) {
+          while (stack.length && walked < 12000 && (controls.length < cap || links.length < LINK_CAP)) {
             const root = stack.pop()!;
             for (const el of Array.from(root.querySelectorAll("*"))) {
               walked++;
               const sr = getShadowRoot(el); if (sr) stack.push(sr);
-              if (out.length >= cap) break;
+              if (controls.length >= cap && links.length >= LINK_CAP) break;
               if (!interactive(el) || !visible(el)) continue;
               const role = el.getAttribute("role") || el.tagName.toLowerCase();
               const name = nm(el); const selector = canonical(el);
               const key = role + "|" + name + "|" + selector;
               if (seen.has(key)) continue; seen.add(key);
-              out.push({ role, name, selector });
+              const isLink = (el.tagName.toLowerCase() === "a" && el.hasAttribute("href")) || el.getAttribute("role") === "link";
+              if (isLink) { if (links.length < LINK_CAP) links.push({ role, name, selector }); }
+              else if (controls.length < cap) { controls.push({ role, name, selector }); }
             }
           }
-          return out;
+          // Controls first (prioritized), then a capped tail of links, overall cap.
+          return [...controls, ...links].slice(0, cap);
         },
         args: [max],
       });

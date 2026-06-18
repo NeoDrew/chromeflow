@@ -62,15 +62,16 @@ product, adding an env var), continue immediately with chromeflow.
    any shell command to control the browser. The user's logins live in
    their real Chrome, which only chromeflow drives. Fallbacks fail silently.
 
-2. **To ACT, perceive with `interactive_snapshot`, not `get_page_text`.**
-   When your goal is to click / type / select, call `interactive_snapshot`
-   first: it returns a compact `[role] name — selector` list of the page's
-   actionable elements (shadow-piercing), at a fraction of the tokens of a
-   full-text dump, and each line gives a ready-to-use selector. Reserve
-   `get_page_text` for when you actually need to READ prose (errors, article
-   body, status text), and `find_text` for locating one specific phrase.
-   (Measured: `interactive_snapshot` is ~60-80% cheaper than `get_page_text`
-   on content-rich pages.)
+2. **Perceive with the right tool for the page type.** On **app / dashboard /
+   feed / form** pages (controls buried in UI chrome — the usual case for
+   logged-in sites), call `interactive_snapshot` first: a compact
+   `[role] name — selector` list of actionable elements (shadow-piercing),
+   far cheaper than a full-text dump, each line a ready-to-use selector.
+   It prioritizes controls (search boxes, buttons, inputs) and caps plain
+   links. On **content / article** pages (mostly prose + many links), use
+   `get_page_text` to read and `find_text` for one specific phrase —
+   `interactive_snapshot` is not the right tool there. Rule of thumb: acting
+   on an app UI → snapshot; reading an article → page_text.
 
 3. **Never use `take_screenshot` to read page content.** After
    `click_element`, after navigation — use `interactive_snapshot` to act or
