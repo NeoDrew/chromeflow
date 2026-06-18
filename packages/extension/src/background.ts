@@ -4386,6 +4386,11 @@ async function handleMcpMessage(msg: {
       // in a tiptap / ProseMirror editor in one call rather than the old
       // wait_for_click → execCommand → type_text pattern.
       let intoSelectorOk: boolean | null = null;
+      // The canonical, single, stable selector for the element we ACTUALLY
+      // focused — surfaced so flow memory caches a precise locator instead of
+      // the agent's loose (possibly multi-option / ambiguous) query. Generic:
+      // no site-specific logic, just attribute preference + visibility.
+      let resolvedSelector: string | null = null;
       if (intoSelector) {
         try {
           const r = await chrome.scripting.executeScript({
@@ -4401,22 +4406,48 @@ async function handleMcpMessage(msg: {
                 }
                 return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
               }
-              function queryDeep(root: ParentNode, sel: string): Element | null {
-                const direct = root.querySelector(sel);
-                if (direct) return direct;
+              function queryAllDeep(root: ParentNode, sel: string, out: Element[]): Element[] {
+                for (const m of Array.from(root.querySelectorAll<Element>(sel))) out.push(m);
                 for (const el of Array.from(root.querySelectorAll<Element>("*"))) {
                   const sr = getShadowRoot(el);
-                  if (sr) {
-                    const found = queryDeep(sr, sel);
-                    if (found) return found;
-                  }
+                  if (sr) queryAllDeep(sr, sel, out);
                 }
+                return out;
+              }
+              // A selector can match several elements (e.g. a hidden duplicate
+              // search box + the visible one). Pick the VISIBLE, editable,
+              // enabled match so typing lands on the real field — the generic
+              // cause of "recalled selector focuses the wrong/hidden node".
+              function isVisibleEditable(el: Element): boolean {
+                if (!(el instanceof HTMLElement)) return false;
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 && rect.height === 0) return false;
+                const cs = getComputedStyle(el);
+                if (cs.visibility === "hidden" || cs.display === "none") return false;
+                const editable = el.isContentEditable || el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+                const disabled = (el as HTMLInputElement).disabled === true ||
+                  el.getAttribute("aria-disabled") === "true" ||
+                  (el as HTMLInputElement).readOnly === true;
+                return editable && !disabled;
+              }
+              // Canonical, stable, single selector for the resolved element —
+              // attribute preference (id/name/aria/placeholder/testid), skipping
+              // ids that look auto-generated. Returns null when no stable anchor.
+              function canonical(el: HTMLElement): string | null {
+                const tag = el.tagName.toLowerCase();
+                const looksHashed = (s: string) => s.length > 12 && /\d/.test(s) && /[a-z]/i.test(s) && !/[\s_-]/.test(s);
+                const id = el.getAttribute("id");
+                if (id && !looksHashed(id)) { try { return `#${CSS.escape(id)}`; } catch { return `#${id}`; } }
+                const name = el.getAttribute("name"); if (name) return `${tag}[name="${name}"]`;
+                const aria = el.getAttribute("aria-label"); if (aria) return `${tag}[aria-label="${aria.replace(/"/g, '\\"')}"]`;
+                const ph = el.getAttribute("placeholder"); if (ph) return `${tag}[placeholder="${ph.replace(/"/g, '\\"')}"]`;
+                const tid = el.getAttribute("data-testid"); if (tid) return `[data-testid="${tid}"]`;
                 return null;
               }
-              const target = queryDeep(document, selector);
-              if (!target) return "not-found";
-              if (!(target instanceof HTMLElement)) return "not-html";
-              // If 0×0, scroll into view (best-effort) before focusing.
+              const all = queryAllDeep(document, selector, []);
+              if (all.length === 0) return { status: "not-found" };
+              const target = (all.find(isVisibleEditable) ?? all.find((e) => e instanceof HTMLElement) ?? all[0]) as HTMLElement;
+              if (!(target instanceof HTMLElement)) return { status: "not-html" };
               const rect = target.getBoundingClientRect();
               if (rect.width === 0 && rect.height === 0) {
                 target.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "center" });
@@ -4435,17 +4466,19 @@ async function handleMcpMessage(msg: {
                   target.removeAttribute("data-chromeflow-clear-target");
                 }
               }
-              return "ok";
+              return { status: "ok", resolved: canonical(target) };
             },
             args: [intoSelector, clearFirst],
           });
-          intoSelectorOk = r[0]?.result === "ok";
+          const res = r[0]?.result as { status?: string; resolved?: string | null } | undefined;
+          intoSelectorOk = res?.status === "ok";
+          if (res?.resolved) resolvedSelector = res.resolved;
           if (!intoSelectorOk) {
             return {
               type: "action_done",
               requestId: msg.requestId,
               success: false,
-              message: `into_selector "${intoSelector}" did not resolve to a focusable element (${r[0]?.result ?? "unknown"}). Either the selector is wrong, the element is detached, or it lives in a cross-origin iframe.`,
+              message: `into_selector "${intoSelector}" did not resolve to a focusable element (${res?.status ?? "unknown"}). Either the selector is wrong, the element is detached, or it lives in a cross-origin iframe.`,
             };
           }
           // Second pass: clear Lexical / ProseMirror / TipTap state in MAIN world.
@@ -4784,6 +4817,7 @@ async function handleMcpMessage(msg: {
         requestId: msg.requestId,
         success: true,
         landed,
+        resolved_selector: resolvedSelector,
         message: `Typed ${text.length} characters via individual keystrokes${frameSelector ? ` into iframe "${frameSelector}"${frameVerify ? " " + frameVerify : ""}` : ""}${tiptapFallback}`,
       };
     }

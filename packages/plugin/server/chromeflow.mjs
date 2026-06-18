@@ -25495,20 +25495,21 @@ ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
       );
       const r = response;
       const typeFailed = r.success === false || r.landed === false;
+      const locator = r.resolved_selector || into_selector;
       let capturable = "";
       if (into_selector && !typeFailed) {
         flowStore.observe({
           tool: "type_text",
-          target: into_selector,
-          selector: into_selector,
+          target: locator,
+          selector: locator,
           signal: clear_first ? "type_text(clear_first)" : "type_text",
           clear_first: clear_first || void 0,
-          fragile: isFragileSelector(into_selector),
+          fragile: isFragileSelector(locator),
           reason: "field needs real keystrokes (type_text, not fill_input)"
         });
         capturable = flowStore.capturableHint(void 0);
       } else if (into_selector && typeFailed) {
-        flowStore.observeFailure(void 0, into_selector);
+        flowStore.observeFailure(void 0, locator);
       }
       return {
         content: [{ type: "text", text: (r.message ?? (r.success ? "Text typed successfully" : "Failed to type text")) + capturable }]
