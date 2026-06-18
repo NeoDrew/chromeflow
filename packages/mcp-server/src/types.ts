@@ -72,6 +72,7 @@ export type ServerMessage =
   | { type: "save_page_state"; requestId: string }
   | { type: "restore_page_state"; requestId: string; state: PageFieldState[] }
   | { type: "list_tabs"; requestId: string }
+  | { type: "interactive_snapshot"; requestId: string; max?: number }
   | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }>; exact?: boolean }
   // filePath XOR fileContent: filePath drives the CDP file-input path (local disk),
   // fileContent carries base64 bytes inline for servers with no local disk access.
