@@ -24761,9 +24761,10 @@ import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
 var PROMOTE_AT_SUCCESS = 2;
+var DEMOTE_AT_FAILS = 1;
 var PRUNE_AT_FAILS = 2;
 var PROVISIONAL_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
-var ATOM_KEYS = ["tool", "target", "selector", "recovered_via", "signal", "fragile", "reason"];
+var ATOM_KEYS = ["tool", "target", "selector", "recovered_via", "signal", "verification", "clear_first", "fragile", "reason"];
 function originKey(url) {
   if (!url) return void 0;
   try {
@@ -24795,6 +24796,27 @@ function autoLabel(k, steps) {
   }
   return `auto: ${tools} @ ${path2}`;
 }
+function actionableVia(recovered_via) {
+  if (recovered_via && recovered_via.includes("fiber")) return "fiber";
+  return null;
+}
+function renderStep(s, i) {
+  const fragNote = s.fragile ? "  \u26A0fragile \u2014 if it misses on the first try, do NOT retry it; rediscover" : "";
+  if (s.tool === "type_text") {
+    const sel = s.selector ?? s.target;
+    const cf = s.clear_first ? ", clear_first=true" : "";
+    return `   ${i + 1}. type_text(into_selector=${JSON.stringify(sel)}${cf})${fragNote}`;
+  }
+  if (s.tool === "click_element") {
+    const isSel = s.target.startsWith("selector=");
+    const targ = isSel ? `selector=${JSON.stringify(s.selector ?? s.target.replace(/^selector=/, ""))}` : `textHint=${JSON.stringify(s.target)}`;
+    const via = actionableVia(s.recovered_via);
+    const viaStr = via ? `, via=${JSON.stringify(via)}` : "";
+    const ver = s.verification ? `, ${s.verification}` : s.signal === "navigated" || s.signal === "until_url_change" ? ", until_url_changes=true" : "";
+    return `   ${i + 1}. click_element(${targ}${viaStr}${ver})${fragNote}`;
+  }
+  return `   ${i + 1}. ${s.tool} ${s.target}${s.fragile ? "  \u26A0fragile" : ""}`;
+}
 var FlowStore = class {
   path;
   data;
@@ -24807,6 +24829,10 @@ var FlowStore = class {
   // origins whose recall hint already fired this session
   recalled = /* @__PURE__ */ new Set();
   // origins whose trusted flow was actually shown this session
+  recalledFlows = /* @__PURE__ */ new Map();
+  // the flows we showed, for mismatch/confirm attribution
+  dinged = /* @__PURE__ */ new Set();
+  // flow ids already failed this session (no double-count)
   lastOrigin;
   lastAutosaved = null;
   // most recent autosave, for save_flow to vouch for
@@ -24862,6 +24888,21 @@ var FlowStore = class {
     if (changed) this.persist();
   }
   /**
+   * Record a failed/mismatched replay against a flow: demote on first, prune on
+   * second (via pruneExpired's PRUNE_AT_FAILS check). `dedupeKey` collapses the
+   * repeated mismatch check (which runs on every observe) to one ding per flow
+   * per session; explicit tool failures pass no key so each real failure counts.
+   */
+  failFlow(f, dedupeKey) {
+    if (dedupeKey) {
+      if (this.dinged.has(dedupeKey)) return;
+      this.dinged.add(dedupeKey);
+    }
+    f.fail_count += 1;
+    f.last_replay_ok = false;
+    if (f.tier === "trusted" && f.fail_count >= DEMOTE_AT_FAILS) f.tier = "provisional";
+  }
+  /**
    * Update the "current origin". Crossing to a DIFFERENT origin first autosaves
    * the origin we are leaving — that boundary is our best server-side proxy for
    * "a task on that site just finished".
@@ -24879,11 +24920,44 @@ var FlowStore = class {
     if (!atom) return;
     const k = originKey(url) ?? this.lastOrigin;
     if (!k) return;
+    this.reconcileAgainstRecalled(k, atom);
     const list = this.buffer.get(k) ?? [];
     const sig = `${atom.tool}|${atom.target}|${atom.selector ?? ""}`;
     if (list.some((a) => `${a.tool}|${a.target}|${a.selector ?? ""}` === sig)) return;
     list.push(sanitizeAtom(atom));
     this.buffer.set(k, list);
+  }
+  /**
+   * When the agent performs a notable step on an origin we recalled a flow for,
+   * compare it to the recalled steps of the same tool:
+   *   - same locator  -> the recalled step worked: mark the flow's replay OK.
+   *   - different locator (and the recalled one was never used) -> the stored
+   *     selector was wrong; the agent silently rediscovered -> fail the flow.
+   * This catches the "wrong element but technically succeeded" case that the
+   * explicit failure signal misses, and is what neutralises a drifted Reddit-style
+   * shadow-DOM selector before it costs another session.
+   */
+  reconcileAgainstRecalled(k, atom) {
+    const shown = this.recalledFlows.get(k);
+    if (!shown) return;
+    const atomLoc = atom.selector ?? atom.target;
+    let changed = false;
+    for (const f of shown) {
+      const sameTool = f.steps.filter((s) => s.tool === atom.tool);
+      if (sameTool.length === 0) continue;
+      const usedRecalled = sameTool.some((s) => (s.selector ?? s.target) === atomLoc || s.target === atom.target);
+      if (usedRecalled) {
+        if (f.last_replay_ok !== true) {
+          f.last_replay_ok = true;
+          changed = true;
+        }
+      } else {
+        const before = f.fail_count;
+        this.failFlow(f, `mismatch:${f.id}`);
+        if (f.fail_count !== before) changed = true;
+      }
+    }
+    if (changed) this.persist();
   }
   /** Autosave a single origin's buffer as a provisional flow (or promote a match). */
   autoCommit(k) {
@@ -24912,11 +24986,12 @@ var FlowStore = class {
     if (existing) {
       existing.success_count += 1;
       existing.last_verified = now;
+      existing.last_replay_ok = true;
       existing.chromeflow_version = this.version;
       if (label !== null) {
         existing.tier = "trusted";
         existing.task_label = label;
-      } else if (existing.success_count >= PROMOTE_AT_SUCCESS) {
+      } else if (existing.success_count - existing.fail_count >= PROMOTE_AT_SUCCESS) {
         existing.tier = "trusted";
       }
     } else {
@@ -24929,41 +25004,41 @@ var FlowStore = class {
         last_verified: now,
         success_count: 1,
         fail_count: 0,
+        last_replay_ok: true,
         chromeflow_version: this.version
       });
     }
     this.data.origins[k] = flows;
     return { saved: steps.length };
   }
-  /** Compact recall hint for an origin (TRUSTED flows only), at most once per origin per session. */
+  /** Compact recall hint for an origin (RELIABLE trusted flows only), once per origin per session. */
   recallHint(url) {
     const k = originKey(url);
     if (!k || this.surfaced.has(k)) return "";
-    const flows = (this.data.origins[k] ?? []).filter((f) => f.tier === "trusted");
+    const flows = (this.data.origins[k] ?? []).filter(
+      (f) => f.tier === "trusted" && f.success_count > f.fail_count && f.last_replay_ok !== false
+    );
     if (flows.length === 0) return "";
     this.surfaced.add(k);
     this.recalled.add(k);
     const best = [...flows].sort((a, b) => b.success_count - a.success_count).slice(0, 3);
+    this.recalledFlows.set(k, best);
     const lines = best.map((f) => {
-      const steps = f.steps.map((s, i) => {
-        const via = s.recovered_via ? ` [via ${s.recovered_via}]` : "";
-        const sig = s.signal ? ` (${s.signal})` : "";
-        const frag = s.fragile ? " \u26A0fragile-selector" : "";
-        return `   ${i + 1}. ${s.tool} ${s.target}${sig}${via}${frag}`;
-      }).join("\n");
+      const steps = f.steps.map((s, i) => renderStep(s, i)).join("\n");
       const stale = f.chromeflow_version !== this.version ? ` recorded on v${f.chromeflow_version}, re-verify` : "";
       return `  "${f.task_label}" (${f.steps.length} steps, ${f.success_count}x ok${stale}):
 ${steps}`;
     });
     return `
 
-\u2139 known_flow for ${k} \u2014 prefer these proven steps over rediscovery (verify each as usual):
+\u2139 known_flow for ${k} \u2014 these calls worked before; prefer them over rediscovery, but VERIFY each. If a recalled step fails or its element isn't found on the first attempt, do NOT retry it \u2014 discard the hint and rediscover from scratch.
 ${lines.join("\n")}`;
   }
   /**
-   * A recalled trusted step failed on replay. Raise its fail_count; drop the flow
-   * once it crosses PRUNE_AT_FAILS. Gated on the flow having actually been recalled
-   * this session, so an unrelated failure can't ding a flow the agent never used.
+   * A recalled step failed on replay (a click that returned success:false, or a
+   * type_text that did not land). Demote the matching flow on the first miss,
+   * prune on the second. Gated on the flow having actually been recalled this
+   * session, so an unrelated failure can't ding a flow the agent never used.
    */
   observeFailure(url, selectorOrText) {
     const k = originKey(url) ?? this.lastOrigin;
@@ -24972,10 +25047,11 @@ ${lines.join("\n")}`;
     if (!flows) return;
     let changed = false;
     for (const f of flows) {
-      if (f.tier !== "trusted") continue;
-      const hit = f.steps.some((s) => s.selector === selectorOrText || s.target === selectorOrText || s.target === `selector=${selectorOrText}`);
+      const hit = f.steps.some(
+        (s) => s.selector === selectorOrText || s.target === selectorOrText || s.target === `selector=${selectorOrText}`
+      );
       if (hit) {
-        f.fail_count += 1;
+        this.failFlow(f);
         changed = true;
       }
     }
@@ -25029,7 +25105,8 @@ ${lines.join("\n")}`;
   }
 };
 function isFragileSelector(selector) {
-  return !!selector && FRAGILE_RE.test(selector);
+  if (!selector) return false;
+  return FRAGILE_RE.test(selector) || selector.includes(",");
 }
 
 // src/tools/browser.ts
@@ -25417,17 +25494,21 @@ ${lines.join("\n")}${r.warning ?? ""}${captchaLine}${oauthLine}` }] };
         timeoutMs
       );
       const r = response;
+      const typeFailed = r.success === false || r.landed === false;
       let capturable = "";
-      if (into_selector && r.success !== false) {
+      if (into_selector && !typeFailed) {
         flowStore.observe({
           tool: "type_text",
           target: into_selector,
           selector: into_selector,
           signal: clear_first ? "type_text(clear_first)" : "type_text",
+          clear_first: clear_first || void 0,
           fragile: isFragileSelector(into_selector),
           reason: "field needs real keystrokes (type_text, not fill_input)"
         });
         capturable = flowStore.capturableHint(void 0);
+      } else if (into_selector && typeFailed) {
+        flowStore.observeFailure(void 0, into_selector);
       }
       return {
         content: [{ type: "text", text: (r.message ?? (r.success ? "Text typed successfully" : "Failed to type text")) + capturable }]
@@ -26075,6 +26156,7 @@ Current URL: ${activeTab.url}`;
       const actionUrl = r.before_url ?? r.after_url;
       const nowUrl = r.after_url ?? r.before_url;
       const usedUntil = !!(until_selector || until_url_contains || until_text_contains || until_url_changes);
+      const verification = until_url_changes ? "until_url_changes=true" : until_selector ? `until_selector=${JSON.stringify(until_selector)}` : until_url_contains ? `until_url_contains=${JSON.stringify(until_url_contains)}` : until_text_contains ? `until_text_contains=${JSON.stringify(until_text_contains)}` : expect_submit ? "expect_submit=true" : void 0;
       if (r.success && (r.recovered_via || r.navigated || usedUntil)) {
         flowStore.observe({
           tool: "click_element",
@@ -26082,6 +26164,7 @@ Current URL: ${activeTab.url}`;
           selector,
           recovered_via: r.recovered_via,
           signal: r.navigated ? "navigated" : until_url_changes ? "until_url_change" : usedUntil ? "until_*" : r.recovered_via,
+          verification,
           fragile: isFragileSelector(selector),
           reason: r.recovered_via ? `click recovered via ${r.recovered_via}` : r.navigated ? "navigating submit/link" : "verified terminal click"
         }, actionUrl);
@@ -26431,7 +26514,7 @@ ${lines.join("\n")}${shadowSection}` }] };
 }
 
 // src/index.ts
-var PACKAGE_VERSION = true ? "0.12.2" : "dev";
+var PACKAGE_VERSION = true ? "0.12.3" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

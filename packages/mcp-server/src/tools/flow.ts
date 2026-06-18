@@ -206,6 +206,14 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       const actionUrl = r.before_url ?? r.after_url;
       const nowUrl = r.after_url ?? r.before_url;
       const usedUntil = !!(until_selector || until_url_contains || until_text_contains || until_url_changes);
+      // The verification arg that proved this click took effect — persisted so
+      // recall replays it (the agent re-confirms instead of re-discovering).
+      const verification = until_url_changes ? "until_url_changes=true"
+        : until_selector ? `until_selector=${JSON.stringify(until_selector)}`
+        : until_url_contains ? `until_url_contains=${JSON.stringify(until_url_contains)}`
+        : until_text_contains ? `until_text_contains=${JSON.stringify(until_text_contains)}`
+        : expect_submit ? "expect_submit=true"
+        : undefined;
       if (r.success && (r.recovered_via || r.navigated || usedUntil)) {
         flowStore.observe({
           tool: "click_element",
@@ -213,6 +221,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
           selector,
           recovered_via: r.recovered_via,
           signal: r.navigated ? "navigated" : until_url_changes ? "until_url_change" : usedUntil ? "until_*" : r.recovered_via,
+          verification,
           fragile: isFragileSelector(selector),
           reason: r.recovered_via ? `click recovered via ${r.recovered_via}` : r.navigated ? "navigating submit/link" : "verified terminal click",
         } as Atom, actionUrl);
