@@ -1,0 +1,366 @@
+// Message handlers extracted verbatim from background.ts's handleMcpMessage
+// switch. Each function IS the original case body, unchanged.
+import type { McpMsg } from "./types";
+import { getActiveTab, forwardToContentScript } from "../state";
+import { phaseRace, dispatchHumanMouseClick } from "../cdp";
+import { isScriptableUrl } from "../policy";
+
+export async function handleClickAtCoordinates(msg: McpMsg, port: number): Promise<unknown> {
+      const tab = await getActiveTab(port);
+      const tabId = tab.id!;
+      const before_url = tab.url ?? "";
+      const x = Math.round(msg.x as number);
+      const y = Math.round(msg.y as number);
+      const button = (msg.button as "left" | "right" | "middle" | undefined) ?? "left";
+      const double = msg.double === true;
+
+      if (!isScriptableUrl(tab.url)) {
+        return {
+          type: "click_at_coordinates_response",
+          requestId: msg.requestId,
+          success: false,
+          message: `Cannot click on ${tab.url} (non-scriptable URL — chrome://, devtools, etc.)`,
+          before_url,
+          after_url: before_url,
+          navigated: false,
+        };
+      }
+      // Cheap viewport sanity check: a click at (-50, 5000) is almost
+      // certainly a coordinate-space mix-up. We don't know the actual viewport
+      // size from background but we can spot obviously-bad values.
+      if (x < 0 || y < 0 || x > 10000 || y > 10000) {
+        return {
+          type: "click_at_coordinates_response",
+          requestId: msg.requestId,
+          success: false,
+          message: `click_at_coordinates refused: (${x}, ${y}) is outside any plausible viewport. Coordinates must be viewport CSS pixels relative to the active tab; list_frames reports each iframe at (x, y, width, height) in this space.`,
+          before_url,
+          after_url: before_url,
+          navigated: false,
+        };
+      }
+
+      try {
+        await phaseRace("cdp_click_at", 8000, dispatchHumanMouseClick(tabId, x, y, { button, double }));
+      } catch (e) {
+        const err = e as Error & { phase?: string; phaseTimedOut?: boolean };
+        return {
+          type: "click_at_coordinates_response",
+          requestId: msg.requestId,
+          success: false,
+          message: `click_at_coordinates failed at (${x}, ${y}): ${err.message}`,
+          before_url,
+          after_url: before_url,
+          navigated: false,
+        };
+      }
+
+      // Brief settle so navigations and modal openings register before we
+      // read after_url. Don't run the full activity probe — coordinate
+      // clicks frequently target cross-origin iframes whose state changes
+      // are invisible to the parent.
+      await new Promise((r) => setTimeout(r, 250));
+      const [postTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+      const after_url = postTab?.url ?? before_url;
+      return {
+        type: "click_at_coordinates_response",
+        requestId: msg.requestId,
+        success: true,
+        message: `Clicked at (${x}, ${y})${double ? " double-click" : ""}${button !== "left" ? ` button=${button}` : ""}${after_url !== before_url ? ` — navigated to ${after_url}` : ""}`,
+        before_url,
+        after_url,
+        navigated: after_url !== before_url,
+      };
+}
+
+export async function handleReactSetInput(msg: McpMsg, port: number): Promise<unknown> {
+      const tab = await getActiveTab(port);
+      const tabId = tab.id!;
+      if (!isScriptableUrl(tab.url)) {
+        return { type: "action_done", requestId: msg.requestId, success: false, message: `Cannot run on ${tab.url}` };
+      }
+
+      const selector = msg.selector as string;
+      const value = msg.value as string;
+      const frameSelector = msg.frame as string | undefined;
+
+      // Tag the element in the content script first (queryAllDeep pierces
+      // open AND closed shadow roots). The MAIN-world script then reads by
+      // tag attribute. Top-frame only — same-origin iframe access is still
+      // routed through doc.querySelector below since the content script
+      // doesn't run inside iframe documents.
+      const tagId = `chromeflow-react-target-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      let taggedInShadow = false;
+      if (!frameSelector) {
+        try {
+          const tagResult = await forwardToContentScript(tab, {
+            type: "tag_for_react",
+            requestId: msg.requestId + "-tag",
+            selector,
+            tagId,
+          }) as { tagged: boolean; in_shadow: boolean };
+          if (tagResult?.tagged) {
+            taggedInShadow = !!tagResult.in_shadow;
+          }
+        } catch {
+          // Tagging is best-effort; fall back to plain doc.querySelector below
+          // if it failed (e.g. content script not loaded on this page).
+        }
+      }
+
+      const r = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: (sel: string, val: string, frameSel: string | undefined, tag: string) => {
+          // Resolve the input — top-frame document by default, contentDocument
+          // when frameSel is given (same-origin iframes only).
+          let doc: Document = document;
+          if (frameSel) {
+            const iframe = document.querySelector(frameSel);
+            if (!(iframe instanceof HTMLIFrameElement)) return { ok: false, reason: `iframe "${frameSel}" not found` };
+            try {
+              const fdoc = iframe.contentDocument;
+              if (!fdoc) return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
+              doc = fdoc;
+            } catch {
+              return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
+            }
+          }
+          // Prefer the tag-based lookup when the content script tagged
+          // something for us (closed-shadow-root reachable). Fall through to
+          // plain querySelector when no tag was placed (iframe path, or
+          // tagging failed).
+          let el: Element | null = null;
+          if (tag) {
+            // Tag lookup walks open shadow roots only from MAIN world. The
+            // content script already verified the element exists via
+            // queryAllDeep, so we just need to find it in a re-attached form.
+            const findTagged = (root: ParentNode): Element | null => {
+              const direct = root.querySelector(`[data-chromeflow-react-target="${tag}"]`);
+              if (direct) return direct;
+              const all = root.querySelectorAll('*');
+              for (let i = 0; i < all.length; i++) {
+                const sr = (all[i] as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+                if (sr) {
+                  const nested = findTagged(sr);
+                  if (nested) return nested;
+                }
+              }
+              return null;
+            };
+            el = findTagged(doc);
+          }
+          if (!el) el = doc.querySelector(sel);
+          if (!el) return { ok: false, reason: `selector "${sel}" not found${frameSel ? ` inside iframe "${frameSel}"` : ""}` };
+
+          // Use the prototype FROM THE INSTANCE so the setter is callable on
+          // the input directly. Inputs hosted inside an iframe have their own
+          // window.HTMLInputElement that differs from the outer one — calling
+          // window.HTMLInputElement.prototype's value setter on them throws
+          // "Illegal invocation". Object.getPrototypeOf(el) sidesteps that.
+          if (!(el instanceof HTMLElement)) return { ok: false, reason: "selector matched a non-HTMLElement" };
+
+          const proto = Object.getPrototypeOf(el);
+          const desc = Object.getOwnPropertyDescriptor(proto, "value");
+          if (!desc?.set) return { ok: false, reason: `element does not expose a value setter (tag=${el.tagName.toLowerCase()})` };
+
+          (el as HTMLElement).focus();
+          desc.set.call(el, val);
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+
+          // Clean up the chromeflow tag so we don't pollute the DOM. Best
+          // effort; if removeAttribute throws (frozen elements, custom
+          // proxies), the tag is harmless.
+          try { el.removeAttribute("data-chromeflow-react-target"); } catch { /* ignore */ }
+
+          // Read back to confirm React accepted it
+          const readBack = (el as unknown as { value?: unknown }).value;
+          return {
+            ok: true,
+            reason: "set",
+            tag: el.tagName.toLowerCase(),
+            name: (el as HTMLInputElement).name ?? "",
+            id: el.id ?? "",
+            type: (el as HTMLInputElement).type ?? "",
+            readBack: typeof readBack === "string" ? readBack : String(readBack),
+          };
+        },
+        args: [selector, value, frameSelector, tagId],
+      });
+
+      const result = r[0]?.result as
+        | { ok: false; reason: string }
+        | { ok: true; reason: string; tag: string; name: string; id: string; type: string; readBack: string }
+        | undefined;
+      if (!result) return { type: "action_done", requestId: msg.requestId, success: false, message: "no response from page" };
+      if (!result.ok) return { type: "action_done", requestId: msg.requestId, success: false, message: result.reason };
+
+      let accepted = result.readBack === value;
+      let normalizedNote = "";
+      if (!accepted) {
+        // Same false-negative as fill_input's textHint path: a controlled
+        // `value={n || ""}` renders 0 as empty, and number inputs reformat
+        // ("0.50" -> "0.5"). Both mean the value WAS accepted.
+        const writtenNum = Number(value);
+        const readNum = Number(result.readBack);
+        const isZeroWrite = value.trim() !== "" && writtenNum === 0;
+        if (isZeroWrite && (result.readBack === "" || readNum === 0)) {
+          accepted = true;
+          normalizedNote = result.readBack === "" ? " (wrote 0; field renders zero as empty, accepted as 0)" : "";
+        } else if (result.readBack !== "" && !Number.isNaN(writtenNum) && !Number.isNaN(readNum) && writtenNum === readNum) {
+          accepted = true;
+          normalizedNote = ` (normalised "${value}" → "${result.readBack}")`;
+        }
+      }
+      const desc = `<${result.tag}${result.type ? ` type="${result.type}"` : ""}${result.name ? ` name="${result.name}"` : ""}${result.id ? ` id="${result.id}"` : ""}>`;
+      const shadowNote = taggedInShadow ? " (resolved inside shadow DOM)" : "";
+      return {
+        type: "action_done",
+        requestId: msg.requestId,
+        success: true,
+        message: accepted
+          ? `Set ${desc} to "${value.slice(0, 60)}"${frameSelector ? ` (inside iframe "${frameSelector}")` : ""}${shadowNote}${normalizedNote}`
+          : `Set ${desc} via native setter, but React reported back "${result.readBack.slice(0, 60)}" — the page may be controlling the value externally.${shadowNote}`,
+      };
+}
+
+export async function handleReactCallProp(msg: McpMsg, port: number): Promise<unknown> {
+      const tab = await getActiveTab(port);
+      const tabId = tab.id!;
+      if (!isScriptableUrl(tab.url)) {
+        return { type: "action_done", requestId: msg.requestId, success: false, message: `Cannot run on ${tab.url}` };
+      }
+
+      const selector = msg.selector as string;
+      const propName = msg.prop_name as string;
+      const args = (msg.args ?? []) as unknown[];
+      const maxDepth = (msg.max_depth ?? 30) as number;
+      const frameSelector = msg.frame as string | undefined;
+
+      // Tag-from-content-script + read-from-main-world so closed shadow root
+      // selectors work. Iframe path skips tagging since the content script
+      // runs against the top frame only.
+      const tagId = `chromeflow-react-target-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      if (!frameSelector) {
+        try {
+          await forwardToContentScript(tab, {
+            type: "tag_for_react",
+            requestId: msg.requestId + "-tag",
+            selector,
+            tagId,
+          });
+        } catch { /* best-effort */ }
+      }
+
+      const r = await chrome.scripting.executeScript({
+        target: { tabId },
+        world: "MAIN",
+        func: async (sel: string, pName: string, callArgs: unknown[], depth: number, frameSel: string | undefined, tag: string) => {
+          let doc: Document = document;
+          if (frameSel) {
+            const iframe = document.querySelector(frameSel);
+            if (!(iframe instanceof HTMLIFrameElement)) return { ok: false, reason: `iframe "${frameSel}" not found` };
+            try {
+              const fdoc = iframe.contentDocument;
+              if (!fdoc) return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
+              doc = fdoc;
+            } catch {
+              return { ok: false, reason: `iframe "${frameSel}" is cross-origin` };
+            }
+          }
+          let el: Element | null = null;
+          if (tag) {
+            const findTagged = (root: ParentNode): Element | null => {
+              const direct = root.querySelector(`[data-chromeflow-react-target="${tag}"]`);
+              if (direct) return direct;
+              const all = root.querySelectorAll('*');
+              for (let i = 0; i < all.length; i++) {
+                const sr = (all[i] as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+                if (sr) {
+                  const nested = findTagged(sr);
+                  if (nested) return nested;
+                }
+              }
+              return null;
+            };
+            el = findTagged(doc);
+            if (el) {
+              try { el.removeAttribute("data-chromeflow-react-target"); } catch { /* ignore */ }
+            }
+          }
+          if (!el) el = doc.querySelector(sel);
+          if (!el) return { ok: false, reason: `selector "${sel}" not found${frameSel ? ` inside iframe "${frameSel}"` : ""}` };
+
+          const fiberKey = Object.keys(el).find((k) => k.startsWith("__reactFiber$"));
+          if (!fiberKey) return { ok: false, reason: `no React fiber on element matched by "${sel}" — is this a React app?` };
+
+          let cur = (el as unknown as Record<string, unknown>)[fiberKey] as
+            | { memoizedProps?: Record<string, unknown>; type?: unknown; return?: unknown }
+            | null
+            | undefined;
+
+          for (let i = 0; i < depth && cur; i++) {
+            const props = cur.memoizedProps;
+            const fn = props?.[pName];
+            if (typeof fn === "function") {
+              const t = cur.type as { displayName?: string; name?: string } | string | undefined;
+              const componentName =
+                (typeof t === "string" ? t : null) ||
+                (t && typeof t === "object" ? (t.displayName || t.name) : null) ||
+                "anonymous";
+              try {
+                const ret = await Promise.resolve((fn as (...a: unknown[]) => unknown)(...callArgs));
+                let returned: string;
+                if (ret === undefined) returned = "undefined";
+                else if (ret === null) returned = "null";
+                else if (typeof ret === "object") {
+                  try {
+                    returned = JSON.stringify(ret).slice(0, 200);
+                  } catch {
+                    returned = "[object]";
+                  }
+                } else {
+                  returned = String(ret).slice(0, 200);
+                }
+                return {
+                  ok: true,
+                  depth: i,
+                  componentName,
+                  returned,
+                };
+              } catch (err) {
+                const e = err as Error;
+                return {
+                  ok: false,
+                  reason: `prop "${pName}" threw: ${e?.message ?? String(err)}`,
+                  depth: i,
+                  componentName,
+                };
+              }
+            }
+            cur = cur.return as typeof cur;
+          }
+          return { ok: false, reason: `no prop "${pName}" found within ${depth} fiber levels`, walked: depth };
+        },
+        args: [selector, propName, args, maxDepth, frameSelector, tagId],
+      });
+
+      const result = r[0]?.result as
+        | { ok: false; reason: string; depth?: number; walked?: number; componentName?: string }
+        | { ok: true; depth: number; componentName: string; returned: string }
+        | undefined;
+      if (!result) return { type: "action_done", requestId: msg.requestId, success: false, message: "no response from page" };
+      if (!result.ok) {
+        const where = result.depth !== undefined
+          ? ` (at fiber depth ${result.depth}${result.componentName ? ` in <${result.componentName}>` : ""})`
+          : result.walked !== undefined ? ` (walked ${result.walked} levels)` : "";
+        return { type: "action_done", requestId: msg.requestId, success: false, message: `${result.reason}${where}` };
+      }
+      return {
+        type: "action_done",
+        requestId: msg.requestId,
+        success: true,
+        message: `Called ${propName}(...) on <${result.componentName}> at fiber depth ${result.depth}. Return: ${result.returned}`,
+      };
+}
