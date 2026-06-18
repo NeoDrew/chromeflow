@@ -93,6 +93,13 @@ function signatureOf(steps: Atom[]): string {
   return JSON.stringify(steps.map((a) => [a.tool, a.target, a.selector ?? ""]));
 }
 
+// Execution cost of a flow, for cost-ranked recall: each step costs 1, a fragile
+// (positional / multi-option) selector or a recovered-via fallback adds risk
+// weight. Lower cost = cheaper + more reliable = recommended first.
+function flowCost(f: { steps: Atom[] }): number {
+  return f.steps.reduce((c, s) => c + 1 + (s.fragile ? 1 : 0) + (s.recovered_via ? 0.5 : 0), 0);
+}
+
 function sanitizeAtom(a: Atom): Atom {
   const out = {} as Atom;
   for (const k of ATOM_KEYS) {
@@ -292,6 +299,15 @@ export class FlowStore {
     if (!buf || buf.length === 0) return;
     this.buffer.delete(k);
     this.upsert(k, buf, null);
+    // Step-level promotion: also register each atom as its own 1-step flow so a
+    // recurring individual step (e.g. type_text -> textarea[name="q"]) earns
+    // trust on its own, even when the agent's full captured sequence varies
+    // run-to-run. This is what lets a hard site converge in ~2 sessions instead
+    // of waiting for an identical multi-step sequence to repeat. The cheaper
+    // 1-step flow then wins recall via cost-ranking below.
+    if (buf.length > 1) {
+      for (const atom of buf) this.upsert(k, [atom], null);
+    }
     this.lastAutosaved = { key: k, sig: signatureOf(buf) }; // save_flow can still vouch for this
     this.pruneExpired();
     this.persist();
@@ -351,7 +367,15 @@ export class FlowStore {
     if (flows.length === 0) return "";
     this.surfaced.add(k);
     this.recalled.add(k);                 // failures may now be attributed to these flows
-    const best = [...flows].sort((a, b) => b.success_count - a.success_count).slice(0, 3);
+    // Cost-ranked recall: recommend the CHEAPEST proven path first — fewer
+    // operations, no fragile selector, no recovered-via fallback. A flow that
+    // does the job in one clean step is preferred over a longer/riskier one, so
+    // the agent spends the fewest tokens. Ties break toward the more-proven flow.
+    const best = [...flows].sort((a, b) => {
+      const ca = flowCost(a), cb = flowCost(b);
+      if (ca !== cb) return ca - cb;
+      return b.success_count - a.success_count;
+    }).slice(0, 3);
     this.recalledFlows.set(k, best);      // for confirm/mismatch reconciliation in observe()
     const lines = best.map((f) => {
       const steps = f.steps.map((s, i) => renderStep(s, i)).join("\n");

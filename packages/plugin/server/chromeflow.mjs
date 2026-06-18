@@ -24780,6 +24780,9 @@ var FRAGILE_RE = /:nth-(of-type|child)\(|>\s*\w+:nth/;
 function signatureOf(steps) {
   return JSON.stringify(steps.map((a) => [a.tool, a.target, a.selector ?? ""]));
 }
+function flowCost(f) {
+  return f.steps.reduce((c, s) => c + 1 + (s.fragile ? 1 : 0) + (s.recovered_via ? 0.5 : 0), 0);
+}
 function sanitizeAtom(a) {
   const out = {};
   for (const k of ATOM_KEYS) {
@@ -24965,6 +24968,9 @@ var FlowStore = class {
     if (!buf || buf.length === 0) return;
     this.buffer.delete(k);
     this.upsert(k, buf, null);
+    if (buf.length > 1) {
+      for (const atom of buf) this.upsert(k, [atom], null);
+    }
     this.lastAutosaved = { key: k, sig: signatureOf(buf) };
     this.pruneExpired();
     this.persist();
@@ -25021,7 +25027,11 @@ var FlowStore = class {
     if (flows.length === 0) return "";
     this.surfaced.add(k);
     this.recalled.add(k);
-    const best = [...flows].sort((a, b) => b.success_count - a.success_count).slice(0, 3);
+    const best = [...flows].sort((a, b) => {
+      const ca = flowCost(a), cb = flowCost(b);
+      if (ca !== cb) return ca - cb;
+      return b.success_count - a.success_count;
+    }).slice(0, 3);
     this.recalledFlows.set(k, best);
     const lines = best.map((f) => {
       const steps = f.steps.map((s, i) => renderStep(s, i)).join("\n");
