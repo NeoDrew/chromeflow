@@ -196,10 +196,13 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         focusLine = `\n→ Focused: <${f.tag}${idBit}${nameBit}${aria}${valueBit}>`;
       }
       // Flow memory. Record this click as a notable "resolution" only when it
-      // cost something to discover — a fallback fired, it navigated, or a
-      // verified until_* clause was satisfied. Ordinary first-try clicks are
-      // skipped (rediscovery is free; persisting them is noise). Recall surfaces
-      // known flows for the origin once per session; capturable nudges a save.
+      // cost something to discover — a fallback fired (recovered_via) or it drove
+      // a real navigation. A plain first-try click that merely carried an until_*
+      // verification is NOT hard-won: rediscovery is free, and on high-cardinality
+      // pages (search results, feeds) the selector embeds a per-instance literal
+      // (e.g. a[aria-label="Invite <person> to connect"]) that can never recur, so
+      // persisting it produces one dead provisional flow per action forever. Recall
+      // surfaces known flows for the origin once per session; capturable nudges a save.
       // Key the atom to where the click HAPPENED (before_url), not where it
       // landed — a submit on /submit that navigates to the new post page must
       // be recalled next time we're on /submit, not on the post page.
@@ -214,7 +217,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         : until_text_contains ? `until_text_contains=${JSON.stringify(until_text_contains)}`
         : expect_submit ? "expect_submit=true"
         : undefined;
-      if (r.success && (r.recovered_via || r.navigated || usedUntil)) {
+      if (r.success && (r.recovered_via || r.navigated)) {
         flowStore.observe({
           tool: "click_element",
           target: textHint ?? `selector=${selector}`,
@@ -223,7 +226,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
           signal: r.navigated ? "navigated" : until_url_changes ? "until_url_change" : usedUntil ? "until_*" : r.recovered_via,
           verification,
           fragile: isFragileSelector(selector),
-          reason: r.recovered_via ? `click recovered via ${r.recovered_via}` : r.navigated ? "navigating submit/link" : "verified terminal click",
+          reason: r.recovered_via ? `click recovered via ${r.recovered_via}` : "navigating submit/link",
         } as Atom, actionUrl);
       }
       flowStore.noteUrl(nowUrl);
