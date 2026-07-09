@@ -25,6 +25,7 @@ import {
   PRUNE_AT_FAILS,
   DEMOTE_AT_FAILS,
   PROVISIONAL_TTL_MS,
+  MAX_PROVISIONAL_PER_ORIGIN,
   type Atom,
 } from "./flow-store.js";
 
@@ -420,5 +421,48 @@ describe("step-level promotion + cost ranking", () => {
     expect(hint).toContain('"cheap"');
     expect(hint).toContain('"expensive"');
     expect(hint.indexOf('"cheap"')).toBeLessThan(hint.indexOf('"expensive"'));
+  });
+});
+
+// ---- high-cardinality backstop (the LinkedIn people-search flood) -----------
+describe("provisional cap: high-cardinality pages don't accumulate unbounded", () => {
+  // Each row on a search-results page yields a UNIQUE per-instance selector
+  // (a[aria-label="Invite <person> to connect"]), so every autosave is a distinct
+  // signature that can never dedup or promote. Without a cap these pile up one dead
+  // provisional per action forever (the live LinkedIn case hit 241 in 12 days).
+  it(`keeps at most MAX_PROVISIONAL_PER_ORIGIN (${MAX_PROVISIONAL_PER_ORIGIN}) provisional flows per origin`, () => {
+    const o = "https://linkedin.example/search/results/people";
+    const clock = makeClock();
+    // Simulate many single-origin visits, each clicking a different person.
+    for (let i = 0; i < MAX_PROVISIONAL_PER_ORIGIN + 40; i++) {
+      const s = new FlowStore(VERSION, dir, clock.now);
+      s.noteUrl(o);
+      s.observe(clickAtom(`a[aria-label="Invite Person ${i} to connect"]`), o);
+      s.flushAll();
+      clock.advance(1000); // keep last_verified ordering deterministic
+    }
+    const flows = new FlowStore(VERSION, dir, clock.now)._flowsFor(o);
+    expect(flows.length).toBeLessThanOrEqual(MAX_PROVISIONAL_PER_ORIGIN);
+    // The survivors are the most-recent ones (oldest overflow is evicted).
+    expect(flows.some((f) => f.steps[0].selector?.includes("Person 59 to"))).toBe(true);
+    expect(flows.some((f) => f.steps[0].selector?.includes("Person 0 to"))).toBe(false);
+  });
+
+  it("never evicts a trusted flow to make room for provisional overflow", () => {
+    const o = "https://linkedin.example/search/results/people";
+    const clock = makeClock();
+    // Establish a trusted flow (same signature observed twice).
+    const t1 = new FlowStore(VERSION, dir, clock.now); visit(t1, o, [clickAtom("#stable-button")]); clock.advance(1000);
+    const t2 = new FlowStore(VERSION, dir, clock.now); visit(t2, o, [clickAtom("#stable-button")]); clock.advance(1000);
+    expect(new FlowStore(VERSION, dir, clock.now)._flowsFor(o).find((f) => f.tier === "trusted")).toBeTruthy();
+    // Now flood with unique provisional clicks.
+    for (let i = 0; i < MAX_PROVISIONAL_PER_ORIGIN + 20; i++) {
+      const s = new FlowStore(VERSION, dir, clock.now);
+      s.noteUrl(o); s.observe(clickAtom(`#unique-${i}`), o); s.flushAll();
+      clock.advance(1000);
+    }
+    const flows = new FlowStore(VERSION, dir, clock.now)._flowsFor(o);
+    expect(flows.filter((f) => f.tier === "trusted")).toHaveLength(1); // survived the flood
+    expect(flows.filter((f) => f.tier === "provisional").length).toBeLessThanOrEqual(MAX_PROVISIONAL_PER_ORIGIN);
   });
 });

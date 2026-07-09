@@ -68,6 +68,7 @@ export const PROMOTE_AT_SUCCESS = 2;                       // re-observations to
 export const DEMOTE_AT_FAILS = 1;                          // a single bad replay demotes trusted -> provisional
 export const PRUNE_AT_FAILS = 2;                           // second failure drops the flow entirely
 export const PROVISIONAL_TTL_MS = 30 * 24 * 60 * 60 * 1000; // unpromoted autosaves expire after 30 days
+export const MAX_PROVISIONAL_PER_ORIGIN = 20;             // backstop: cap dead provisional junk per origin
 
 // Only these keys are ever persisted from an Atom — a hard whitelist so a future
 // field (or a caller mistake) can never leak typed text / PII to disk.
@@ -309,8 +310,30 @@ export class FlowStore {
       for (const atom of buf) this.upsert(k, [atom], null);
     }
     this.lastAutosaved = { key: k, sig: signatureOf(buf) }; // save_flow can still vouch for this
+    this.capProvisional(k);
     this.pruneExpired();
     this.persist();
+  }
+
+  /**
+   * Backstop against unbounded growth on high-cardinality pages. A search-results
+   * or feed page produces a fresh per-instance selector on every action (a person's
+   * name, a post id), so each autosave is a distinct signature that can never dedup,
+   * never recur, and never promote — it just piles up one dead provisional per action.
+   * The notability gate already screens most of these out; this caps whatever slips
+   * through. Trusted flows are never evicted; only the oldest provisional overflow is.
+   */
+  private capProvisional(k: string): void {
+    const flows = this.data.origins[k];
+    if (!flows) return;
+    const provisional = flows.filter((f) => f.tier === "provisional");
+    if (provisional.length <= MAX_PROVISIONAL_PER_ORIGIN) return;
+    const doomed = new Set(
+      [...provisional]
+        .sort((a, b) => Date.parse(a.last_verified) - Date.parse(b.last_verified))
+        .slice(0, provisional.length - MAX_PROVISIONAL_PER_ORIGIN),
+    );
+    this.data.origins[k] = flows.filter((f) => !doomed.has(f));
   }
 
   /** Flush every buffered origin. Call on shutdown and for single-origin sessions. */
