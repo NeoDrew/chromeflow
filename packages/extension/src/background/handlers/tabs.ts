@@ -1,7 +1,7 @@
 // Message handlers extracted verbatim from background.ts's handleMcpMessage
 // switch. Each function IS the original case body, unchanged.
 import type { McpMsg } from "./types";
-import { getActiveTab, getWindowId, clearWindowId, ownedWindows, persistOwnedWindows } from "../state";
+import { getActiveTab, getWindowId, setPinnedTab, closeOwnedWindowForPort } from "../state";
 import { setupBeforeunloadAutoDismiss } from "../cdp";
 import { isScriptableUrl } from "../policy";
 
@@ -29,6 +29,10 @@ export async function handleSwitchToTab(msg: McpMsg, port: number): Promise<unkn
         throw new Error(`No tab matching "${msg.query}". Open tabs:\n${list}`);
       }
       await chrome.tabs.update(target.id, { active: true });
+      // This is an explicit, intentional tab change — repin so every
+      // subsequent call on this port (until the next explicit switch) follows
+      // the tab the agent just chose, not whatever Chrome reports as active.
+      setPinnedTab(port, target.id);
       // Re-read post-update so the response carries the actual landed URL
       // and title — useful when the agent wants to verify it switched to
       // the intended tab without a separate list_tabs round trip.
@@ -43,30 +47,31 @@ export async function handleSwitchToTab(msg: McpMsg, port: number): Promise<unkn
 }
 
 export async function handleListTabs(msg: McpMsg, port: number): Promise<unknown> {
-      // Ensure this instance has an assigned window before listing tabs,
-      // so the list only shows tabs chromeflow owns (not the user's own window).
-      await getActiveTab(port);
+      // Resolve this port's actual current tab (pinned, not Chrome's raw
+      // "active" flag) so the reported active tab matches what unqualified
+      // operations will actually act on.
+      const current = await getActiveTab(port);
       const wid = getWindowId(port)!;
       const allTabs = await chrome.tabs.query({ windowId: wid });
       const tabs = allTabs.map((t, i) => ({
         index: i + 1,
         title: t.title ?? "",
         url: t.url ?? "",
-        active: t.active ?? false,
+        active: t.id === current.id,
       }));
       return { type: "tabs_response", tabs };
 }
 
 export async function handleCloseTab(msg: McpMsg, port: number): Promise<unknown> {
-      await getActiveTab(port);
+      const current = await getActiveTab(port);
       const wid = getWindowId(port)!;
       const allTabs = await chrome.tabs.query({ windowId: wid });
       const query = msg.query as string | undefined;
 
       let target: chrome.tabs.Tab | undefined;
       if (query === undefined) {
-        // No query: close the active tab.
-        target = allTabs.find(t => t.active);
+        // No query: close this port's current (pinned) tab.
+        target = allTabs.find(t => t.id === current.id);
       } else {
         const lower = query.toLowerCase();
         const byIndex = parseInt(query, 10);
@@ -99,52 +104,39 @@ export async function handleCloseTab(msg: McpMsg, port: number): Promise<unknown
 }
 
 export async function handleCloseWindow(msg: McpMsg, port: number): Promise<unknown> {
-      const wid = getWindowId(port);
-      let closed = false;
-      if (wid && ownedWindows.has(wid)) {
-        // Dismiss any beforeunload guard on the active tab first, so a posting
-        // with unsaved form state can't block window removal.
-        try {
-          const [active] = await chrome.tabs.query({ active: true, windowId: wid });
-          const ctx = active?.id && isScriptableUrl(active.url)
-            ? await setupBeforeunloadAutoDismiss(active.id)
-            : null;
-          await chrome.windows.remove(wid);
-          if (ctx) await ctx.release();
-          closed = true;
-        } catch { /* window may already be gone */ }
-        ownedWindows.delete(wid);
-        await persistOwnedWindows();
-      }
-      await clearWindowId(port);
-      return { type: "action_done", closed_window: closed ? wid : null };
+      const closedWid = await closeOwnedWindowForPort(port);
+      return { type: "action_done", closed_window: closedWid };
 }
 
 export async function handleCloseOtherTabs(msg: McpMsg, port: number): Promise<unknown> {
-      await getActiveTab(port);
+      const current = await getActiveTab(port);
       const wid = getWindowId(port)!;
       const allTabs = await chrome.tabs.query({ windowId: wid });
       const keepQuery = msg.keep_query as string | undefined;
       const keepLower = keepQuery?.toLowerCase();
 
-      // Determine which tabs to keep. Either matches keep_query, or active when no query.
+      // Determine which tabs to keep. Either matches keep_query, or this
+      // port's current (pinned) tab when no query.
       const kept: chrome.tabs.Tab[] = [];
       const toClose: chrome.tabs.Tab[] = [];
       for (const t of allTabs) {
         const matchesKeep = keepLower
           ? (t.url ?? "").toLowerCase().includes(keepLower) || (t.title ?? "").toLowerCase().includes(keepLower)
-          : !!t.active;
+          : t.id === current.id;
         if (matchesKeep) kept.push(t);
         else toClose.push(t);
       }
 
-      // Refuse to close ALL tabs — Chrome will close the window. Keep the
-      // active tab as a safety floor.
+      // Refuse to close ALL tabs — Chrome will close the window. Keep this
+      // port's current tab as a safety floor, or — on the narrow chance it
+      // closed in the gap between the getActiveTab and chrome.tabs.query
+      // calls above — whatever tab is first in this snapshot, so the floor
+      // holds unconditionally rather than only when current.id still exists.
       if (kept.length === 0) {
-        const active = allTabs.find(t => t.active);
-        if (active) {
-          kept.push(active);
-          const idx = toClose.indexOf(active);
+        const cur = allTabs.find(t => t.id === current.id) ?? allTabs[0];
+        if (cur) {
+          kept.push(cur);
+          const idx = toClose.indexOf(cur);
           if (idx >= 0) toClose.splice(idx, 1);
         }
       }

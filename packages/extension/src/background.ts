@@ -18,12 +18,15 @@ import {
   connScope,
   getWindowId,
   getActiveTab,
+  getPinnedTab,
   forwardToContentScript,
   pushInstanceInfoIfNeeded,
   pushConnectionsToOffscreen,
   pendingClicks,
   recentNavigations,
   portMeta,
+  reconcileLiveConnections,
+  runSerializedOnPort,
   type ClickWatchResult,
 } from "./background/state";
 import {
@@ -107,6 +110,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       for (const lp of livePorts) {
         portMeta.set(lp.port, { label: lp.label, host: lp.host });
       }
+      // A port that just dropped out of this list gets a grace-period close
+      // timer for its owned window; a port that reappeared cancels its timer.
+      reconcileLiveConnections(livePorts.map((lp) => lp.port));
       sendResponse({ ok: true });
       return true;
     }
@@ -117,7 +123,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return true;
     }
     const port: number = typeof msg.port === "number" ? msg.port : 7878;
-    handleMcpMessage(msg.payload, port)
+    // Serialize per port: a single WS connection is shared by a whole Claude
+    // Code session, including any subagent it spawns (Agent/Task tool calls
+    // share the parent's connection, not a separate one). Without this, two
+    // calls arriving close together — a parent mid-flow and a subagent acting
+    // on the same shared window — would run concurrently and race on the same
+    // tab. Queuing them FIFO per port means they still run one at a time even
+    // when nothing else changes.
+    runSerializedOnPort(port, () => handleMcpMessage(msg.payload, port))
       .then((result) => sendResponse({ ok: true, result }))
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true;
@@ -132,9 +145,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         if (entry.redispatch && target && target.x > 0 && target.y > 0) {
           (async () => {
             try {
-              const wid = getWindowId(entry.port);
-              if (!wid) { entry.cb({ type: "click_detected", target }); return; }
-              const [tab] = await chrome.tabs.query({ active: true, windowId: wid });
+              // Redispatch on the tab THIS port is pinned to, not whatever
+              // Chrome currently reports active — another caller sharing the
+              // port may have focused a different tab since the click fired.
+              const pinnedId = getPinnedTab(entry.port);
+              const tab = pinnedId ? await chrome.tabs.get(pinnedId).catch(() => null) : null;
               if (!tab?.id || !isScriptableUrl(tab.url)) {
                 entry.cb({ type: "click_detected", target });
                 return;
@@ -177,17 +192,14 @@ chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
   recentNavigations.set(tabId, { url, time: Date.now() });
 
   for (const [requestId, entry] of pendingClicks) {
-    // Resolve the pending click-watch only for navigations in the watching
-    // instance's assigned Chrome window. Skip unassigned ports entirely —
-    // we must never treat the user's currently-focused window as ours.
-    const wid = getWindowId(entry.port);
-    if (!wid) continue;
-    chrome.tabs.query({ active: true, windowId: wid }, ([activeTab]) => {
-      if (activeTab?.id === tabId) {
-        pendingClicks.delete(requestId);
-        entry.cb({ type: "navigation_complete", url });
-      }
-    });
+    // Resolve the pending click-watch only when the navigation happened on
+    // the tab THIS port is pinned to — not whatever Chrome reports active,
+    // which another caller sharing the port may have changed since the
+    // watch started. An unassigned/unpinned port can never match.
+    if (getPinnedTab(entry.port) === tabId) {
+      pendingClicks.delete(requestId);
+      entry.cb({ type: "navigation_complete", url });
+    }
   }
 
   // Re-inject alert capture on every page load so dialogs never block

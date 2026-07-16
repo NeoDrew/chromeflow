@@ -1,7 +1,7 @@
 // Message handlers extracted verbatim from background.ts's handleMcpMessage
 // switch. Each function IS the original case body, unchanged.
 import type { McpMsg } from "./types";
-import { getActiveTab, forwardToContentScript, waitForNavigation } from "../state";
+import { getActiveTab, forwardToContentScript, waitForNavigation, resolvePostClickTab } from "../state";
 import { withDebugger, getSubmitSignalCounts, classifyTopDialog, phaseRace, dispatchTapGesture, dispatchKeyboardActivation, dispatchHumanMouseClick, armBeforeunloadDismissOnAttachedTab, snapshotVisibleCount, freshTargetPoint, runActivityProbe, countInFlightRequests, commitReactControlState, type ActivityProbeResult } from "../cdp";
 import { isBlockedUrl, isScriptableUrl } from "../policy";
 import { markerIds } from "../../markers";
@@ -57,7 +57,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         }).catch((e) => ({ success: false, message: String(e), fired: false })) as {
           success: boolean; message: string; fired: boolean; component?: string; label?: string;
         };
-        const [postTabF] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+        const postTabF = await resolvePostClickTab(port, tab.windowId!);
         const afterUrlF = postTabF?.url ?? before_url;
         return {
           type: "click_element_response",
@@ -360,7 +360,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           }
         }
         if (!result.success) {
-          const [postFailTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+          const postFailTab = await resolvePostClickTab(port, tab.windowId!);
           const after_url = postFailTab?.url ?? before_url;
           return { type: "click_element_response", success: false, message: result.message, before_url, after_url, navigated: after_url !== before_url };
         }
@@ -1136,7 +1136,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
       // A click "Assessment" link on Canvas that bounces to the course home
       // returns success today with no indication anything went wrong — the
       // before/after URL pair makes that visible.
-      const [postTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+      const postTab = await resolvePostClickTab(port, tab.windowId!);
       const after_url = postTab?.url ?? navigationResult ?? before_url;
       const navigated = after_url !== before_url;
 
