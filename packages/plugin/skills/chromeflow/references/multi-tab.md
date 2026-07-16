@@ -73,8 +73,14 @@ title substring.
 
 ## Long-lived loops — verify active tab on each iteration
 
-Active tab can drift mid-session (user navigates manually while AFK,
-another tab steals focus). At the start of every loop iteration:
+chromeflow pins the tab each connection is working on, so another tab
+grabbing OS/window focus (a subagent's `open_page`, the user clicking
+around) no longer silently redirects your next call — `list_tabs`,
+`click_element`, `get_page_text`, etc. keep following the pinned tab
+until you explicitly `switch_to_tab` or `open_page(new_tab=true)`.
+Pinning doesn't cover the pinned tab itself changing out from under
+you (the user manually navigating it while AFK, a page-side redirect).
+At the start of every long-lived loop iteration, still verify:
 
 ```
 const tabs = list_tabs()
@@ -84,7 +90,7 @@ if (!active.url.includes("expected-domain")) {
 }
 ```
 
-Without this guard, scripts run on the wrong tab and fail with
+Without this guard, scripts run on the wrong page and fail with
 confusing "undefined" errors that look like page bugs.
 
 ## Save state before navigating away

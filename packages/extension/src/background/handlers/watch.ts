@@ -1,7 +1,7 @@
 // Message handlers extracted verbatim from background.ts's handleMcpMessage
 // switch. Each function IS the original case body, unchanged.
 import type { McpMsg } from "./types";
-import { getActiveTab, getWindowId, pendingClicks, recentNavigations, forwardToContentScript, type ClickWatchResult } from "../state";
+import { getActiveTab, pendingClicks, recentNavigations, forwardToContentScript, type ClickWatchResult } from "../state";
 import { isScriptableUrl } from "../policy";
 
 export async function handleStartClickWatch(msg: McpMsg, port: number): Promise<unknown> {
@@ -44,18 +44,13 @@ export async function handleStartClickWatch(msg: McpMsg, port: number): Promise<
 
         // Race condition guard: if the user clicked a link and the page finished
         // loading before this handler ran, onUpdated already fired with no pending
-        // clicks. Check recentNavigations and resolve immediately if so.
-        // Skip entirely for unassigned ports — we must not treat the user's
-        // currently-focused window as ours.
-        const widWatch = getWindowId(port);
-        if (!widWatch) return;
-        chrome.tabs.query({ active: true, windowId: widWatch }, ([activeTab]) => {
-          if (!activeTab?.id) return;
-          const nav = recentNavigations.get(activeTab.id);
-          if (nav && Date.now() - nav.time < 5000) {
-            finish({ type: "navigation_complete", url: nav.url });
-          }
-        });
+        // clicks. Check recentNavigations against the SAME tab this watch was
+        // armed on above (not a fresh active-tab query, which could now resolve
+        // to a different tab than the one we're actually watching).
+        const nav = tab.id ? recentNavigations.get(tab.id) : undefined;
+        if (nav && Date.now() - nav.time < 5000) {
+          finish({ type: "navigation_complete", url: nav.url });
+        }
       });
 }
 

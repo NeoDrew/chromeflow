@@ -1,7 +1,7 @@
 // Message handlers extracted verbatim from background.ts's handleMcpMessage
 // switch. Each function IS the original case body, unchanged.
 import type { McpMsg } from "./types";
-import { getActiveTab, getWindowId, connScope, pushInstanceInfoIfNeeded, tabsWithInfoBox } from "../state";
+import { getActiveTab, getWindowId, connScope, pushInstanceInfoIfNeeded, tabsWithInfoBox, setPinnedTab } from "../state";
 import { setupBeforeunloadAutoDismiss } from "../cdp";
 import { isBlockedUrl, isScriptableUrl, detectAntiBot, httpHostname } from "../policy";
 import { scopeBlocks } from "../../connections";
@@ -56,6 +56,10 @@ export async function handleNavigate(msg: McpMsg, port: number): Promise<unknown
         // partially-filled form on the current tab keeps focus and doesn't
         // trigger the page's blur/auto-save behavior.
         targetTab = await chrome.tabs.create({ url: targetUrl, active: !background, windowId: wid });
+        // Only repin when this call explicitly asked to switch focus — a
+        // background tab must NOT steal subsequent calls away from whatever
+        // tab this port was already pinned to.
+        if (!background && targetTab.id) setPinnedTab(port, targetTab.id);
       } else {
         // Reuse active tab. When the current page is already on the same origin,
         // navigate via in-page location.href so sec-fetch-site is "same-origin"

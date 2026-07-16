@@ -1,7 +1,7 @@
 // Message handlers extracted verbatim from background.ts's handleMcpMessage
 // switch. Each function IS the original case body, unchanged.
 import type { McpMsg } from "./types";
-import { getActiveTab, forwardToContentScript } from "../state";
+import { getActiveTab, forwardToContentScript, resolvePostClickTab } from "../state";
 import { phaseRace, dispatchHumanMouseClick } from "../cdp";
 import { isScriptableUrl } from "../policy";
 
@@ -60,7 +60,7 @@ export async function handleClickAtCoordinates(msg: McpMsg, port: number): Promi
       // clicks frequently target cross-origin iframes whose state changes
       // are invisible to the parent.
       await new Promise((r) => setTimeout(r, 250));
-      const [postTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+      const postTab = await resolvePostClickTab(port, tab.windowId!);
       const after_url = postTab?.url ?? before_url;
       return {
         type: "click_at_coordinates_response",
