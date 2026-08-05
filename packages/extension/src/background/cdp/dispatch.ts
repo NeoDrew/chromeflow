@@ -113,7 +113,19 @@ export async function dispatchHumanMouseClick(
   tabId: number,
   cx: number,
   cy: number,
-  options: { button?: "left" | "right" | "middle"; double?: boolean } = {},
+  options: {
+    button?: "left" | "right" | "middle";
+    double?: boolean;
+    /**
+     * Fires right after the real mousePressed/mouseReleased land (before the
+     * trailing settle jitter). A caller racing this against a timeout
+     * (phaseRace) can use it to detect "the click actually fired, just the
+     * tail was slow" versus "truly dead" — without it, a caller that falls
+     * back to a synthetic click on timeout has no way to know the real click
+     * might still land a moment later, risking a double-click / double-submit.
+     */
+    onPressReleaseComplete?: () => void;
+  } = {},
 ): Promise<void> {
   await withDebugger(tabId, async () => {
     const dbg = chrome.debugger as unknown as {
@@ -181,6 +193,7 @@ export async function dispatchHumanMouseClick(
         type: "mouseReleased", x: cx, y: cy, button, clickCount: 2, buttons: 0, ...ptr,
       });
     }
+    options.onPressReleaseComplete?.();
     await new Promise((r) => setTimeout(r, 30 + Math.random() * 50));
     const px = cx + Math.round((Math.random() - 0.5) * 6);
     const py = cy + Math.round((Math.random() - 0.5) * 6);

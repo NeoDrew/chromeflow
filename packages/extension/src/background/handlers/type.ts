@@ -317,20 +317,23 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
         });
       });
 
-      // TipTap / ProseMirror silent-drop guard: CDP keystrokes land visually
-      // but tiptap's internal state machine doesn't see them as valid input,
-      // so a few hundred ms later the editor reverts to placeholder. We
-      // verify post-type for any into_selector target and, when the editor's
-      // text content is significantly shorter than what we typed AND the
-      // target is inside a recognised rich-text editor, fall back to
-      // execCommand('insertText') which tiptap DOES accept.
-      let tiptapFallback = "";
-      // `landed` = did the typed text actually end up in the target element? We
-      // already read the element's content for the TipTap guard; reuse it as a
-      // general post-type verification so the MCP layer can treat "typed but the
-      // field is still empty / reverted" (a drifted shadow-DOM selector landing
-      // on the wrong node) as a failure rather than a success. Defaults true when
-      // we can't verify (no into_selector, or iframe target).
+      // Silent-drop guard: CDP keystrokes can visually appear to land but
+      // never actually reach the target — a rich-text editor's own state
+      // machine can revert them (TipTap/ProseMirror), OR the CDP Input layer
+      // itself can go silently dead mid-session (chrome.debugger detaches
+      // without any visible symptom until the next command has no effect —
+      // see ISSUE-2026-07-15-cdp-input-dead.md, where type_text kept
+      // reporting "Typed N characters" on a PLAIN <input> whose value stayed
+      // "" the entire time). We verify post-type for any into_selector
+      // target and, if the content is significantly shorter than what we
+      // typed, recover with a non-keystroke fill appropriate to the element
+      // — this works whether the CDP layer is degraded or fine, since it
+      // never depends on it.
+      let dropFallback = "";
+      // `landed` = did the typed text actually end up in the target element
+      // (after any recovery fallback)? Defaults true when we can't verify
+      // (no into_selector, or iframe target) — see frameVerify below for that
+      // case. When false, the caller must NOT trust this call succeeded.
       let landed = true;
       if (intoSelector && intoSelectorOk && !frameSelector) {
         try {
@@ -366,28 +369,60 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
                 target.classList.contains("ProseMirror") ||
                 target.classList.contains("tiptap") ||
                 target.closest?.(".ProseMirror, .tiptap, [data-tiptap-editor]") !== null;
-              const actual = target.isContentEditable
-                ? (target.textContent ?? "")
-                : ((target as HTMLInputElement | HTMLTextAreaElement).value ?? "");
-              // Drop threshold: editor has < 50% of expected content. Stricter
-              // than "0 chars" because tiptap sometimes lands a partial paste
-              // before reverting; < 50% captures both full-drop and partial-drop.
+              const readActual = () =>
+                target.isContentEditable
+                  ? (target.textContent ?? "")
+                  : ((target as HTMLInputElement | HTMLTextAreaElement).value ?? "");
+              const actual = readActual();
+              // Drop threshold: < 50% of expected content survived. Stricter
+              // than "0 chars" because a rich-text editor sometimes lands a
+              // partial paste before reverting; < 50% captures both full-drop
+              // and partial-drop, and also catches "CDP never fired at all".
               const dropped = actual.length < expectedText.length * 0.5;
-              if (!isProseMirror || !dropped) {
-                return { ok: true, fallback: false, isProseMirror, actualLength: actual.length, expectedLength: expectedText.length };
+              if (!dropped) {
+                return { ok: true, fallback: "none" as const, isProseMirror, actualLength: actual.length, expectedLength: expectedText.length };
               }
-              // Fallback: focus, select-all, replace via insertText.
               target.focus();
-              try { document.execCommand("selectAll"); } catch { /* ignore */ }
-              try { document.execCommand("delete"); } catch { /* ignore */ }
-              try { document.execCommand("insertText", false, expectedText); } catch { /* ignore */ }
-              target.dispatchEvent(new Event("input", { bubbles: true }));
-              target.dispatchEvent(new Event("change", { bubbles: true }));
-              const finalText = target.textContent ?? "";
+              let fallback: "prosemirror" | "native-setter" | "execcommand";
+              if (isProseMirror) {
+                // execCommand is what TipTap/ProseMirror's own input handler
+                // listens for; a native value-setter write bypasses its state
+                // machine entirely and the editor would just revert it too.
+                fallback = "prosemirror";
+                try { document.execCommand("selectAll"); } catch { /* ignore */ }
+                try { document.execCommand("delete"); } catch { /* ignore */ }
+                try { document.execCommand("insertText", false, expectedText); } catch { /* ignore */ }
+              } else if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
+                // Native value-setter write, same pattern as fill_input's
+                // React-aware path (content/fill.ts) — bypasses whatever
+                // dropped the synthetic keystrokes and still fires React's
+                // onChange via the prototype setter + dispatched events.
+                fallback = "native-setter";
+                const proto = Object.getPrototypeOf(target);
+                const setter =
+                  Object.getOwnPropertyDescriptor(proto, "value")?.set ??
+                  Object.getOwnPropertyDescriptor(
+                    target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+                    "value",
+                  )?.set;
+                if (setter) setter.call(target, expectedText);
+                else (target as HTMLInputElement).value = expectedText;
+                target.dispatchEvent(new Event("input", { bubbles: true }));
+                target.dispatchEvent(new Event("change", { bubbles: true }));
+              } else {
+                // Generic contenteditable that isn't a recognised rich-text
+                // editor: execCommand insertText is the closest thing to a
+                // "type this text" primitive available outside CDP.
+                fallback = "execcommand";
+                try { document.execCommand("selectAll"); } catch { /* ignore */ }
+                try { document.execCommand("delete"); } catch { /* ignore */ }
+                try { document.execCommand("insertText", false, expectedText); } catch { /* ignore */ }
+              }
+              const finalText = readActual();
               return {
                 ok: true,
-                fallback: true,
-                isProseMirror: true,
+                fallback,
+                isProseMirror,
                 actualLength: actual.length,
                 expectedLength: expectedText.length,
                 finalLength: finalText.length,
@@ -397,14 +432,17 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
           });
           const v = r[0]?.result as
             | { ok: false }
-            | { ok: true; fallback: boolean; isProseMirror: boolean; actualLength: number; expectedLength: number; finalLength?: number }
+            | { ok: true; fallback: "none" | "prosemirror" | "native-setter" | "execcommand"; isProseMirror: boolean; actualLength: number; expectedLength: number; finalLength?: number }
             | undefined;
           if (v && v.ok) {
-            const got = v.fallback ? (v.finalLength ?? 0) : v.actualLength;
+            const got = v.fallback === "none" ? v.actualLength : (v.finalLength ?? 0);
             landed = got >= v.expectedLength * 0.5;
-            if (v.fallback) {
-              tiptapFallback =
-                ` — TipTap/ProseMirror silently dropped the typed text (${v.actualLength}/${v.expectedLength} chars survived), recovered via execCommand insertText (${v.finalLength ?? "?"} chars now in editor)`;
+            if (v.fallback !== "none") {
+              const recoveredVia = v.fallback === "prosemirror" ? "execCommand insertText (TipTap/ProseMirror)"
+                : v.fallback === "native-setter" ? "the native value setter" : "execCommand insertText";
+              dropFallback = landed
+                ? ` — CDP keystrokes did not land (${v.actualLength}/${v.expectedLength} chars survived), recovered via ${recoveredVia} (${v.finalLength ?? "?"} chars now in the field)`
+                : ` — CDP keystrokes did not land (${v.actualLength}/${v.expectedLength} chars survived) and recovery via ${recoveredVia} ALSO failed (${v.finalLength ?? "?"} chars now in the field)`;
             }
           } else if (v && v.ok === false) {
             landed = false; // verification couldn't find the target — text did not land where expected
@@ -413,9 +451,15 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
       }
 
       // If we were typing into an iframe, also dispatch input/change on the
-      // iframe's focused element. CDP's Runtime.evaluate above runs in the
+      // iframe's focused element (CDP's Runtime.evaluate above runs in the
       // top-level frame's execution context, so events dispatched there don't
-      // reach the iframe's React tree.
+      // reach the iframe's React tree), AND fold this into `landed` — this
+      // path previously skipped verification entirely, which meant the exact
+      // silent-drop trap (see ISSUE-2026-07-15-cdp-input-dead.md) was still
+      // fully reproducible for iframe-targeted typing even with the
+      // into_selector path fixed above. No recovery fallback is attempted
+      // here (unlike into_selector) — just detection, so the caller at least
+      // finds out rather than trusting a false "Typed N characters".
       let frameVerify = "";
       if (frameSelector) {
         try {
@@ -424,33 +468,44 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
             world: "MAIN",
             func: (sel: string) => {
               const iframe = document.querySelector(sel);
-              if (!(iframe instanceof HTMLIFrameElement)) return "";
+              if (!(iframe instanceof HTMLIFrameElement)) return { ok: false };
               let doc: Document | null = null;
               try { doc = iframe.contentDocument; } catch { doc = null; }
-              if (!doc) return "";
+              if (!doc) return { ok: false };
               const active = doc.activeElement;
-              if (active instanceof HTMLElement) {
-                active.dispatchEvent(new Event("input", { bubbles: true }));
-                active.dispatchEvent(new Event("change", { bubbles: true }));
-                const txt = active.isContentEditable
-                  ? (active.textContent ?? "")
-                  : (active as HTMLInputElement).value ?? "";
-                return `[frame editor now has ${txt.length} chars]`;
-              }
-              return "";
+              if (!(active instanceof HTMLElement)) return { ok: false };
+              active.dispatchEvent(new Event("input", { bubbles: true }));
+              active.dispatchEvent(new Event("change", { bubbles: true }));
+              const txt = active.isContentEditable
+                ? (active.textContent ?? "")
+                : (active as HTMLInputElement).value ?? "";
+              return { ok: true, length: txt.length };
             },
             args: [frameSelector],
           });
-          frameVerify = (r[0]?.result as string) ?? "";
+          const v = r[0]?.result as { ok: boolean; length?: number } | undefined;
+          if (v?.ok && typeof v.length === "number") {
+            landed = v.length >= text.length * 0.5;
+            frameVerify = `[frame editor now has ${v.length} chars]`;
+          }
+          // v.ok === false (cross-origin iframe, or no active element inside
+          // it): genuinely can't verify — leave `landed` at its current
+          // value rather than guessing either way.
         } catch { /* best-effort verification */ }
       }
 
       return {
         type: "action_done",
         requestId: msg.requestId,
-        success: true,
+        // `landed` false means the text verifiably did NOT end up in the
+        // field (even after the drop-recovery fallback above) — this must
+        // surface as success:false, not just a buried field, or a caller
+        // that only checks `success` sees exactly the silent-failure trap
+        // from ISSUE-2026-07-15-cdp-input-dead.md: "Typed N characters" with
+        // an empty field underneath it.
+        success: landed,
         landed,
         resolved_selector: resolvedSelector,
-        message: `Typed ${text.length} characters via individual keystrokes${frameSelector ? ` into iframe "${frameSelector}"${frameVerify ? " " + frameVerify : ""}` : ""}${tiptapFallback}`,
+        message: `${landed ? "Typed" : "Attempted to type"} ${text.length} characters via individual keystrokes${frameSelector ? ` into iframe "${frameSelector}"${frameVerify ? " " + frameVerify : ""}` : ""}${dropFallback}${landed ? "" : " — the text did NOT land in the target field; do not trust this as a successful fill, verify with execute_script or retry"}`,
       };
 }

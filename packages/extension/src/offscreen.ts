@@ -28,7 +28,7 @@ import {
 const RECONNECT_BASE_MS = 1000;
 // Cap generic (host-down) backoff at 30s rather than hammering a dead endpoint
 // every few seconds forever.
-const RECONNECT_MAX_MS = 30000;
+const RECONNECT_MAX_MS = 5000;
 // Drop (and close) any inbound frame larger than this. A malicious/buggy remote
 // could otherwise stream hundreds of MB into JSON.parse and OOM the offscreen
 // document, taking down every connection (local included) that shares it.
