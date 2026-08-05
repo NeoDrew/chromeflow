@@ -15,7 +15,7 @@
 
 /** Default loopback port range, one connection per local MCP server instance. */
 export const DEFAULT_PORT_BASE = 7878;
-export const DEFAULT_PORT_MAX = 7888;
+export const DEFAULT_PORT_MAX = 7928;
 
 /**
  * Synthetic connId floor for user-configured (non-default-port) endpoints. Kept

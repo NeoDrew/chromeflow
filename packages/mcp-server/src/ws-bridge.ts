@@ -1,11 +1,12 @@
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
 import type { ClientMessage, DistributiveOmit, ServerMessage } from "./types.js";
+import { timeAndRecord } from "./usage-log.js";
 
 type ServerMessagePayload = DistributiveOmit<ServerMessage, "requestId">;
 
 const WS_PORT_BASE = 7878;
-const WS_PORT_MAX = 7888;
+const WS_PORT_MAX = 7928;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 type PendingRequest = {
@@ -137,42 +138,46 @@ export class WsBridge {
 
   /** Send a message and wait for a response from the extension. */
   async request(message: ServerMessagePayload, timeoutMs = REQUEST_TIMEOUT_MS): Promise<ClientMessage> {
-    if (!this.isConnected()) {
-      // Grace window for the multi-instance startup race: a freshly spawned
-      // MCP on a non-default port may arrive before the extension's WS to
-      // that port has cleared its exponential-backoff timer.
-      const grace = Math.min(10_000, timeoutMs);
-      const start = Date.now();
-      while (!this.isConnected() && Date.now() - start < grace) {
-        await new Promise((r) => setTimeout(r, 200));
-      }
+    // Wrapped in timeAndRecord purely for local usage stats (see usage-log.ts) —
+    // this must not change the resolve/reject behavior below in any way.
+    return timeAndRecord(message.type, async () => {
       if (!this.isConnected()) {
-        throw new Error(
-          "Chromeflow extension is not connected. Open Chrome and ensure the extension is installed."
-        );
+        // Grace window for the multi-instance startup race: a freshly spawned
+        // MCP on a non-default port may arrive before the extension's WS to
+        // that port has cleared its exponential-backoff timer.
+        const grace = Math.min(10_000, timeoutMs);
+        const start = Date.now();
+        while (!this.isConnected() && Date.now() - start < grace) {
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        if (!this.isConnected()) {
+          throw new Error(
+            "Chromeflow extension is not connected. Open Chrome and ensure the extension is installed."
+          );
+        }
       }
-    }
-    const requestId = crypto.randomUUID();
-    return new Promise<ClientMessage>((resolve, reject) => {
-      let lastProgressAt = Date.now();
-      const fire = () => {
-        this.pending.delete(requestId);
-        reject(new Error(`Request timed out after ${timeoutMs}ms (last progress ${Date.now() - lastProgressAt}ms ago). The operation may have completed on the page; verify state before retrying.`));
-      };
-      let timer = setTimeout(fire, timeoutMs);
-      const refresh = () => {
-        clearTimeout(timer);
-        lastProgressAt = Date.now();
-        timer = setTimeout(fire, timeoutMs);
-      };
+      const requestId = crypto.randomUUID();
+      return new Promise<ClientMessage>((resolve, reject) => {
+        let lastProgressAt = Date.now();
+        const fire = () => {
+          this.pending.delete(requestId);
+          reject(new Error(`Request timed out after ${timeoutMs}ms (last progress ${Date.now() - lastProgressAt}ms ago). The operation may have completed on the page; verify state before retrying.`));
+        };
+        let timer = setTimeout(fire, timeoutMs);
+        const refresh = () => {
+          clearTimeout(timer);
+          lastProgressAt = Date.now();
+          timer = setTimeout(fire, timeoutMs);
+        };
 
-      this.pending.set(requestId, {
-        resolve,
-        reject,
-        timer,
-        refresh,
+        this.pending.set(requestId, {
+          resolve,
+          reject,
+          timer,
+          refresh,
+        });
+        this.client!.send(JSON.stringify({ ...message, requestId }));
       });
-      this.client!.send(JSON.stringify({ ...message, requestId }));
     });
   }
 

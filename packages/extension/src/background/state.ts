@@ -89,12 +89,35 @@ export async function resolvePostClickTab(port: number, windowId: number): Promi
 // can never land mid-way through an in-flight request for the same port.
 const portQueueTails = new Map<number, Promise<unknown>>();
 
-export function runSerializedOnPort<T>(port: number, task: () => Promise<T>): Promise<T> {
+// Default safety-net bound on how long the queue waits for one task before
+// giving up and letting the next queued task run. Every handler is SUPPOSED
+// to settle well within this (the WS bridge itself times out at 30s, CDP
+// phases at 8s) — this exists only for the case where one doesn't, so a
+// single genuinely-hung task can't wedge every subsequent call on the port
+// forever (previously: it could, since the queue just waited indefinitely).
+// Callers with their own explicit, legitimately-long timeout (wait_for_click,
+// wait_for) should pass that instead via the `watchdogMs` param.
+export const DEFAULT_QUEUE_WATCHDOG_MS = 90_000;
+
+export function runSerializedOnPort<T>(
+  port: number,
+  task: () => Promise<T>,
+  watchdogMs: number = DEFAULT_QUEUE_WATCHDOG_MS,
+): Promise<T> {
   const tail = portQueueTails.get(port) ?? Promise.resolve();
   const run = tail.then(task, task);
-  // Store a settled-safe continuation so one task's rejection never poisons
-  // the chain for the next queued task on this port.
-  portQueueTails.set(port, run.then(() => {}, () => {}));
+  // Advance the queue when this task settles, OR after watchdogMs, whichever
+  // comes first. `run` itself is returned to the caller UNCHANGED — if the
+  // task eventually does settle after the watchdog fires, its real caller
+  // still gets the real result. Only queue ordering is bounded here.
+  let watchdogTimer!: ReturnType<typeof setTimeout>;
+  const watchdog = new Promise<void>((resolve) => { watchdogTimer = setTimeout(resolve, watchdogMs); });
+  const queueCleared = Promise.race([run.then(() => {}, () => {}), watchdog]);
+  // The common case: the task settles well before the watchdog. Cancel the
+  // timer then instead of leaving it pending for the rest of watchdogMs on
+  // every single call.
+  run.then(() => clearTimeout(watchdogTimer), () => clearTimeout(watchdogTimer));
+  portQueueTails.set(port, queueCleared);
   return run;
 }
 
@@ -342,11 +365,16 @@ export async function closeOwnedWindowForPort(port: number): Promise<number | nu
 
 // Grace period between a port's connection dropping and chromeflow auto-
 // closing the window it owns. Covers transient disconnects — an extension
-// reload, a brief network blip, the sticky MCP-server process restarting —
-// so a live session's window is never yanked out from under it just because
-// the WS hiccuped. Only fires for windows chromeflow itself created; a
-// window the user hand-assigned is never auto-closed.
-const WINDOW_AUTOCLOSE_GRACE_MS = 60_000;
+// reload, a brief network blip, the sticky MCP-server process restarting,
+// the LAPTOP SLEEPING (a lid-close during a break can easily keep the WS
+// down for minutes once you account for OS wake + network re-associate +
+// offscreen's own reconnect backoff, which alone climbs to 30s between
+// attempts) — so a live session's window is never yanked out from under it
+// just because the machine napped. Destroying an active session's window is
+// far worse than one lingering a few extra minutes, so this errs long. Only
+// fires for windows chromeflow itself created; a window the user hand-
+// assigned is never auto-closed.
+const WINDOW_AUTOCLOSE_GRACE_MS = 10 * 60_000;
 // Bound on top of the grace period: if a same-port task is still ahead of the
 // close in the queue this long after the port was confirmed gone, stop
 // waiting behind it and close directly. A port that's been dark for

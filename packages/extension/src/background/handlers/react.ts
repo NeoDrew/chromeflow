@@ -40,19 +40,85 @@ export async function handleClickAtCoordinates(msg: McpMsg, port: number): Promi
         };
       }
 
+      let fallbackNote = "";
+      // Set right after the real mousePressed/mouseReleased land — phaseRace
+      // can't cancel the underlying dispatch, so if it loses the race on a
+      // slow-but-not-actually-dead CDP round trip, this flag is how the catch
+      // block below tells "real click landed late" apart from "truly dead"
+      // and avoids firing a second, synthetic click at the same target.
+      let realClickLanded = false;
       try {
-        await phaseRace("cdp_click_at", 8000, dispatchHumanMouseClick(tabId, x, y, { button, double }));
+        await phaseRace("cdp_click_at", 8000, dispatchHumanMouseClick(tabId, x, y, {
+          button, double, onPressReleaseComplete: () => { realClickLanded = true; },
+        }));
       } catch (e) {
+        if (realClickLanded) {
+          // The real click fired before we gave up waiting — only the
+          // trailing settle jitter was slow. Treat as a normal success
+          // instead of risking a double-click via the fallback below.
+          await new Promise((r) => setTimeout(r, 250));
+          const postTab = await resolvePostClickTab(port, tab.windowId!);
+          const after_url = postTab?.url ?? before_url;
+          return {
+            type: "click_at_coordinates_response",
+            requestId: msg.requestId,
+            success: true,
+            message: `Clicked at (${x}, ${y})${double ? " double-click" : ""}${button !== "left" ? ` button=${button}` : ""}${after_url !== before_url ? ` — navigated to ${after_url}` : ""} (CDP settle phase ran past its budget after the click itself landed, so this took longer than usual)`,
+            before_url,
+            after_url,
+            navigated: after_url !== before_url,
+          };
+        }
         const err = e as Error & { phase?: string; phaseTimedOut?: boolean };
-        return {
-          type: "click_at_coordinates_response",
-          requestId: msg.requestId,
-          success: false,
-          message: `click_at_coordinates failed at (${x}, ${y}): ${err.message}`,
-          before_url,
-          after_url: before_url,
-          navigated: false,
-        };
+        // CDP attach/dispatch failed or timed out — most commonly the
+        // debugger session silently died mid-run (see
+        // ISSUE-2026-07-15-cdp-input-dead.md: the tab's chrome.debugger
+        // attachment can go dead without any visible symptom until the next
+        // command hangs). Unlike click_element, this tool has no selector to
+        // hand off to a content-script click, so the fallback has to be
+        // coordinate-based: ask the page itself what's at (x, y) and .click()
+        // it directly via chrome.scripting (no debugger involved at all,
+        // so it's unaffected by whatever wedged the CDP session).
+        try {
+          const r = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: (cx: number, cy: number) => {
+              const el = document.elementFromPoint(cx, cy) as HTMLElement | null;
+              if (!el) return { ok: false, reason: "no element at that point" };
+              el.click();
+              return { ok: true, tag: el.tagName.toLowerCase() };
+            },
+            args: [x, y],
+          });
+          const res = r[0]?.result as { ok: boolean; reason?: string; tag?: string } | undefined;
+          if (!res?.ok) {
+            return {
+              type: "click_at_coordinates_response",
+              requestId: msg.requestId,
+              success: false,
+              message: `click_at_coordinates failed at (${x}, ${y}): CDP click ${err.phaseTimedOut ? `timed out after its ${err.phase} budget` : `errored (${err.message})`}, and the synthetic elementFromPoint fallback found ${res?.reason ?? "nothing there either"}.`,
+              before_url,
+              after_url: before_url,
+              navigated: false,
+            };
+          }
+          // isTrusted=false — strict anti-bot sites (Reddit/X/mcp.so-style
+          // submit gates) will likely still reject this; it exists so the
+          // caller isn't left with a bare timeout on ordinary pages (cross-
+          // origin iframe targets, canvas elements) where a plain click
+          // suffices.
+          fallbackNote = ` (CDP click ${err.phaseTimedOut ? "timed out" : "failed"}; used a synthetic .click() on the <${res.tag}> at that point instead — isTrusted=false, may not pass strict anti-bot checks)`;
+        } catch (fallbackErr) {
+          return {
+            type: "click_at_coordinates_response",
+            requestId: msg.requestId,
+            success: false,
+            message: `click_at_coordinates failed at (${x}, ${y}): CDP click ${err.phaseTimedOut ? `timed out after its ${err.phase} budget` : `errored (${err.message})`}, and the synthetic fallback also failed: ${(fallbackErr as Error).message}`,
+            before_url,
+            after_url: before_url,
+            navigated: false,
+          };
+        }
       }
 
       // Brief settle so navigations and modal openings register before we
@@ -66,7 +132,7 @@ export async function handleClickAtCoordinates(msg: McpMsg, port: number): Promi
         type: "click_at_coordinates_response",
         requestId: msg.requestId,
         success: true,
-        message: `Clicked at (${x}, ${y})${double ? " double-click" : ""}${button !== "left" ? ` button=${button}` : ""}${after_url !== before_url ? ` — navigated to ${after_url}` : ""}`,
+        message: `Clicked at (${x}, ${y})${double ? " double-click" : ""}${button !== "left" ? ` button=${button}` : ""}${after_url !== before_url ? ` — navigated to ${after_url}` : ""}${fallbackNote}`,
         before_url,
         after_url,
         navigated: after_url !== before_url,

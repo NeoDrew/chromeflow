@@ -24619,8 +24619,52 @@ var import_websocket_server = __toESM(require_websocket_server(), 1);
 
 // packages/mcp-server/src/ws-bridge.ts
 import path from "path";
+
+// packages/mcp-server/src/usage-log.ts
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { existsSync, statSync, renameSync, appendFileSync, mkdirSync } from "node:fs";
+var LOG_DIR = join(homedir(), ".chromeflow");
+var LOG_PATH = join(LOG_DIR, "usage.jsonl");
+var ROTATED_PATH = join(LOG_DIR, "usage.jsonl.1");
+var MAX_LOG_BYTES = 5 * 1024 * 1024;
+var ERROR_TRUNCATE_LEN = 200;
+function rotateIfNeeded() {
+  if (!existsSync(LOG_PATH)) return;
+  const { size } = statSync(LOG_PATH);
+  if (size <= MAX_LOG_BYTES) return;
+  renameSync(LOG_PATH, ROTATED_PATH);
+}
+function recordUsage(event) {
+  try {
+    mkdirSync(LOG_DIR, { recursive: true });
+    rotateIfNeeded();
+    appendFileSync(LOG_PATH, JSON.stringify(event) + "\n", "utf-8");
+  } catch {
+  }
+}
+async function timeAndRecord(type, fn) {
+  const start = Date.now();
+  try {
+    const result = await fn();
+    recordUsage({ ts: (/* @__PURE__ */ new Date()).toISOString(), type, ok: true, duration_ms: Date.now() - start });
+    return result;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    recordUsage({
+      ts: (/* @__PURE__ */ new Date()).toISOString(),
+      type,
+      ok: false,
+      duration_ms: Date.now() - start,
+      error: message.slice(0, ERROR_TRUNCATE_LEN)
+    });
+    throw err;
+  }
+}
+
+// packages/mcp-server/src/ws-bridge.ts
 var WS_PORT_BASE = 7878;
-var WS_PORT_MAX = 7888;
+var WS_PORT_MAX = 7928;
 var REQUEST_TIMEOUT_MS = 3e4;
 var WsBridge = class {
   wss;
@@ -24712,38 +24756,40 @@ var WsBridge = class {
   }
   /** Send a message and wait for a response from the extension. */
   async request(message, timeoutMs = REQUEST_TIMEOUT_MS) {
-    if (!this.isConnected()) {
-      const grace = Math.min(1e4, timeoutMs);
-      const start = Date.now();
-      while (!this.isConnected() && Date.now() - start < grace) {
-        await new Promise((r) => setTimeout(r, 200));
-      }
+    return timeAndRecord(message.type, async () => {
       if (!this.isConnected()) {
-        throw new Error(
-          "Chromeflow extension is not connected. Open Chrome and ensure the extension is installed."
-        );
+        const grace = Math.min(1e4, timeoutMs);
+        const start = Date.now();
+        while (!this.isConnected() && Date.now() - start < grace) {
+          await new Promise((r) => setTimeout(r, 200));
+        }
+        if (!this.isConnected()) {
+          throw new Error(
+            "Chromeflow extension is not connected. Open Chrome and ensure the extension is installed."
+          );
+        }
       }
-    }
-    const requestId = crypto.randomUUID();
-    return new Promise((resolve3, reject) => {
-      let lastProgressAt = Date.now();
-      const fire = () => {
-        this.pending.delete(requestId);
-        reject(new Error(`Request timed out after ${timeoutMs}ms (last progress ${Date.now() - lastProgressAt}ms ago). The operation may have completed on the page; verify state before retrying.`));
-      };
-      let timer = setTimeout(fire, timeoutMs);
-      const refresh = () => {
-        clearTimeout(timer);
-        lastProgressAt = Date.now();
-        timer = setTimeout(fire, timeoutMs);
-      };
-      this.pending.set(requestId, {
-        resolve: resolve3,
-        reject,
-        timer,
-        refresh
+      const requestId = crypto.randomUUID();
+      return new Promise((resolve3, reject) => {
+        let lastProgressAt = Date.now();
+        const fire = () => {
+          this.pending.delete(requestId);
+          reject(new Error(`Request timed out after ${timeoutMs}ms (last progress ${Date.now() - lastProgressAt}ms ago). The operation may have completed on the page; verify state before retrying.`));
+        };
+        let timer = setTimeout(fire, timeoutMs);
+        const refresh = () => {
+          clearTimeout(timer);
+          lastProgressAt = Date.now();
+          timer = setTimeout(fire, timeoutMs);
+        };
+        this.pending.set(requestId, {
+          resolve: resolve3,
+          reject,
+          timer,
+          refresh
+        });
+        this.client.send(JSON.stringify({ ...message, requestId }));
       });
-      this.client.send(JSON.stringify({ ...message, requestId }));
     });
   }
   /** Send a fire-and-forget message (no response expected). */
@@ -24757,9 +24803,9 @@ var WsBridge = class {
 };
 
 // packages/mcp-server/src/flow-store.ts
-import { homedir } from "node:os";
-import { join, dirname } from "node:path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { join as join2, dirname } from "node:path";
+import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, writeFileSync, renameSync as renameSync2 } from "node:fs";
 var PROMOTE_AT_SUCCESS = 2;
 var DEMOTE_AT_FAILS = 1;
 var PRUNE_AT_FAILS = 2;
@@ -24843,7 +24889,7 @@ var FlowStore = class {
   constructor(version2, baseDir, now = Date.now) {
     this.version = version2;
     this.now = now;
-    this.path = join(baseDir ?? join(homedir(), ".chromeflow"), "flows.json");
+    this.path = join2(baseDir ?? join2(homedir2(), ".chromeflow"), "flows.json");
     this.data = this.load();
     this.pruneExpired();
   }
@@ -24852,13 +24898,13 @@ var FlowStore = class {
   }
   load() {
     try {
-      if (existsSync(this.path)) {
+      if (existsSync2(this.path)) {
         const parsed = JSON.parse(readFileSync(this.path, "utf-8"));
         if (parsed && parsed.version === 1 && parsed.origins) return parsed;
       }
     } catch {
       try {
-        renameSync(this.path, this.path + ".corrupt");
+        renameSync2(this.path, this.path + ".corrupt");
       } catch {
       }
     }
@@ -24866,10 +24912,10 @@ var FlowStore = class {
   }
   persist() {
     try {
-      mkdirSync(dirname(this.path), { recursive: true });
+      mkdirSync2(dirname(this.path), { recursive: true });
       const tmp = this.path + ".tmp";
       writeFileSync(tmp, JSON.stringify(this.data, null, 2), "utf-8");
-      renameSync(tmp, this.path);
+      renameSync2(tmp, this.path);
     } catch {
     }
   }
@@ -25364,8 +25410,8 @@ ${lines.join("\n")}` }] };
 
 // packages/mcp-server/src/tools/browser/screenshot.ts
 import { writeFileSync as writeFileSync2, copyFileSync, readFileSync as readFileSync2 } from "fs";
-import { tmpdir, homedir as homedir2 } from "os";
-import { join as join2 } from "path";
+import { tmpdir, homedir as homedir3 } from "os";
+import { join as join3 } from "path";
 import { execSync } from "child_process";
 function registerScreenshotTools(server, bridge) {
   server.tool(
@@ -25391,13 +25437,13 @@ Refuses fast on pages that are in fullscreen mode (captureVisibleTab hangs there
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const filename = `chromeflow-${timestamp}.png`;
       const imageBuffer = Buffer.from(response.image, "base64");
-      const tmpPath = join2(tmpdir(), filename);
+      const tmpPath = join3(tmpdir(), filename);
       const needTmp = !shouldInline || sharing;
       if (needTmp) writeFileSync2(tmpPath, imageBuffer);
       const notes = [];
       let landedPath = tmpPath;
       if (save_to !== "none") {
-        const savePath = save_to === "cwd" ? join2(process.cwd(), filename) : join2(homedir2(), "Downloads", filename);
+        const savePath = save_to === "cwd" ? join3(process.cwd(), filename) : join3(homedir3(), "Downloads", filename);
         copyFileSync(tmpPath, savePath);
         notes.push(`Saved to ${savePath}`);
         landedPath = savePath;
@@ -25439,7 +25485,7 @@ The saved file path can be passed directly to set_file_input(hint, file_path) to
     async ({ save_to = "downloads" }) => {
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const filename = `terminal-${timestamp}.png`;
-      const savePath = save_to === "cwd" ? join2(process.cwd(), filename) : join2(homedir2(), "Downloads", filename);
+      const savePath = save_to === "cwd" ? join3(process.cwd(), filename) : join3(homedir3(), "Downloads", filename);
       let captured = false;
       try {
         const bounds = execSync(`osascript -e '
@@ -25947,7 +25993,7 @@ ${lines.join("\n")}` }] };
 }
 
 // packages/mcp-server/src/tools/capture/files.ts
-import { appendFileSync, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
 import { resolve, relative, isAbsolute } from "path";
 function registerFileTools(server, bridge) {
   server.tool(
@@ -25991,7 +26037,7 @@ function registerFileTools(server, bridge) {
         } else {
           const toAppend = (existing && !existing.endsWith("\n") ? "\n" : "") + `${key}=${value}
 `;
-          appendFileSync(envPath, toAppend, "utf-8");
+          appendFileSync2(envPath, toAppend, "utf-8");
         }
         return {
           content: [
@@ -26067,7 +26113,7 @@ Size: ${r.size} bytes`
 }
 
 // packages/mcp-server/src/tools/capture/fetch.ts
-import { mkdirSync as mkdirSync2, writeFileSync as writeFileSync4 } from "fs";
+import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync4 } from "fs";
 import { resolve as resolve2, relative as relative2, isAbsolute as isAbsolute2, dirname as dirname2 } from "path";
 function registerFetchTools(server, bridge) {
   server.tool(
@@ -26127,7 +26173,7 @@ Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is r
             `Refusing to write fetch_url body outside the project directory. Target "${resolved}" is not under "${cwd}".`
           );
         }
-        mkdirSync2(dirname2(resolved), { recursive: true });
+        mkdirSync3(dirname2(resolved), { recursive: true });
         const buf = r.body_base64 ? Buffer.from(r.body_base64, "base64") : Buffer.from(r.body_text ?? "", "utf-8");
         writeFileSync4(resolved, buf);
         const hdrLines = Object.keys(r.headers).sort().map((k) => `  ${k}: ${r.headers[k]}`).join("\n");
@@ -26652,7 +26698,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.12.4" : "dev";
+var PACKAGE_VERSION = true ? "0.12.5" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

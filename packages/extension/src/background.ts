@@ -27,6 +27,7 @@ import {
   portMeta,
   reconcileLiveConnections,
   runSerializedOnPort,
+  DEFAULT_QUEUE_WATCHDOG_MS,
   type ClickWatchResult,
 } from "./background/state";
 import {
@@ -130,7 +131,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // on the same shared window — would run concurrently and race on the same
     // tab. Queuing them FIFO per port means they still run one at a time even
     // when nothing else changes.
-    runSerializedOnPort(port, () => handleMcpMessage(msg.payload, port))
+    //
+    // start_click_watch (wait_for_click) and wait_for_selector (wait_for) are
+    // the two message types that are SUPPOSED to run long — each already
+    // enforces its own bounded settlement via a caller-supplied timeout. Size
+    // their queue watchdog off that instead of the generic default, so a
+    // real multi-minute wait_for_click doesn't trip the safety net meant for
+    // genuinely-hung calls.
+    const payload = msg.payload as { type?: string; timeout?: number };
+    const isLongPoll = payload?.type === "start_click_watch" || payload?.type === "wait_for_selector";
+    const watchdogMs = isLongPoll
+      ? (typeof payload.timeout === "number" ? payload.timeout : 120_000) + 15_000
+      : DEFAULT_QUEUE_WATCHDOG_MS;
+    runSerializedOnPort(port, () => handleMcpMessage(msg.payload, port), watchdogMs)
       .then((result) => sendResponse({ ok: true, result }))
       .catch((err) => sendResponse({ ok: false, error: String(err) }));
     return true;
