@@ -22,6 +22,14 @@ export type ActivityProbeResult = {
   reason: string;
   mutation_count: number;
   url_changed: boolean;
+  // True when `activity` was satisfied only by a generic signal (a DOM
+  // mutation, a focus change) that doesn't specifically prove the click's
+  // PURPOSE succeeded — as opposed to a URL change, a target state-attribute
+  // flip, an alert/toast/modal appearing, or a large shadow-pierce count
+  // jump, all of which are specific enough to trust outright. Lets an
+  // expect_submit caller's stricter check still get a shot at the fallback
+  // cascade even though this generic probe already reported activity.
+  weak: boolean;
   after_url: string;
   focused_after: {
     tag: string;
@@ -94,6 +102,7 @@ export async function runActivityProbe(
     reason: "(probe skipped or failed; assuming activity)",
     mutation_count: 0,
     url_changed: false,
+    weak: false,
     after_url: beforeUrl,
     focused_after: null,
   };
@@ -131,11 +140,30 @@ export async function runActivityProbe(
               value_preview: (anyEl.value ?? innerText ?? "").slice(0, 60),
             };
           }
+          // [asserted-state, confirmed-state] word pairs. Vocabulary, not a
+          // site check: any UI whose completed-action feedback is a button
+          // relabelling itself (rather than a toast/alert/modal) matches,
+          // regardless of which site renders it. Mirrors dialog.ts's
+          // getSubmitSignalCounts so expect_submit and this generic probe
+          // agree on what counts as a specific (non-weak) success signal.
+          const PAIRED_STATE_WORDS: Array<[string, string]> = [
+            ["Connect", "Pending"], ["Follow", "Following"],
+            ["Subscribe", "Subscribed"], ["Save", "Saved"],
+            ["Add", "Added"], ["Join", "Requested"], ["Like", "Liked"],
+          ];
           function getSignalCounts() {
             const c = (sel: string) => {
               try { return document.querySelectorAll(sel).length; }
               catch { return 0; }
             };
+            // Leaf elements only, not restricted to clickable/button-role —
+            // the CONFIRMED state is often no longer interactive (LinkedIn
+            // replaces "Connect" with a plain non-clickable "Pending" span),
+            // so restricting to button-like elements made the after-word's
+            // count unable to ever rise. See dialog.ts's getSubmitSignalCounts.
+            const clickableTexts = Array.from(document.querySelectorAll('button, [role="button"], a, span, div, li'))
+              .filter((el) => el.children.length === 0)
+              .map((el) => (el.textContent ?? "").replace(/\s+/g, " ").trim());
             return {
               alert:
                 c('[role="alert"]:not([aria-hidden="true"])') +
@@ -148,6 +176,12 @@ export async function runActivityProbe(
               modal:
                 c('[role="dialog"]:not([aria-hidden="true"])') +
                 c('[aria-modal="true"]'),
+              paired: PAIRED_STATE_WORDS.map(([before, after]) => ({
+                before,
+                after,
+                beforeCount: clickableTexts.filter((t) => t === before).length,
+                afterCount: clickableTexts.filter((t) => t === after).length,
+              })),
             };
           }
           // Shadow-piercing VISIBLE element count. The plain MutationObserver
@@ -238,18 +272,30 @@ export async function runActivityProbe(
           // the deep walk only runs every 500ms AND on the final tick.
           // Catches Lit/Stencil/Radix visibility flips with ~half the CPU.
           let lastDeepCheckAt = 0;
-          function check(isFinalTick: boolean): { activity: boolean; reason: string; url_changed: boolean } {
+          // `weak` marks a signal that's too generic to prove the click's
+          // actual PURPOSE succeeded — a dialog closing (a DOM mutation), or
+          // focus moving off the clicked element, happen on plenty of clicks
+          // that got dismissed/no-opped without doing anything real (see
+          // ISSUE-2026-08-15-antibot-tenant-walls.md's LinkedIn "Send without
+          // a note" case: the confirmation dialog closes as a mutation, the
+          // probe reports activity, but the invite was never actually sent).
+          // url_changed / target-state-attribute / alert-toast-modal-appeared
+          // / a big shadow-pierce count jump are all specific enough to trust
+          // outright. click.ts uses this to decide whether an expect_submit
+          // caller's stricter check should still get a shot at the fallback
+          // cascade even though the generic probe already reported activity.
+          function check(isFinalTick: boolean): { activity: boolean; reason: string; url_changed: boolean; weak: boolean } {
             const after_url = location.href;
             if (after_url !== beforeUrl) {
-              return { activity: true, reason: `URL changed to ${after_url}`, url_changed: true };
+              return { activity: true, reason: `URL changed to ${after_url}`, url_changed: true, weak: false };
             }
             if (mutationCount > 0) {
-              return { activity: true, reason: `${mutationCount} DOM mutation${mutationCount === 1 ? "" : "s"}`, url_changed: false };
+              return { activity: true, reason: `${mutationCount} DOM mutation${mutationCount === 1 ? "" : "s"}`, url_changed: false, weak: true };
             }
             const focusedNow = getFocused();
             const focusedKeyNow = focusedNow ? JSON.stringify(focusedNow) : "";
             if (focusedKeyNow !== focusedKeyBefore) {
-              return { activity: true, reason: "focused element changed", url_changed: false };
+              return { activity: true, reason: "focused element changed", url_changed: false, weak: true };
             }
             // Target element attribute change — catches form-input state
             // changes (aria-checked, checked) and Lit/Radix dropdown state
@@ -259,12 +305,17 @@ export async function runActivityProbe(
             // attribute names sometimes evade general subtree observation.
             const targetStateNow = snapshotTargetState();
             if (targetStateBefore !== null && targetStateNow !== null && targetStateNow !== targetStateBefore) {
-              return { activity: true, reason: "target element state attribute changed", url_changed: false };
+              return { activity: true, reason: "target element state attribute changed", url_changed: false, weak: false };
             }
             const c = getSignalCounts();
-            if (c.alert > signalsBefore.alert) return { activity: true, reason: "alert/aria-live element appeared", url_changed: false };
-            if (c.toast > signalsBefore.toast) return { activity: true, reason: "toast / notification appeared", url_changed: false };
-            if (c.modal > signalsBefore.modal) return { activity: true, reason: "modal / [role=dialog] appeared", url_changed: false };
+            if (c.alert > signalsBefore.alert) return { activity: true, reason: "alert/aria-live element appeared", url_changed: false, weak: false };
+            if (c.toast > signalsBefore.toast) return { activity: true, reason: "toast / notification appeared", url_changed: false, weak: false };
+            if (c.modal > signalsBefore.modal) return { activity: true, reason: "modal / [role=dialog] appeared", url_changed: false, weak: false };
+            const flipped = c.paired.find((now, i) => {
+              const before = signalsBefore.paired[i];
+              return before && now.afterCount > before.afterCount && now.beforeCount < before.beforeCount;
+            });
+            if (flipped) return { activity: true, reason: `a control's label flipped from "${flipped.before}" to "${flipped.after}"`, url_changed: false, weak: false };
             // Throttled shadow-pierce VISIBLE-element count check (catches
             // Lit / Stencil / Radix shows that flip visibility on pre-
             // rendered shadow-DOM content, which MutationObserver misses
@@ -279,10 +330,10 @@ export async function runActivityProbe(
               const deepCountNow = deepVisibleCount();
               const delta = deepCountNow - deepCountBefore;
               if (delta >= 5) {
-                return { activity: true, reason: `shadow-pierce visible-element count grew by ${delta}`, url_changed: false };
+                return { activity: true, reason: `shadow-pierce visible-element count grew by ${delta}`, url_changed: false, weak: false };
               }
             }
-            return { activity: false, reason: "", url_changed: false };
+            return { activity: false, reason: "", url_changed: false, weak: false };
           }
           const start = Date.now();
           function tick() {
@@ -296,6 +347,7 @@ export async function runActivityProbe(
                 reason: r.reason,
                 mutation_count: mutationCount,
                 url_changed: r.url_changed,
+                weak: r.weak,
                 after_url: location.href,
                 focused_after: getFocused(),
               });

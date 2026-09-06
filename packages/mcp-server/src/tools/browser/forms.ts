@@ -46,7 +46,7 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
       };
       const fields = r.fields;
       const captchaLine = r.captcha
-        ? `\n\n⚠ CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. Synthetic submits will be silently rejected. Pre-fill, then highlight the submit button and call wait_for_click.`
+        ? `\n\n⚠ CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. Synthetic submits will be silently rejected and there is no automated way through it — pre-fill everything else, then report the CAPTCHA back rather than blocking on highlight_region + wait_for_click, since most sessions run unattended with no one to solve it.`
         : "";
       const oauthLine = r.oauthIndicators && r.oauthIndicators.length > 0
         ? `\n\nℹ OAuth providers detected on this form: ${r.oauthIndicators.join(", ")}. If the user wants to sign in via one of these, click it instead of filling email/password.`

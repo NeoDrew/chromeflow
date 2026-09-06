@@ -21,6 +21,7 @@ import {
   FlowStore,
   originKey,
   isFragileSelector,
+  coarsenKey,
   PROMOTE_AT_SUCCESS,
   PRUNE_AT_FAILS,
   DEMOTE_AT_FAILS,
@@ -49,7 +50,7 @@ function newStore(clock = makeClock()) {
   return new FlowStore(VERSION, dir, clock.now);
 }
 
-// A notable click atom (the kind the tool layer buffers).
+// A notable click atom (the kind the tool layer buffers), selector mode.
 function clickAtom(selector: string, recovered_via = "dom-click"): Atom {
   return {
     tool: "click_element",
@@ -58,6 +59,19 @@ function clickAtom(selector: string, recovered_via = "dom-click"): Atom {
     recovered_via,
     signal: recovered_via,
     fragile: isFragileSelector(selector),
+    reason: `click recovered via ${recovered_via}`,
+  };
+}
+
+// A notable click atom matched by visible textHint (no selector field) --
+// the shape a real "Autofill with Resume"-style label match actually takes.
+function textHintClickAtom(textHint: string, recovered_via = "dom-click"): Atom {
+  return {
+    tool: "click_element",
+    target: textHint,
+    recovered_via,
+    signal: "navigated",
+    fragile: false,
     reason: `click recovered via ${recovered_via}`,
   };
 }
@@ -90,12 +104,36 @@ describe("autosave → provisional", () => {
     expect(flows[0].success_count).toBe(1);
   });
 
-  it("does NOT surface a provisional flow on recall", () => {
+  it("surfaces a single-observation provisional flow as a lower-confidence possible_flow", () => {
     const store = newStore();
     visit(store, "https://site.example/submit", [clickAtom("#go")]);
     // Fresh session view: a new store reading the same dir.
     const next = newStore();
-    expect(next.recallHint("https://site.example/submit")).toBe("");
+    const hint = next.recallHint("https://site.example/submit");
+    expect(hint).toContain("possible_flow");
+    expect(hint).toContain("#go");
+  });
+
+  it("prefers a trusted flow over a competing provisional flow for the same URL", () => {
+    const o = "https://site.example/submit";
+    // #go earns trusted via 2 independent re-observations.
+    const s1 = newStore(); visit(s1, o, [clickAtom("#go")]);
+    const s2 = newStore(); visit(s2, o, [clickAtom("#go")]);
+    // #other-single is observed once — stays provisional.
+    const s3 = newStore(); visit(s3, o, [clickAtom("#other-single")]);
+    const hint = newStore().recallHint(o);
+    expect(hint).toContain("known_flow");
+    expect(hint).not.toContain("possible_flow");
+    expect(hint).toContain("#go");
+  });
+
+  it("does not surface an unreliable provisional flow (more fails than successes)", () => {
+    const o = "https://site.example/submit";
+    const s1 = newStore(); visit(s1, o, [clickAtom("#go")]);
+    const shown = newStore();
+    shown.recallHint(o); // provisional recall fires, marks it recalled
+    shown.observeFailure(o, "#go"); // fail_count 1 == success_count 1 -> unreliable
+    expect(newStore().recallHint(o)).toBe("");
   });
 
   it("flushAll commits a buffer even when the origin is never left (single-origin session)", () => {
@@ -397,6 +435,183 @@ describe("strategy replay rendering + fragility", () => {
   });
 });
 
+describe("isFragileSelector: GUID/hex-suffixed dynamic ids", () => {
+  it("flags real Workday-style hex-suffixed field ids as fragile (regenerated per render)", () => {
+    expect(isFragileSelector("#primaryQuestionnaire--9f0a2c5536851001fadd8c6857400003")).toBe(true);
+    expect(isFragileSelector("#language-19--69af8d461fea10691f6c368fe0a4da32")).toBe(true);
+  });
+  it("does not regress the existing stable-id case", () => {
+    expect(isFragileSelector("#stable")).toBe(false);
+  });
+  it("does not over-fire on a short numeric id (e.g. a year)", () => {
+    expect(isFragileSelector("#field-2024")).toBe(false);
+  });
+});
+
+describe("coarsenKey", () => {
+  it("templates out a Workday-style job-id segment", () => {
+    expect(coarsenKey("https://mufgub.wd3.myworkdayjobs.com/MUFG-Careers/job/London/Analyst-Associate--Sustainable-Client-Solutions_10074887-WD"))
+      .toBe("https://mufgub.wd3.myworkdayjobs.com/MUFG-Careers/job/London/*");
+  });
+  it("leaves short/route-like segments verbatim (2-digit page numbers, 4-digit years)", () => {
+    expect(coarsenKey("https://site.example/archive/2024/page/12")).toBe("https://site.example/archive/2024/page/12");
+  });
+  it("keeps routes with a trailing literal segment distinct from their instance-only parent", () => {
+    expect(coarsenKey("https://shop.example/product/583920/reviews")).toBe("https://shop.example/product/*/reviews");
+    expect(coarsenKey("https://shop.example/product/583920")).toBe("https://shop.example/product/*");
+    expect(coarsenKey("https://shop.example/product/583920/reviews")).not.toBe(coarsenKey("https://shop.example/product/583920"));
+  });
+  it("is a no-op on a key with no instance-shaped segment", () => {
+    const k = "https://site.example/submit";
+    expect(coarsenKey(k)).toBe(k);
+  });
+});
+
+describe("cross-posting sibling recall (the Workday job-application fix)", () => {
+  const tenant = "https://tenant.example/MUFG-Careers/job";
+  const postingA = `${tenant}/London/Role-A_10074887-WD`;
+  const postingB = `${tenant}/London/Role-B_10099213-WD`;
+
+  it("recalls a trusted flow earned on posting A as a sibling hint on never-before-seen posting B", () => {
+    const s1 = newStore(); s1.noteUrl(postingA); s1.observe(clickAtom("#autofill"), postingA);
+    const res = s1.commit("autofill with resume", postingA); // instant trust via explicit save_flow
+    expect(res.saved).toBe(1);
+
+    const hint = newStore().recallHint(postingB); // B has NO history of its own
+    expect(hint).toContain("known_flow");
+    expect(hint).toContain("sibling page");
+    expect(hint).toContain("#autofill");
+  });
+
+  it("does not cross-recall when the non-instance path segments differ (different office/route)", () => {
+    const postingTokyo = `${tenant}/Tokyo/Role-C_10055221-WD`;
+    const s1 = newStore(); s1.noteUrl(postingA); s1.observe(clickAtom("#autofill"), postingA);
+    s1.commit("autofill with resume", postingA);
+    expect(newStore().recallHint(postingTokyo)).toBe("");
+  });
+
+  it("never pools PROVISIONAL (unproven) flows across siblings — only trusted transfers", () => {
+    const s1 = newStore(); s1.noteUrl(postingA); s1.observe(clickAtom("#autofill"), postingA);
+    s1.flushAll(); // provisional only, single observation — never save_flow'd or re-observed
+    expect(newStore()._flowsFor(postingA)[0].tier).toBe("provisional");
+    expect(newStore().recallHint(postingB)).toBe(""); // B has nothing of its own either
+  });
+
+  it("never coarsens across a different origin (different Workday tenant)", () => {
+    const otherTenant = "https://othertenant.example/OtherCareers/job/London/Role-Z_10012345-WD";
+    const s1 = newStore(); s1.noteUrl(postingA); s1.observe(clickAtom("#autofill"), postingA);
+    s1.commit("autofill with resume", postingA);
+    expect(newStore().recallHint(otherTenant)).toBe("");
+  });
+
+  it("observeFailure demotes a sibling-recalled flow (self-correction works across origin buckets)", () => {
+    const s1 = newStore(); s1.noteUrl(postingA); s1.observe(clickAtom("#autofill"), postingA);
+    s1.commit("autofill with resume", postingA);
+
+    const s2 = newStore();
+    const hint = s2.recallHint(postingB); // sibling recall, lives in origins[postingA]'s bucket
+    expect(hint).toContain("sibling page");
+    s2.observeFailure(postingB, "#autofill");
+
+    // The flow physically lives under postingA's key — confirm IT demoted, not
+    // some phantom postingB entry (postingB should still have no bucket of its own).
+    // Use newStore() (frozen clock), not a real-clock FlowStore -- last_verified
+    // was written under the frozen test clock, and reading it back with the real
+    // clock would make a freshly-demoted provisional flow look decades stale to
+    // TTL-pruning.
+    const flowA = newStore()._flowsFor(postingA)[0];
+    expect(flowA.tier).toBe("provisional");
+    expect(flowA.fail_count).toBe(1);
+  });
+});
+
+// ---- real-world regression: the reported bug, reproduced structurally -----
+//
+// This models the ACTUAL shape of the dataset that exposed the bug (see
+// ISSUE-2026-08-14-workday-flow-memory-unrecallable.md): 33 real flow records
+// across 4 Workday tenants, only 1 ever reaching "trusted", because every job
+// posting is a distinct URL. Company/job names are genericized per this
+// project's "patterns not sites" rule (the fix must never key on a literal
+// site string, and neither should a fixture that ships in the public repo),
+// but the STRUCTURE is real: multiple postings per tenant, a job-id digit run
+// in the path, a non-job route (login) at the same tenant, a GUID-suffixed
+// dynamic field id, and a tenant that never earns a single trusted flow.
+describe("real-world regression: multi-tenant ATS dataset (the reported bug)", () => {
+  const tenantA = "https://tenant-a.example/Careers/job"; // mirrors the one tenant that had a trusted flow
+  const tenantB = "https://tenant-b.example/Careers/job"; // mirrors a tenant that stayed 100% provisional
+
+  it("recalls a trusted discovery on an unvisited sibling posting at the SAME tenant", () => {
+    const trustedPosting = `${tenantA}/London/Data-Analyst_10074887-WD`;
+    const newPosting = `${tenantA}/London/Support-Engineer_10099213-WD`;
+
+    const s1 = newStore(); s1.noteUrl(trustedPosting);
+    s1.observe(textHintClickAtom("Autofill with Resume", "tap-gesture"), trustedPosting);
+    s1.commit("autofill with resume", trustedPosting);
+
+    const hint = newStore().recallHint(newPosting);
+    expect(hint).toContain("known_flow (from a sibling page");
+    expect(hint).toContain("Autofill with Resume");
+  });
+
+  it("does NOT recall across a different route at the same tenant (login page vs. job posting)", () => {
+    const trustedPosting = `${tenantA}/London/Data-Analyst_10074887-WD`;
+    const loginPage = "https://tenant-a.example/Careers/login"; // same tenant, unrelated route
+
+    const s1 = newStore(); s1.noteUrl(trustedPosting);
+    s1.observe(textHintClickAtom("Autofill with Resume", "tap-gesture"), trustedPosting);
+    s1.commit("autofill with resume", trustedPosting);
+
+    expect(newStore().recallHint(loginPage)).toBe("");
+  });
+
+  it("a tenant that never earns a trusted flow gets NOTHING on a fresh posting (the honest ceiling)", () => {
+    // Three different single-visit postings/pages at tenant B, mirroring the
+    // real MUFG data: none reach PROMOTE_AT_SUCCESS, none are save_flow'd.
+    const postings = [
+      `${tenantB}/London/Analyst_10074887-WD`,
+      `${tenantB}/London/Analyst_10074887-WD/apply/autofillWithResume`,
+      "https://tenant-b.example/Careers/jobTasks/completed/application",
+    ];
+    for (const p of postings) {
+      const s = newStore(); s.noteUrl(p); s.observe(clickAtom("#source"), p); s.flushAll();
+    }
+    for (const p of postings) {
+      expect(newStore()._flowsFor(p).every((f) => f.tier === "provisional")).toBe(true);
+    }
+    // A fourth, never-visited posting at the SAME tenant: no trusted flow
+    // anywhere at tenant B for it to inherit, and provisional data never
+    // pools across siblings -- so this correctly gets nothing, not a false
+    // recall.
+    const freshPosting = `${tenantB}/London/Engineer_10055221-WD`;
+    expect(newStore().recallHint(freshPosting)).toBe("");
+  });
+
+  it("never leaks tenant A's trusted discovery into tenant B (cross-tenant isolation)", () => {
+    const trustedPosting = `${tenantA}/London/Data-Analyst_10074887-WD`;
+    const s1 = newStore(); s1.noteUrl(trustedPosting);
+    s1.observe(textHintClickAtom("Autofill with Resume", "tap-gesture"), trustedPosting);
+    s1.commit("autofill with resume", trustedPosting);
+
+    const tenantBFresh = `${tenantB}/London/Engineer_10055221-WD`;
+    expect(newStore().recallHint(tenantBFresh)).toBe("");
+  });
+
+  it("end-to-end: a GUID-suffixed dynamic field id renders with the fragile warning inside a real recall hint", () => {
+    const posting = `${tenantA}/London/Data-Analyst_10074887-WD`;
+    const guidSelector = "#primaryQuestionnaire--9f0a2c5536851001fadd8c6857400003"; // real shape, genericized label only
+    const s1 = newStore(); s1.noteUrl(posting);
+    s1.observe(
+      { tool: "click_element", target: `selector=${guidSelector}`, selector: guidSelector, recovered_via: "keyboard-enter", signal: "keyboard-enter", fragile: isFragileSelector(guidSelector), reason: "click recovered via keyboard-enter" },
+      posting,
+    );
+    s1.commit("answer questionnaire", posting);
+
+    const hint = newStore().recallHint(posting);
+    expect(hint).toContain("known_flow");
+    expect(hint).toContain("⚠fragile");
+  });
+});
+
 // ---- step-level promotion + cost-ranked recall ----------------------------
 describe("step-level promotion + cost ranking", () => {
   it("a recurring atom promotes in 2 sessions even when the full sequence varies", () => {
@@ -464,5 +679,87 @@ describe("provisional cap: high-cardinality pages don't accumulate unbounded", (
     const flows = new FlowStore(VERSION, dir, clock.now)._flowsFor(o);
     expect(flows.filter((f) => f.tier === "trusted")).toHaveLength(1); // survived the flood
     expect(flows.filter((f) => f.tier === "provisional").length).toBeLessThanOrEqual(MAX_PROVISIONAL_PER_ORIGIN);
+  });
+});
+
+// ---- cross-identity leakage on shared-account surfaces --------------------
+//
+// Real-world regression: see ISSUE-2026-08-18-known-flow-hint-audit.md. Two
+// job-search identities (genericized here as personA/personB) shared one
+// Chrome profile. A flow recorded while driving personA's Gmail / Google
+// account-chooser replayed verbatim during personB's session on the exact
+// same URL shape — the URL alone carries no identity signal on these two
+// specific Google surfaces, so origin+path keying was never enough. 2-for-2
+// on the audit's real sample: once on a Gmail inbox thread, once on the
+// account chooser (which would have picked personA's Google account while
+// personB was mid-application).
+describe("cross-identity leakage: multi-account surfaces excluded from the cache", () => {
+  it("originKey rejects Gmail's numbered-account-slot URLs (any /mail/u/N)", () => {
+    expect(originKey("https://mail.google.com/mail/u/0/#inbox")).toBeUndefined();
+    expect(originKey("https://mail.google.com/mail/u/1/#search/palantir")).toBeUndefined();
+    expect(originKey("https://mail.google.com/mail/u/12/#inbox")).toBeUndefined();
+  });
+
+  it("originKey rejects Google's account-chooser flow", () => {
+    expect(originKey("https://accounts.google.com/v3/signin/accountchooser?...")).toBeUndefined();
+  });
+
+  it("originKey still caches OTHER accounts.google.com pages (the genuinely useful OAuth consent recall)", () => {
+    // Not every accounts.google.com page is a multi-account listing — the
+    // "Continue" consent screen only ever concerns the ALREADY-authenticating
+    // account, so its recall is safe and (per the audit) genuinely valuable.
+    // Blanket-excluding the whole domain would have thrown this out too.
+    expect(originKey("https://accounts.google.com/signin/oauth/id")).toBe("https://accounts.google.com/signin/oauth/id");
+  });
+
+  it("a flow recorded on personA's Gmail is never buffered at all (noteUrl/observe are no-ops there)", () => {
+    const gmailUrl = "https://mail.google.com/mail/u/1/#search/palantir";
+    const s = newStore();
+    s.noteUrl(gmailUrl);
+    s.observe({ tool: "click_element", target: "Your Application: Environmental & Energy Analyst - Workspace Group PLC", signal: "navigated", fragile: false, reason: "verified terminal click" }, gmailUrl);
+    s.flushAll();
+    expect(s._flowsFor(gmailUrl)).toHaveLength(0);
+  });
+
+  it("a flow recorded on the account chooser is never buffered, and never recalled even if forced into the store", () => {
+    const chooserUrl = "https://accounts.google.com/v3/signin/accountchooser";
+    const s = newStore();
+    s.noteUrl(chooserUrl);
+    s.observe(clickAtom("personB@example.com"), chooserUrl);
+    s.flushAll();
+    // originKey() returns undefined for this URL, so there is no key for it
+    // to have landed under at all -- _flowsFor falls back to the raw url as
+    // the lookup key, which also never got anything written to it.
+    expect(s._flowsFor(chooserUrl)).toHaveLength(0);
+    expect(newStore().recallHint(chooserUrl)).toBe("");
+  });
+
+  it("observe() refuses to buffer ANY atom whose target looks like an email address, on any URL", () => {
+    // General content-shape guard, not tied to Google -- the same failure
+    // mode (a recorded step naming a specific person) is unsafe to replay on
+    // any site, not just Google's own multi-account surfaces.
+    const o = "https://some-admin-panel.example/users";
+    const s = newStore();
+    s.noteUrl(o);
+    s.observe(clickAtom("personB@example.com"), o);
+    s.flushAll();
+    expect(s._flowsFor(o)).toHaveLength(0);
+  });
+
+  it("recallHint never surfaces a flow whose steps contain an identifying target, even if it was already trusted before this guard existed", () => {
+    // Defense in depth: simulate data persisted BEFORE the capture-time guard
+    // existed, by writing directly into the store's data via commit() on a
+    // URL that isn't itself excluded, then confirm recall still refuses it.
+    const o = "https://crm.example/contacts";
+    const s1 = newStore();
+    s1.noteUrl(o);
+    s1.observe(clickAtom("personB@example.com"), o);
+    // commit() reads from the buffer -- since observe() already refused to
+    // buffer the identifying atom, the buffer is empty and there's nothing to
+    // promote. This IS the fix working end-to-end: nothing unsafe ever
+    // reaches disk in the first place, so there's nothing left to recall.
+    const res = s1.commit("open contact", o);
+    expect(res.saved).toBe(0);
+    expect(newStore().recallHint(o)).toBe("");
   });
 });

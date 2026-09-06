@@ -34,9 +34,12 @@ Two common causes:
    If `fiber_attempted: true` AND `silently_rejected: true` still
    set, fiber didn't help either.
 5. Pre-fill any related fields via `fill_form` / `fill_input`.
-6. `highlight_region(selector, "Click to submit")` + `wait_for_click()`.
-   `wait_for_click` now detects shadow DOM state changes via a
-   shadow-pierce visible-element count poll (fires every 500ms).
+6. If it's still rejected after fiber + pre-fill, this is genuine
+   anti-bot gating. Most chromeflow sessions run unattended, so
+   `highlight_region` + `wait_for_click()` just blocks on a human who
+   isn't there — don't reach for it by default. Report the rejection
+   back to the caller and stop. Only use it if you know a human is
+   actually present for this session.
 7. Do NOT retry the same `click_element`. Re-targeting doesn't help.
 
 See `references/anti-bot.md` for the full decision tree.
@@ -244,6 +247,8 @@ For ANY browser interaction that fails:
 3. If the response is plain `success: false` with no signal, call
    `get_page_text` to see what the page actually looks like now.
 4. As a last resort, `take_screenshot` to find pixel positions for
-   `click_at_coordinates` or `highlight_region` + `wait_for_click`.
+   `click_at_coordinates`. Reserve `highlight_region` + `wait_for_click`
+   for sessions where a human is actually present — most chromeflow runs
+   are unattended, so that pairing just blocks with no one to click.
 
 Never retry the same failing call without first reading what changed.

@@ -113,10 +113,32 @@ export function opRestorePageState(msg: IncomingMessage): unknown {
 export async function opFillForm(msg: IncomingMessage): Promise<unknown> {
   const formFields = msg.fields as Array<{ label: string; value: string }>;
   const exact = (msg.exact as boolean | undefined) ?? false;
-  const results: Array<{ label: string; success: boolean; message: string; matched?: string }> = [];
+  const results: Array<{
+    label: string;
+    success: boolean;
+    message: string;
+    matched?: string;
+    needsTrustedKeystrokes?: boolean;
+    resolvedSelector?: string;
+    value?: string;
+  }> = [];
   for (const field of formFields) {
     const result = fillInput(field.label, field.value, 1, exact);
-    results.push({ label: field.label, success: result.success, message: result.message, matched: result.matched });
+    // Keep needsTrustedKeystrokes/resolvedSelector (and the field's own value)
+    // in the per-field result — the background handler (handleFillForm) needs
+    // them to escalate any Workday-style field to trusted keystrokes, the same
+    // way handleFillInput does for a single fill_input call. Dropping them
+    // here would silently skip that escalation for the documented preferred
+    // multi-field tool. See ISSUE-2026-08-11-workday-fill-input-not-binding.md.
+    results.push({
+      label: field.label,
+      success: result.success,
+      message: result.message,
+      matched: result.matched,
+      needsTrustedKeystrokes: result.needsTrustedKeystrokes,
+      resolvedSelector: result.resolvedSelector,
+      value: field.value,
+    });
     // Brief pause between fills so React can process each change event
     await new Promise((r) => setTimeout(r, 80));
   }

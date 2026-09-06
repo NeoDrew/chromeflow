@@ -1,8 +1,82 @@
 // Message handlers extracted verbatim from background.ts's handleMcpMessage
 // switch. Each function IS the original case body, unchanged.
 import type { McpMsg } from "./types";
-import { getActiveTab } from "../state";
+import { getActiveTab, forwardToContentScript } from "../state";
 import { withDebugger } from "../cdp";
+
+/**
+ * fill_input (textHint mode) has no dedicated background handler by default
+ * — an unrecognised message type just forwards to the content script and
+ * returns its result verbatim. Workday-style fields (see
+ * ISSUE-2026-08-11-workday-fill-input-not-binding.md) need an exception: the
+ * content script (content/fill.ts) can detect that a field needs trusted
+ * keystrokes but has no chrome.debugger access to dispatch them itself, so
+ * it signals needsTrustedKeystrokes + a resolvedSelector back here instead of
+ * doing the fill, and this handler completes it by delegating to
+ * handleTypeText — reusing its existing landing-verification and fallback
+ * logic rather than re-implementing keystroke dispatch a second time.
+ */
+export async function handleFillInput(msg: McpMsg, port: number): Promise<unknown> {
+      const tab = await getActiveTab(port);
+      const result = await forwardToContentScript(tab, msg) as {
+        success: boolean;
+        message: string;
+        matched?: string;
+        needsTrustedKeystrokes?: boolean;
+        resolvedSelector?: string;
+      };
+      if (!result.needsTrustedKeystrokes || !result.resolvedSelector) {
+        return result;
+      }
+      const retyped = await handleTypeText(
+        { ...msg, text: msg.value as string, into_selector: result.resolvedSelector, clear_first: true },
+        port,
+      ) as { success: boolean; landed?: boolean; message: string };
+      return {
+        ...result,
+        success: retyped.success,
+        landed: retyped.landed,
+        message: `${result.message} Escalated to trusted keystrokes: ${retyped.message}`,
+      };
+}
+
+/**
+ * fill_form has no dedicated background handler by default either — same
+ * gap as fill_input, one level up: each per-field result from the content
+ * script's opFillForm can carry needsTrustedKeystrokes/resolvedSelector (see
+ * that file), but only a background handler can act on it, since
+ * chrome.debugger isn't reachable from the content script. Escalates each
+ * flagged field in turn via handleTypeText, same mechanism as
+ * handleFillInput above, just looped per field.
+ */
+export async function handleFillForm(msg: McpMsg, port: number): Promise<unknown> {
+      const tab = await getActiveTab(port);
+      const result = await forwardToContentScript(tab, msg) as {
+        results: Array<{
+          label: string;
+          success: boolean;
+          message: string;
+          matched?: string;
+          needsTrustedKeystrokes?: boolean;
+          resolvedSelector?: string;
+          value?: string;
+        }>;
+        [key: string]: unknown;
+      };
+      let succeeded = 0;
+      for (const field of result.results) {
+        if (field.needsTrustedKeystrokes && field.resolvedSelector) {
+          const retyped = await handleTypeText(
+            { ...msg, text: field.value ?? "", into_selector: field.resolvedSelector, clear_first: true },
+            port,
+          ) as { success: boolean; landed?: boolean; message: string };
+          field.success = retyped.success;
+          field.message = `${field.message} Escalated to trusted keystrokes: ${retyped.message}`;
+        }
+        if (field.success) succeeded++;
+      }
+      return { ...result, succeeded };
+}
 
 export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown> {
       const tab = await getActiveTab(port);
@@ -324,22 +398,32 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
       // without any visible symptom until the next command has no effect —
       // see ISSUE-2026-07-15-cdp-input-dead.md, where type_text kept
       // reporting "Typed N characters" on a PLAIN <input> whose value stayed
-      // "" the entire time). We verify post-type for any into_selector
-      // target and, if the content is significantly shorter than what we
-      // typed, recover with a non-keystroke fill appropriate to the element
-      // — this works whether the CDP layer is degraded or fine, since it
-      // never depends on it.
+      // "" the entire time), OR an anti-bot tenant discards synthetic
+      // keystrokes outright regardless of isTrusted (see
+      // ISSUE-2026-08-15-antibot-tenant-walls.md: a Workday tenant's
+      // input-4 field stayed "" after 25 real CDP keystrokes with no error
+      // anywhere). This verification used to run ONLY when into_selector was
+      // passed — but type_text's other documented mode, "type into whatever
+      // is currently focused" (no into_selector; the caller clicks first,
+      // then types), had NO verification at all, so the exact silent-drop
+      // trap this guard exists to catch was still fully reproducible through
+      // that path. We now verify post-type for the into_selector target OR,
+      // absent one, the live (possibly shadow-nested) document.activeElement
+      // — and, if the content is significantly shorter than what we typed,
+      // recover with a non-keystroke fill appropriate to the element. This
+      // works whether the CDP layer is degraded, fine, or actively fought by
+      // tenant-level anti-automation, since it never depends on CDP working.
       let dropFallback = "";
       // `landed` = did the typed text actually end up in the target element
-      // (after any recovery fallback)? Defaults true when we can't verify
-      // (no into_selector, or iframe target) — see frameVerify below for that
-      // case. When false, the caller must NOT trust this call succeeded.
+      // (after any recovery fallback)? Defaults true only for the iframe
+      // target case — see frameVerify below for that. When false, the caller
+      // must NOT trust this call succeeded.
       let landed = true;
-      if (intoSelector && intoSelectorOk && !frameSelector) {
+      if (!frameSelector) {
         try {
           const r = await chrome.scripting.executeScript({
             target: { tabId },
-            func: (selector: string, expectedText: string) => {
+            func: (selector: string | null, expectedText: string) => {
               function getShadowRoot(el: Element): ShadowRoot | null {
                 const chromeDom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
                 if (chromeDom?.openOrClosedShadowRoot) {
@@ -362,23 +446,62 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
                 }
                 return null;
               }
-              const target = queryDeep(document, selector);
+              // No into_selector was given — type_text targeted "whatever is
+              // currently focused". Resolve the REAL focused element the same
+              // way, walking into nested shadow roots (a shadow host reports
+              // itself as document.activeElement; the actually-focused node
+              // is host.shadowRoot.activeElement, possibly several levels
+              // deep for nested Web Components).
+              function deepActiveElement(): Element | null {
+                let el: Element | null = document.activeElement;
+                for (;;) {
+                  if (!el) return el;
+                  const sr = getShadowRoot(el);
+                  if (sr?.activeElement) el = sr.activeElement;
+                  else return el;
+                }
+              }
+              const target = selector ? queryDeep(document, selector) : deepActiveElement();
               if (!(target instanceof HTMLElement)) return { ok: false };
               // Walk up to detect ProseMirror / tiptap ancestor.
               const isProseMirror =
                 target.classList.contains("ProseMirror") ||
                 target.classList.contains("tiptap") ||
                 target.closest?.(".ProseMirror, .tiptap, [data-tiptap-editor]") !== null;
+              // innerText, not textContent, for contenteditable: textContent
+              // concatenates every text node with NO separator for element
+              // boundaries, so a correctly-landed multi-<div>-per-line body
+              // (Gmail's own line-break convention) and a body whose Enter
+              // keydowns were silently swallowed read as the EXACT SAME
+              // string ("Hi Drew,Great news..." either way) — the drop
+              // check below would be structurally blind to a newline-only
+              // loss no matter the threshold. innerText applies the same
+              // layout-based line-break insertion a human reads on screen,
+              // so it actually reflects whether paragraph structure landed.
               const readActual = () =>
                 target.isContentEditable
-                  ? (target.textContent ?? "")
+                  ? (target.innerText ?? "")
                   : ((target as HTMLInputElement | HTMLTextAreaElement).value ?? "");
               const actual = readActual();
               // Drop threshold: < 50% of expected content survived. Stricter
               // than "0 chars" because a rich-text editor sometimes lands a
               // partial paste before reverting; < 50% captures both full-drop
               // and partial-drop, and also catches "CDP never fired at all".
-              const dropped = actual.length < expectedText.length * 0.5;
+              //
+              // Separately: a contenteditable target whose TEXT all landed
+              // but whose line breaks did not is not caught by the length
+              // check above at all (losing two `\n` characters out of 32 is
+              // a ~94% survival rate) — see ISSUE-2026-09-05-type-text-
+              // newlines-dropped-gmail-contenteditable.md, where CDP's Enter
+              // keydown/keyup pair (dispatched below for every `\n`) landed
+              // reliably on some contenteditable targets but was silently
+              // swallowed by Gmail's own key handling, merging every
+              // paragraph into one run-on line with ZERO visible error.
+              // Compare newline COUNTS, not just overall length.
+              const expectedNewlines = (expectedText.match(/\n/g) ?? []).length;
+              const actualNewlines = target.isContentEditable ? (actual.match(/\n/g) ?? []).length : expectedNewlines;
+              const newlinesDropped = target.isContentEditable && expectedNewlines > 0 && actualNewlines < expectedNewlines * 0.5;
+              const dropped = actual.length < expectedText.length * 0.5 || newlinesDropped;
               if (!dropped) {
                 return { ok: true, fallback: "none" as const, isProseMirror, actualLength: actual.length, expectedLength: expectedText.length };
               }
@@ -423,16 +546,17 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
                 ok: true,
                 fallback,
                 isProseMirror,
+                newlinesDropped,
                 actualLength: actual.length,
                 expectedLength: expectedText.length,
                 finalLength: finalText.length,
               };
             },
-            args: [intoSelector, text],
+            args: [intoSelector ?? null, text],
           });
           const v = r[0]?.result as
             | { ok: false }
-            | { ok: true; fallback: "none" | "prosemirror" | "native-setter" | "execcommand"; isProseMirror: boolean; actualLength: number; expectedLength: number; finalLength?: number }
+            | { ok: true; fallback: "none" | "prosemirror" | "native-setter" | "execcommand"; isProseMirror: boolean; newlinesDropped: boolean; actualLength: number; expectedLength: number; finalLength?: number }
             | undefined;
           if (v && v.ok) {
             const got = v.fallback === "none" ? v.actualLength : (v.finalLength ?? 0);
@@ -440,9 +564,12 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
             if (v.fallback !== "none") {
               const recoveredVia = v.fallback === "prosemirror" ? "execCommand insertText (TipTap/ProseMirror)"
                 : v.fallback === "native-setter" ? "the native value setter" : "execCommand insertText";
+              const whatDropped = v.newlinesDropped
+                ? `text landed but line breaks were silently swallowed (a contenteditable's own key handling can eat a synthetic Enter keydown even though other keystrokes land fine — see ISSUE-2026-09-05-type-text-newlines-dropped-gmail-contenteditable.md)`
+                : `CDP keystrokes did not land (${v.actualLength}/${v.expectedLength} chars survived)`;
               dropFallback = landed
-                ? ` — CDP keystrokes did not land (${v.actualLength}/${v.expectedLength} chars survived), recovered via ${recoveredVia} (${v.finalLength ?? "?"} chars now in the field)`
-                : ` — CDP keystrokes did not land (${v.actualLength}/${v.expectedLength} chars survived) and recovery via ${recoveredVia} ALSO failed (${v.finalLength ?? "?"} chars now in the field)`;
+                ? ` — ${whatDropped}, recovered via ${recoveredVia} (${v.finalLength ?? "?"} chars now in the field)`
+                : ` — ${whatDropped} and recovery via ${recoveredVia} ALSO failed (${v.finalLength ?? "?"} chars now in the field)`;
             }
           } else if (v && v.ok === false) {
             landed = false; // verification couldn't find the target — text did not land where expected

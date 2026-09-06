@@ -182,7 +182,7 @@ export function reactFiberClickByHint(
   if (!fiber.fired) {
     return {
       success: false,
-      message: `Found "${label}" but no React fiber __reactProps$.onClick exists on the element or its ancestors (up to 12 levels). The button is probably bound via addEventListener (not React), or React's prop key has been mangled by a production minifier. Fall back to highlight_region + wait_for_click for a real human gesture.`,
+      message: `Found "${label}" but no React fiber __reactProps$.onClick exists on the element or its ancestors (up to 12 levels). The button is probably bound via addEventListener (not React), or React's prop key has been mangled by a production minifier. This element can't be driven via fiber; try the CDP click path instead (via: "auto" or "cdp").`,
       fired: false,
       label,
     };

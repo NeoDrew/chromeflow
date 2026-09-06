@@ -11,7 +11,9 @@ export function registerInputTools(server: McpServer, bridge: WsBridge) {
 
 \`selector\` mode (replaces the old react_set_input): targets the input directly and routes through the React-aware native value-setter so React's onChange picks up the change. Handles same-origin iframe inputs via \`frame\`.
 
-Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirror 6 editors. Use \`nth\` (1-based) when multiple inputs share the same label.`,
+Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirror 6 editors. Use \`nth\` (1-based) when multiple inputs share the same label.
+
+**Workday auto-escalation** (textHint mode): fill_input always tries the native-setter fill first and reads the value back. On fields marked with Workday's \`data-automation-id\` convention where that read-back genuinely fails, it transparently re-enters the value via trusted keystrokes instead, same mechanism as type_text — the response message says "Escalated to trusted keystrokes" when this fires. This is a per-tenant behavior, not a per-platform one: on some anti-bot-hardened tenants it's the OPPOSITE (native setter lands, trusted keystrokes get dropped) — which is exactly why escalation only fires after a verified failure, never on marker-presence alone.`,
     {
       textHint: z.string().optional().describe("Label / placeholder / aria-label identifying the input. Exactly one of textHint or selector must be set."),
       selector: z.string().optional().describe("CSS selector of the input (e.g. 'input[name=email]'). Bypasses fuzzy matching."),
@@ -45,13 +47,19 @@ Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirr
       }
       const response = await bridge.request({ type: "fill_input", textHint: textHint!, value, nth, exact });
       if (response.type !== "fill_response") throw new Error("Unexpected response");
-      const r = response as { success: boolean; message: string };
+      const r = response as { success: boolean; message: string; landed?: boolean };
       if (!r.success) {
-        const workaround =
-          `\n\nWorkaround when textHint-mode keeps failing:\n` +
-          `  1. find_input("${textHint}") to confirm the field exists and see its exact label.\n` +
-          `  2. click_element("${textHint}") to focus it, then type_text("${value.slice(0, 40)}").\n` +
-          `Or pass selector="<css>" instead of textHint to bypass fuzzy matching entirely.`;
+        // When the extension already escalated to trusted keystrokes and
+        // THAT failed too (r.landed === false), the usual "click_element
+        // then type_text" workaround suggests retrying the exact mechanism
+        // that was just attempted — confusing, not helpful. Point at the
+        // real remedy for a degraded CDP Input layer instead.
+        const workaround = r.landed === false
+          ? `\n\nThis field already escalated to trusted keystrokes internally and that ALSO failed to land — retrying type_text on it directly will likely hit the same wall. This usually means the CDP Input layer itself is degraded (see ISSUE-2026-07-15-cdp-input-dead.md): try execute_script with the native value-setter as a diagnostic, or reload the chromeflow extension if this persists across fields.`
+          : `\n\nWorkaround when textHint-mode keeps failing:\n` +
+            `  1. find_input("${textHint}") to confirm the field exists and see its exact label.\n` +
+            `  2. click_element("${textHint}") to focus it, then type_text("${value.slice(0, 40)}").\n` +
+            `Or pass selector="<css>" instead of textHint to bypass fuzzy matching entirely.`;
         return { content: [{ type: "text", text: `Could not fill "${textHint}": ${r.message}${workaround}` }] };
       }
       return {

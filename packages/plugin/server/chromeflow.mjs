@@ -24619,6 +24619,8 @@ var import_websocket_server = __toESM(require_websocket_server(), 1);
 
 // packages/mcp-server/src/ws-bridge.ts
 import path from "path";
+import { homedir as homedir2 } from "node:os";
+import { mkdirSync as mkdirSync2, writeFileSync } from "node:fs";
 
 // packages/mcp-server/src/usage-log.ts
 import { homedir } from "node:os";
@@ -24663,6 +24665,17 @@ async function timeAndRecord(type, fn) {
 }
 
 // packages/mcp-server/src/ws-bridge.ts
+function recordConnectionIdentity(port, extId, extVersion) {
+  try {
+    const dir = path.join(homedir2(), ".chromeflow");
+    mkdirSync2(dir, { recursive: true });
+    writeFileSync(
+      path.join(dir, "last-connection-identity.json"),
+      JSON.stringify({ ts: (/* @__PURE__ */ new Date()).toISOString(), port, extId: extId ?? null, extVersion: extVersion ?? null }, null, 2)
+    );
+  } catch {
+  }
+}
 var WS_PORT_BASE = 7878;
 var WS_PORT_MAX = 7928;
 var REQUEST_TIMEOUT_MS = 3e4;
@@ -24715,7 +24728,10 @@ var WsBridge = class {
         }
         if (msg.type === "ready") {
           const token = typeof msg.token === "string" ? msg.token : void 0;
-          console.error(`[chromeflow] Extension ready${token ? " (token presented)" : ""}`);
+          const extId = typeof msg.extId === "string" ? msg.extId : void 0;
+          const extVersion = typeof msg.extVersion === "string" ? msg.extVersion : void 0;
+          console.error(`[chromeflow] Extension ready${token ? " (token presented)" : ""}${extId ? ` id=${extId} version=${extVersion ?? "?"}` : " (no extId reported \u2014 pre-2026-08-11 extension build)"}`);
+          recordConnectionIdentity(this.port, extId, extVersion);
           const cwd = process.cwd();
           const host = process.env.CHROMEFLOW_HOST ?? (process.env.CLAUDE_PLUGIN_ROOT ? "claude" : void 0);
           ws.send(JSON.stringify({
@@ -24803,27 +24819,54 @@ var WsBridge = class {
 };
 
 // packages/mcp-server/src/flow-store.ts
-import { homedir as homedir2 } from "node:os";
+import { homedir as homedir3 } from "node:os";
 import { join as join2, dirname } from "node:path";
-import { existsSync as existsSync2, mkdirSync as mkdirSync2, readFileSync, writeFileSync, renameSync as renameSync2 } from "node:fs";
+import { existsSync as existsSync2, mkdirSync as mkdirSync3, readFileSync, writeFileSync as writeFileSync2, renameSync as renameSync2 } from "node:fs";
 var PROMOTE_AT_SUCCESS = 2;
 var DEMOTE_AT_FAILS = 1;
 var PRUNE_AT_FAILS = 2;
 var PROVISIONAL_TTL_MS = 30 * 24 * 60 * 60 * 1e3;
 var MAX_PROVISIONAL_PER_ORIGIN = 20;
 var ATOM_KEYS = ["tool", "target", "selector", "recovered_via", "signal", "verification", "clear_first", "fragile", "reason"];
+function isMultiAccountSurface(u) {
+  if (u.hostname === "mail.google.com" && /^\/mail\/u\/\d+/.test(u.pathname)) return true;
+  if (u.hostname === "accounts.google.com" && /accountchooser/i.test(u.pathname)) return true;
+  return false;
+}
 function originKey(url) {
   if (!url) return void 0;
   try {
     const u = new URL(url);
     if (u.protocol !== "http:" && u.protocol !== "https:") return void 0;
+    if (isMultiAccountSurface(u)) return void 0;
     const path2 = u.pathname && u.pathname !== "/" ? u.pathname.replace(/\/+$/, "") : "";
     return u.origin + path2;
   } catch {
     return void 0;
   }
 }
+var EMAIL_RE = /[a-z0-9][a-z0-9._%+-]*@[a-z0-9.-]+\.[a-z]{2,}/i;
+function looksLikeEmail(s) {
+  return !!s && EMAIL_RE.test(s);
+}
+function atomLooksIdentifying(a) {
+  return looksLikeEmail(a.target) || looksLikeEmail(a.selector);
+}
+function splitOriginAndSegments(exactKey) {
+  const m = exactKey.match(/^([a-z][a-z0-9+.-]*:\/\/[^/]+)(\/.*)?$/i);
+  if (!m) return { origin: exactKey, segs: [] };
+  return { origin: m[1], segs: (m[2] ?? "").split("/").filter(Boolean) };
+}
+function isInstanceSegment(seg) {
+  return /\d{5,}/.test(seg);
+}
+function coarsenKey(exactKey) {
+  const { origin, segs } = splitOriginAndSegments(exactKey);
+  if (segs.length === 0) return exactKey;
+  return origin + "/" + segs.map((s) => isInstanceSegment(s) ? "*" : s).join("/");
+}
 var FRAGILE_RE = /:nth-(of-type|child)\(|>\s*\w+:nth/;
+var GUID_RE = /[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}|[0-9a-f]{16,}/i;
 function signatureOf(steps) {
   return JSON.stringify(steps.map((a) => [a.tool, a.target, a.selector ?? ""]));
 }
@@ -24889,7 +24932,7 @@ var FlowStore = class {
   constructor(version2, baseDir, now = Date.now) {
     this.version = version2;
     this.now = now;
-    this.path = join2(baseDir ?? join2(homedir2(), ".chromeflow"), "flows.json");
+    this.path = join2(baseDir ?? join2(homedir3(), ".chromeflow"), "flows.json");
     this.data = this.load();
     this.pruneExpired();
   }
@@ -24912,9 +24955,9 @@ var FlowStore = class {
   }
   persist() {
     try {
-      mkdirSync2(dirname(this.path), { recursive: true });
+      mkdirSync3(dirname(this.path), { recursive: true });
       const tmp = this.path + ".tmp";
-      writeFileSync(tmp, JSON.stringify(this.data, null, 2), "utf-8");
+      writeFileSync2(tmp, JSON.stringify(this.data, null, 2), "utf-8");
       renameSync2(tmp, this.path);
     } catch {
     }
@@ -24968,6 +25011,7 @@ var FlowStore = class {
   /** Buffer a notable atom against an origin (defaults to last-seen origin). */
   observe(atom, url) {
     if (!atom) return;
+    if (atomLooksIdentifying(atom)) return;
     const k = originKey(url) ?? this.lastOrigin;
     if (!k) return;
     this.reconcileAgainstRecalled(k, atom);
@@ -25083,13 +25127,45 @@ var FlowStore = class {
     this.data.origins[k] = flows;
     return { saved: steps.length };
   }
-  /** Compact recall hint for an origin (RELIABLE trusted flows only), once per origin per session. */
+  /**
+   * Compact recall hint for an origin, once per origin per session. Priority:
+   *   1. RELIABLE trusted flows recorded for this exact URL.
+   *   2. RELIABLE trusted flows recorded for a SIBLING URL that coarsens to the
+   *      same template (see coarsenKey) — i.e. already independently proven on
+   *      a different job posting / order / ticket at this same site+route
+   *      shape. Provisional (unproven) data is never pooled across siblings —
+   *      only what has already earned "trusted" transfers.
+   *   3. RELIABLE provisional flows for this exact URL (a single unproven
+   *      success) — surfaced as a lower-confidence `possible_flow` hint, never
+   *      pooled across siblings. This is what lets a hard-won discovery recall
+   *      on the very next visit to the same URL, instead of requiring the
+   *      near-impossible second identical revisit trusted promotion needs.
+   */
   recallHint(url) {
     const k = originKey(url);
     if (!k || this.surfaced.has(k)) return "";
-    const flows = (this.data.origins[k] ?? []).filter(
-      (f) => f.tier === "trusted" && f.success_count > f.fail_count && f.last_replay_ok !== false
-    );
+    const isSafe = (f) => !f.steps.some(atomLooksIdentifying);
+    const isReliableTrusted = (f) => f.tier === "trusted" && f.success_count > f.fail_count && f.last_replay_ok !== false && isSafe(f);
+    const isReliableProvisional = (f) => f.tier === "provisional" && f.success_count > f.fail_count && f.last_replay_ok !== false && isSafe(f);
+    const own = this.data.origins[k] ?? [];
+    let flows = own.filter(isReliableTrusted);
+    let source = "own";
+    if (flows.length === 0) {
+      const c = coarsenKey(k);
+      if (c !== k) {
+        const { origin } = splitOriginAndSegments(k);
+        const prefix = origin + "/";
+        for (const [k2, fl] of Object.entries(this.data.origins)) {
+          if (k2 === k || !k2.startsWith(prefix) || coarsenKey(k2) !== c) continue;
+          flows = flows.concat(fl.filter(isReliableTrusted));
+        }
+      }
+      if (flows.length > 0) source = "sibling";
+    }
+    if (flows.length === 0) {
+      flows = own.filter(isReliableProvisional);
+      if (flows.length > 0) source = "provisional";
+    }
     if (flows.length === 0) return "";
     this.surfaced.add(k);
     this.recalled.add(k);
@@ -25105,9 +25181,10 @@ var FlowStore = class {
       return `  "${f.task_label}" (${f.steps.length} steps, ${f.success_count}x ok${stale}):
 ${steps}`;
     });
+    const label = source === "own" ? `\u2139 known_flow for ${k} \u2014 these calls worked before; prefer them over rediscovery, but VERIFY each. If a recalled step fails or its element isn't found on the first attempt, do NOT retry it \u2014 discard the hint and rediscover from scratch.` : source === "sibling" ? `\u2139 known_flow (from a sibling page, same site+route shape) for ${k} \u2014 these calls worked on a similar page here (e.g. a different posting/listing/ticket at this site); the DOM may differ slightly on this exact page. Prefer them over cold rediscovery, but VERIFY each before trusting. If a recalled step fails or its element isn't found on the first attempt, do NOT retry it \u2014 discard the hint and rediscover from scratch.` : `\u2139 possible_flow for ${k} \u2014 this worked once before but hasn't been proven a second time; try it first, but verify more carefully than a known_flow. If it fails or the element isn't found on the first attempt, do NOT retry \u2014 abandon it and rediscover from scratch.`;
     return `
 
-\u2139 known_flow for ${k} \u2014 these calls worked before; prefer them over rediscovery, but VERIFY each. If a recalled step fails or its element isn't found on the first attempt, do NOT retry it \u2014 discard the hint and rediscover from scratch.
+${label}
 ${lines.join("\n")}`;
   }
   /**
@@ -25119,7 +25196,7 @@ ${lines.join("\n")}`;
   observeFailure(url, selectorOrText) {
     const k = originKey(url) ?? this.lastOrigin;
     if (!k || !selectorOrText || !this.recalled.has(k)) return;
-    const flows = this.data.origins[k];
+    const flows = this.recalledFlows.get(k) ?? this.data.origins[k];
     if (!flows) return;
     let changed = false;
     for (const f of flows) {
@@ -25143,9 +25220,10 @@ ${lines.join("\n")}`;
     const buf = this.buffer.get(k);
     if (!buf || buf.length === 0) return "";
     const reasons = [...new Set(buf.map((a) => a.reason))].slice(0, 2).join("; ");
+    const reuseNote = coarsenKey(k) !== k ? " This looks like one of several similar pages at this site (e.g. other postings/listings/tickets) \u2014 save_flow now to make these steps recallable there too, not just here." : "";
     return `
 
-\u2139 flow_capturable: ${buf.length} hard-won step(s) on ${k} buffered (${reasons}). They autosave on leaving the site; call save_flow("<task label>") to trust them immediately.`;
+\u2139 flow_capturable: ${buf.length} hard-won step(s) on ${k} buffered (${reasons}). They autosave on leaving the site; call save_flow("<task label>") to trust them immediately.${reuseNote}`;
   }
   /** Manual save_flow: commit the buffered atoms for an origin as a TRUSTED flow. */
   commit(taskLabel, url) {
@@ -25182,7 +25260,7 @@ ${lines.join("\n")}`;
 };
 function isFragileSelector(selector) {
   if (!selector) return false;
-  return FRAGILE_RE.test(selector) || selector.includes(",");
+  return FRAGILE_RE.test(selector) || GUID_RE.test(selector) || selector.includes(",");
 }
 
 // packages/mcp-server/src/policy.ts
@@ -25409,8 +25487,8 @@ ${lines.join("\n")}` }] };
 }
 
 // packages/mcp-server/src/tools/browser/screenshot.ts
-import { writeFileSync as writeFileSync2, copyFileSync, readFileSync as readFileSync2 } from "fs";
-import { tmpdir, homedir as homedir3 } from "os";
+import { writeFileSync as writeFileSync3, copyFileSync, readFileSync as readFileSync2 } from "fs";
+import { tmpdir, homedir as homedir4 } from "os";
 import { join as join3 } from "path";
 import { execSync } from "child_process";
 function registerScreenshotTools(server, bridge) {
@@ -25439,11 +25517,11 @@ Refuses fast on pages that are in fullscreen mode (captureVisibleTab hangs there
       const imageBuffer = Buffer.from(response.image, "base64");
       const tmpPath = join3(tmpdir(), filename);
       const needTmp = !shouldInline || sharing;
-      if (needTmp) writeFileSync2(tmpPath, imageBuffer);
+      if (needTmp) writeFileSync3(tmpPath, imageBuffer);
       const notes = [];
       let landedPath = tmpPath;
       if (save_to !== "none") {
-        const savePath = save_to === "cwd" ? join3(process.cwd(), filename) : join3(homedir3(), "Downloads", filename);
+        const savePath = save_to === "cwd" ? join3(process.cwd(), filename) : join3(homedir4(), "Downloads", filename);
         copyFileSync(tmpPath, savePath);
         notes.push(`Saved to ${savePath}`);
         landedPath = savePath;
@@ -25485,7 +25563,7 @@ The saved file path can be passed directly to set_file_input(hint, file_path) to
     async ({ save_to = "downloads" }) => {
       const timestamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-").slice(0, 19);
       const filename = `terminal-${timestamp}.png`;
-      const savePath = save_to === "cwd" ? join3(process.cwd(), filename) : join3(homedir3(), "Downloads", filename);
+      const savePath = save_to === "cwd" ? join3(process.cwd(), filename) : join3(homedir4(), "Downloads", filename);
       let captured = false;
       try {
         const bounds = execSync(`osascript -e '
@@ -25591,7 +25669,7 @@ To fill: fill_input("${r2.fields[0].label}", "<value>")` }] };
       const fields = r.fields;
       const captchaLine = r.captcha ? `
 
-\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. Synthetic submits will be silently rejected. Pre-fill, then highlight the submit button and call wait_for_click.` : "";
+\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. Synthetic submits will be silently rejected and there is no automated way through it \u2014 pre-fill everything else, then report the CAPTCHA back rather than blocking on highlight_region + wait_for_click, since most sessions run unattended with no one to solve it.` : "";
       const oauthLine = r.oauthIndicators && r.oauthIndicators.length > 0 ? `
 
 \u2139 OAuth providers detected on this form: ${r.oauthIndicators.join(", ")}. If the user wants to sign in via one of these, click it instead of filling email/password.` : "";
@@ -25618,7 +25696,7 @@ function registerTypingTools(server, bridge, flowStore) {
     "type_text",
     `Type text into the currently focused element via CDP keystrokes (produces isTrusted=true events). Use when fill_input fails because the page validates isTrusted (CodeMirror/Monaco/Ace editors, shadow DOM inputs, isTrusted-gated forms). Pass \`into_selector\` to focus the target before typing (shadow-piercing CSS) \u2014 combined with \`clear_first: true\`, this collapses the old "wait_for_click \u2192 execute_script selectAll \u2192 type_text" pattern into a single call. Pass \`frame: "iframe.selector"\` to type into a same-origin iframe's first editable element.
 
-**TipTap / ProseMirror auto-recovery**: when \`into_selector\` targets a contenteditable inside a \`.tiptap\` / \`.ProseMirror\` / \`[data-tiptap-editor]\` ancestor, type_text verifies post-type that the text actually landed. If tiptap's internal state machine silently dropped the CDP keystrokes (a known failure mode where the editor reverts to placeholder a few seconds later), type_text automatically re-fills via \`document.execCommand('insertText', ...)\` which tiptap accepts. The response message records "TipTap/ProseMirror silently dropped..., recovered via execCommand insertText" when this fired.`,
+**Post-type landing verification, always on.** Whether you pass \`into_selector\` or type into whatever's already focused, type_text reads back the target element after typing and returns \`landed:false\` (success:false) if the text did NOT actually stick \u2014 never trust a bare "Typed N characters" without checking this. Two known causes: (1) a rich-text editor's own state machine reverts the keystrokes (TipTap/ProseMirror \u2014 auto-recovers via \`document.execCommand('insertText', ...)\`, message records "recovered via execCommand insertText"); (2) tenant-level anti-automation discards synthetic keystrokes outright with zero visible error (seen on some Workday tenants) \u2014 for a plain \`<input>\`/\`<textarea>\` this attempts a native-value-setter recovery, and if that ALSO fails, reports \`landed:false\` so you stop and report the wall instead of proceeding on a false premise.`,
     {
       text: external_exports.string().describe("The text to type into the focused element"),
       into_selector: external_exports.string().optional().describe(
@@ -25666,7 +25744,7 @@ function registerTypingTools(server, bridge, flowStore) {
 function registerFileInputTools(server, bridge) {
   server.tool(
     "set_file_input",
-    `Upload a file to a file input \u2014 works even when the input is hidden behind a custom drag-and-drop zone. Returns success=true only after an observable commit (file count goes up, input gets reset, or verify_selector appears within wait_ms). See CLAUDE.md for batch-upload guidance.
+    `Upload a file to a file input \u2014 works even when the input is hidden behind a custom drag-and-drop zone. Returns success=true only after an observable commit: file count goes up, verify_selector appears, OR the input is reset AND the filename shows up somewhere on the page. An input reset with NO filename ever appearing anywhere returns success=false with a "silent rejection" message (some drag-and-drop widgets read then discard a file on tenant-level rejection with zero visible error) \u2014 do not trust that case as landed even though the input accepted the file momentarily. If there is no input[type=file] anywhere on the page (light or shadow DOM, checked for ALL hints, not just yours), the widget likely opens the browser-native file picker via window.showOpenFilePicker() instead of a classic file input \u2014 there is no DOM element for chromeflow to target in that case, so stop retrying with different hints and report it back. See CLAUDE.md for batch-upload guidance.
 
 Two ways to supply the file:
 - file_path (CDP mode): an absolute path on the machine running this server. Reaches both open AND closed shadow roots.
@@ -25837,7 +25915,9 @@ function registerInputTools(server, bridge) {
 
 \`selector\` mode (replaces the old react_set_input): targets the input directly and routes through the React-aware native value-setter so React's onChange picks up the change. Handles same-origin iframe inputs via \`frame\`.
 
-Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirror 6 editors. Use \`nth\` (1-based) when multiple inputs share the same label.`,
+Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirror 6 editors. Use \`nth\` (1-based) when multiple inputs share the same label.
+
+**Workday auto-escalation** (textHint mode): fill_input always tries the native-setter fill first and reads the value back. On fields marked with Workday's \`data-automation-id\` convention where that read-back genuinely fails, it transparently re-enters the value via trusted keystrokes instead, same mechanism as type_text \u2014 the response message says "Escalated to trusted keystrokes" when this fires. This is a per-tenant behavior, not a per-platform one: on some anti-bot-hardened tenants it's the OPPOSITE (native setter lands, trusted keystrokes get dropped) \u2014 which is exactly why escalation only fires after a verified failure, never on marker-presence alone.`,
     {
       textHint: external_exports.string().optional().describe("Label / placeholder / aria-label identifying the input. Exactly one of textHint or selector must be set."),
       selector: external_exports.string().optional().describe("CSS selector of the input (e.g. 'input[name=email]'). Bypasses fuzzy matching."),
@@ -25871,7 +25951,9 @@ Or for React/CodeMirror/contenteditable that ignores synthetic events, drop into
       if (response.type !== "fill_response") throw new Error("Unexpected response");
       const r = response;
       if (!r.success) {
-        const workaround = `
+        const workaround = r.landed === false ? `
+
+This field already escalated to trusted keystrokes internally and that ALSO failed to land \u2014 retrying type_text on it directly will likely hit the same wall. This usually means the CDP Input layer itself is degraded (see ISSUE-2026-07-15-cdp-input-dead.md): try execute_script with the native value-setter as a diagnostic, or reload the chromeflow extension if this persists across fields.` : `
 
 Workaround when textHint-mode keeps failing:
   1. find_input("${textHint}") to confirm the field exists and see its exact label.
@@ -25993,7 +26075,7 @@ ${lines.join("\n")}` }] };
 }
 
 // packages/mcp-server/src/tools/capture/files.ts
-import { appendFileSync as appendFileSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "fs";
+import { appendFileSync as appendFileSync2, readFileSync as readFileSync3, writeFileSync as writeFileSync4 } from "fs";
 import { resolve, relative, isAbsolute } from "path";
 function registerFileTools(server, bridge) {
   server.tool(
@@ -26033,7 +26115,7 @@ function registerFileTools(server, bridge) {
         const existingIndex = lines.findIndex((l) => keyPattern.test(l));
         if (existingIndex !== -1) {
           lines[existingIndex] = `${key}=${value}`;
-          writeFileSync3(envPath, lines.join("\n"), "utf-8");
+          writeFileSync4(envPath, lines.join("\n"), "utf-8");
         } else {
           const toAppend = (existing && !existing.endsWith("\n") ? "\n" : "") + `${key}=${value}
 `;
@@ -26113,7 +26195,7 @@ Size: ${r.size} bytes`
 }
 
 // packages/mcp-server/src/tools/capture/fetch.ts
-import { mkdirSync as mkdirSync3, writeFileSync as writeFileSync4 } from "fs";
+import { mkdirSync as mkdirSync4, writeFileSync as writeFileSync5 } from "fs";
 import { resolve as resolve2, relative as relative2, isAbsolute as isAbsolute2, dirname as dirname2 } from "path";
 function registerFetchTools(server, bridge) {
   server.tool(
@@ -26173,9 +26255,9 @@ Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is r
             `Refusing to write fetch_url body outside the project directory. Target "${resolved}" is not under "${cwd}".`
           );
         }
-        mkdirSync3(dirname2(resolved), { recursive: true });
+        mkdirSync4(dirname2(resolved), { recursive: true });
         const buf = r.body_base64 ? Buffer.from(r.body_base64, "base64") : Buffer.from(r.body_text ?? "", "utf-8");
-        writeFileSync4(resolved, buf);
+        writeFileSync5(resolved, buf);
         const hdrLines = Object.keys(r.headers).sort().map((k) => `  ${k}: ${r.headers[k]}`).join("\n");
         return {
           content: [{
@@ -26234,7 +26316,7 @@ Scope matching with \`within_selector\` or \`near_text\` restricts where matches
 
 Shadow DOM (open AND closed) is pierced by default via chrome.dom.openOrClosedShadowRoot \u2014 Reddit faceplate-* / r-post-form-submit-button / web-component-heavy SPAs no longer need manual deepFind recipes.
 
-ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit, X / Twitter, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry \u2014 pre-fill the form, then highlight the submit button and call wait_for_click so a real human gesture fires the submission.`,
+ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit, X / Twitter, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry \u2014 pre-fill the form and retry once with \`try_fiber: true\`; if it's still rejected, most sessions run unattended, so report the rejection rather than reaching for highlight_region + wait_for_click. Only use that pairing when a human is actually present for this session.`,
     {
       textHint: external_exports.string().optional().describe(
         "The visible label of the button or link (e.g. 'Save product', 'Continue', 'Add a product', 'Create'). Exactly one of textHint or selector must be set."
@@ -26698,7 +26780,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.12.5" : "dev";
+var PACKAGE_VERSION = true ? "0.12.6" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

@@ -324,7 +324,7 @@ export function pierceFileCount(): { totalFiles: number; inputCount: number } {
   return { totalFiles: total, inputCount: inputs.length };
 }
 
-export function pierceFilePoll(name: string, sel: string): { total: number; stillHasOurFile: boolean; verifyOk: boolean } {
+export function pierceFilePoll(name: string, sel: string): { total: number; stillHasOurFile: boolean; verifyOk: boolean; filenameVisible: boolean } {
   function getShadowRoot(el: Element): ShadowRoot | null {
     const cdom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
     if (cdom?.openOrClosedShadowRoot) {
@@ -350,6 +350,27 @@ export function pierceFilePoll(name: string, sel: string): { total: number; stil
     recurse(root);
     return out;
   }
+  // Shadow-piercing text search. A file upload widget that genuinely accepted
+  // the file almost always surfaces the filename somewhere (a chip, a
+  // thumbnail caption, a "1 file selected" line) even after it clears the
+  // native <input> to hold the File in its own state instead (a common,
+  // legitimate pattern). If the filename never shows up ANYWHERE after the
+  // input was cleared, that's a much stronger "silently rejected" signal than
+  // total-file-count alone — this is what closes the false-positive gap seen
+  // on react-dropzone-style widgets (see
+  // ISSUE-2026-08-15-antibot-tenant-walls.md, Class B: input cleared 0->0,
+  // page kept showing "Upload your resume cannot be left blank", but the old
+  // heuristic here reported success anyway). Deliberately just a text-presence
+  // check, not a react-dropzone/Phenom-specific class-name check, so it
+  // generalizes to any framework with the same read-then-discard behavior.
+  function deepContainsText(root: ParentNode, needle: string): boolean {
+    if ((root.textContent ?? "").includes(needle)) return true;
+    for (const el of Array.from(root.querySelectorAll("*"))) {
+      const sr = getShadowRoot(el);
+      if (sr && deepContainsText(sr, needle)) return true;
+    }
+    return false;
+  }
   const inputs = deepQuery<HTMLInputElement>(document, "input[type=file]");
   let total = 0;
   let stillHasOurFile = false;
@@ -362,5 +383,6 @@ export function pierceFilePoll(name: string, sel: string): { total: number; stil
     }
   }
   const verifyOk = sel ? deepQuery(document, sel).length > 0 : false;
-  return { total, stillHasOurFile, verifyOk };
+  const filenameVisible = name ? deepContainsText(document, name) : false;
+  return { total, stillHasOurFile, verifyOk, filenameVisible };
 }

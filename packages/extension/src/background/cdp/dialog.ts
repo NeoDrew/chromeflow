@@ -1,5 +1,19 @@
 // Dialog / submit-signal classification helpers used by click_element.
 
+/** [asserted-state, confirmed-state] word pairs for the paired-state-flip
+ * submit signal below. Vocabulary, not a site check: any UI whose completed-
+ * action feedback is a label swap on a button (rather than a toast/alert/
+ * modal) matches, regardless of which site renders it. */
+const PAIRED_STATE_WORDS: Array<[string, string]> = [
+  ["Connect", "Pending"],
+  ["Follow", "Following"],
+  ["Subscribe", "Subscribed"],
+  ["Save", "Saved"],
+  ["Add", "Added"],
+  ["Join", "Requested"],
+  ["Like", "Liked"],
+];
+
 /**
  * Count anti-bot-friendly "something happened" selectors on the active page.
  * Used by click_element's `expect_submit` flag: snapshot pre-click counts,
@@ -10,16 +24,39 @@
  * Sonner (data-sonner-toast), shadcn / Tailwind UI (.toast, .notification),
  * accessibility-correct apps (aria-live), and any modal / dialog. Excludes
  * aria-hidden elements (offscreen carriers used for screen-reader semantics).
+ *
+ * `paired` also counts, per PAIRED_STATE_WORDS pair, how many leaf elements
+ * show the before/after word verbatim. A confirmed action whose
+ * only feedback is a button relabelling itself (LinkedIn's Connect->Pending,
+ * a Follow->Following toggle) produces no alert/toast/modal at all — see
+ * ISSUE-2026-08-16-linkedin-connect-expect-submit-weak-signal.md, where this
+ * left expect_submit with no signal to catch a click that genuinely worked.
+ * click.ts compares two snapshots and treats a before-count decrease paired
+ * with an after-count increase on the SAME pair as a non-weak success signal.
  */
-export async function getSubmitSignalCounts(tabId: number): Promise<{ alert: number; toast: number; modal: number }> {
+export async function getSubmitSignalCounts(
+  tabId: number,
+): Promise<{ alert: number; toast: number; modal: number; paired: Array<{ before: string; after: string; beforeCount: number; afterCount: number }> }> {
+  const empty = { alert: 0, toast: 0, modal: 0, paired: [] as Array<{ before: string; after: string; beforeCount: number; afterCount: number }> };
   try {
     const r = await chrome.scripting.executeScript({
       target: { tabId },
-      func: () => {
+      func: (vocab: Array<[string, string]>) => {
         const c = (sel: string) => {
           try { return document.querySelectorAll(sel).length; }
           catch { return 0; }
         };
+        // Leaf elements only (no element children) — a button/link/span that
+        // IS the label, not a container whose concatenated text happens to
+        // run through the word. Not restricted to clickable/button-role
+        // elements: the CONFIRMED state often isn't interactive anymore
+        // (LinkedIn replaces the "Connect" button with a plain, non-clickable
+        // "Pending" span once sent — restricting both words to button-like
+        // elements meant the after-word's count could never be seen appearing
+        // at all, so a real success always looked identical to no signal).
+        const clickableTexts = Array.from(document.querySelectorAll('button, [role="button"], a, span, div, li'))
+          .filter((el) => el.children.length === 0)
+          .map((el) => (el.textContent ?? "").replace(/\s+/g, " ").trim());
         return {
           alert:
             c('[role="alert"]:not([aria-hidden="true"])') +
@@ -32,12 +69,19 @@ export async function getSubmitSignalCounts(tabId: number): Promise<{ alert: num
           modal:
             c('[role="dialog"]:not([aria-hidden="true"])') +
             c('[aria-modal="true"]'),
+          paired: vocab.map(([before, after]) => ({
+            before,
+            after,
+            beforeCount: clickableTexts.filter((t) => t === before).length,
+            afterCount: clickableTexts.filter((t) => t === after).length,
+          })),
         };
       },
+      args: [PAIRED_STATE_WORDS],
     });
-    return (r[0]?.result as { alert: number; toast: number; modal: number } | undefined) ?? { alert: 0, toast: 0, modal: 0 };
+    return (r[0]?.result as typeof empty | undefined) ?? empty;
   } catch {
-    return { alert: 0, toast: 0, modal: 0 };
+    return empty;
   }
 }
 

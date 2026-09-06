@@ -3,7 +3,6 @@ import { markerIds } from "../../markers.js";
 import { findDialogByQuery, findTopmostDialog } from "./dialog.js";
 import {
   describeCandidate,
-  findClickable,
   findClickableAll,
   findSectionByHeading,
   readDisabledState,
@@ -303,24 +302,33 @@ export function postClickInspect(): { message: string; stateChanged: boolean } {
 }
 
 /**
- * Find a clickable element by text/aria-label and programmatically click it.
+ * Click the element `prepareClickTarget` already resolved and tagged (Phase 1
+ * of every click_element call, regardless of textHint vs selector mode).
  * Handles elements that are off-screen inside nested scroll containers (e.g.
  * Stripe's drawer panels) and elements inside open shadow roots (Radix UI
  * components, Stencil/Lit web components, etc.).
  *
  * This is the fallback path when CDP Input.dispatchMouseEvent isn't available
- * (chrome:// pages, debugger attach fails). The CDP path produces isTrusted=true
- * clicks; this path produces isTrusted=false synthetic clicks.
+ * OR when the cdp_click phase times out (chrome:// pages, debugger attach
+ * fails, or a hung CDP dispatch on an anti-bot-walled tenant). The CDP path
+ * produces isTrusted=true clicks; this path produces isTrusted=false
+ * synthetic clicks.
+ *
+ * Operates on the ALREADY-TAGGED element (markerIds.clickTargetAttr(), set by
+ * prepareClickTarget) rather than re-resolving by textHint — matching the
+ * pattern every other fallback (postClickInspect, pointerChainOnTagged,
+ * dispatchKeyboardActivation's focus step) already uses. Re-resolving here
+ * used to (a) crash outright on selector-mode calls, since it only ever
+ * accepted a textHint and called textHint.toLowerCase() unconditionally, and
+ * (b) risk picking a DIFFERENT element than CDP originally targeted even in
+ * textHint mode, if the page changed between the prepare step and this
+ * fallback. See ISSUE-2026-08-15-antibot-tenant-walls.md.
  */
-export async function clickElement(
-  textHint: string,
-  nth?: number
-): Promise<{ success: boolean; message: string }> {
-  const lower = textHint.toLowerCase().trim();
-  const el = findClickable(lower, nth);
+export async function clickElement(): Promise<{ success: boolean; message: string }> {
+  const el = queryAllDeep<HTMLElement>(document, `[${markerIds.clickTargetAttr()}]`)[0] ?? null;
 
   if (!el) {
-    return { success: false, message: `No clickable element found for "${textHint}"` };
+    return { success: false, message: `No tagged click target found — prepareClickTarget may not have run, or the element was removed from the DOM before this fallback ran.` };
   }
 
   // Scroll the element into view, including nested scroll containers
@@ -329,7 +337,7 @@ export async function clickElement(
   const label =
     (el as HTMLElement).innerText?.trim() ||
     el.getAttribute("aria-label") ||
-    textHint;
+    el.tagName.toLowerCase();
 
   // Pre-flight: skip already-checked radios — re-clicking can toggle them OFF
   // on React forms whose onChange handler interprets the click as a deselect.

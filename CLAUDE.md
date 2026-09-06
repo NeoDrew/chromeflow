@@ -113,6 +113,30 @@ The GitLab CI pipeline definition is in `.gitlab-ci.yml`.
   `hidden_count`, `last_text`, `initial_match_warning`,
   `selector_in_shadow`, `shadow_hosts_seen`, etc.
 
+## Fix philosophy: patterns, not sites
+
+- **Nothing chromeflow ships fixes a specific website — it fixes a pattern
+  that happens to show up on that website.** A bug report always arrives
+  with a concrete site (Reddit, Workday, Reed.co.uk), but the fix must be
+  keyed on a structural/behavioral signature that generalizes across any
+  site sharing that pattern, not on the reporting site's domain or markup.
+  Example: the fix for "Workday's `fill_input` doesn't bind" (2026-08-11)
+  detects Workday's own `data-automation-id` component marker, not
+  `location.hostname.includes("myworkdayjobs.com")` — the same check fires
+  correctly on any other host running the same component library, and the
+  underlying pattern (a controlled-input model that only registers trusted
+  keystrokes, not a synthetic setter + dispatched event) is the same one
+  already fixed for TipTap/ProseMirror and Reddit's faceplate-* components.
+- **Ask "what's the general pattern?" before writing the check.** Domain
+  strings, exact class names, and literal text lifted straight from the bug
+  report are a sign the fix is pigeonholed to one site. Structural signals
+  (a DOM attribute convention, an event-handling behavior, an anti-bot
+  gating pattern already seen elsewhere) are the sign it generalizes.
+- **Keep the concrete site in the comment, not the condition.** Cite the
+  reporting site and the ISSUE-*.md file as the motivating example and
+  evidence, but the code path itself should read as "sites that do X",
+  never "if site is Y".
+
 ## Code conventions
 
 - TypeScript throughout. Strict mode in `tsconfig.json`. ES modules.

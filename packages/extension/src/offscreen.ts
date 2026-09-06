@@ -25,6 +25,32 @@ import {
   type ConnKind,
 } from "./connections";
 
+// Chrome's MV3 service worker for an unpacked (dev-mode) extension does not
+// reliably re-read background.js from disk on a browser restart — not
+// chrome://restart, not even a full quit-and-relaunch — the way content
+// scripts and THIS offscreen document do (both get a genuinely fresh load
+// each time, same mechanism as a page navigation). Only an explicit
+// chrome://extensions "Reload" click, or a call to chrome.runtime.reload()
+// from ANY extension context, forces the service worker itself to refresh.
+// Since this file DOES load fresh, it's the one place that can reliably
+// carry a new instruction across a restart when the service worker can't —
+// so on version mismatch, force a real extension reload once. Keyed by
+// version (not a one-time boolean) so this also self-heals after every
+// future version bump, not just this one. chrome.storage.local survives
+// chrome.runtime.reload() (only uninstall clears it), so this can never
+// loop: the reload lands on the SAME version, matches on the next load, and
+// stays quiet.
+(async () => {
+  try {
+    const currentVersion = chrome.runtime.getManifest().version;
+    const { chromeflowLastForceReloadVersion } = await chrome.storage.local.get("chromeflowLastForceReloadVersion");
+    if (chromeflowLastForceReloadVersion !== currentVersion) {
+      await chrome.storage.local.set({ chromeflowLastForceReloadVersion: currentVersion });
+      chrome.runtime.reload();
+    }
+  } catch { /* best-effort — never block the connection setup below */ }
+})();
+
 const RECONNECT_BASE_MS = 1000;
 // Cap generic (host-down) backoff at 30s rather than hammering a dead endpoint
 // every few seconds forever.
@@ -112,7 +138,16 @@ function connect(conn: Conn) {
     conn.connected = true;
     // The default local handshake is a bare {type:"ready"}. Configured endpoints
     // may carry a token (also expressible directly in the URL query).
-    const ready: { type: "ready"; token?: string } = { type: "ready" };
+    // extId/extVersion added 2026-08-11 for a live-diagnosis case: two
+    // chromeflow-labeled extensions were installed in the same profile (one
+    // disabled) and it was impossible to tell which one a given WS connection
+    // actually came from — there was no such signal in this protocol at all.
+    const manifest = chrome.runtime.getManifest();
+    const ready: { type: "ready"; token?: string; extId: string; extVersion: string } = {
+      type: "ready",
+      extId: chrome.runtime.id,
+      extVersion: manifest.version,
+    };
     if (conn.token) ready.token = conn.token;
     socket.send(JSON.stringify(ready));
     publishLivePorts();
