@@ -10,6 +10,19 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
       const tab = await getActiveTab(port);
       const tabId = tab.id!;
       const before_url = tab.url ?? "";
+      // Genuinely pre-dispatch (unlike preSubmitCounts below, which isn't
+      // captured until after the whole click+fallback-cascade sequence has
+      // already run). A synchronous UI change — a button relabelling itself,
+      // no network round-trip involved — has usually already happened by
+      // then, so comparing against a snapshot taken that late means "before"
+      // and "after" are both post-change and no flip is ever seen. Only
+      // paired-word detection needs this early snapshot: alert/toast/modal
+      // are typically the result of an async network response, which
+      // reliably still hasn't resolved by the time preSubmitCounts runs, so
+      // that comparison is left alone.
+      const earlyPairedCounts = msg.expect_submit === true && isScriptableUrl(before_url)
+        ? (await getSubmitSignalCounts(tabId)).paired
+        : null;
 
       // Phase 1: ask content script to find, scroll, and tag the element,
       // returning its viewport coordinates (with small jitter).
@@ -379,6 +392,10 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         msg.until_selector || msg.until_url_contains ||
         msg.until_text_contains || msg.until_url_changes
       );
+      // Hoisted from its original declaration further down (near the
+      // until-clause polling logic) so the fallback cascade below can see it
+      // — expect_submit callers need the weak-signal check immediately after.
+      const expectSubmit = msg.expect_submit === true;
       // postClickStateChanged is set when post_click_inspect confirmed a
       // radio/checkbox toggled state. That's a direct observation of click
       // success — running the activity probe in addition produces false
@@ -447,7 +464,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
       // ~3.2s instead of ~6s, with no measured loss in success detection.
       const fallbackProbeTimeoutMs = Math.min(800, activityTimeoutMs);
       const probe = effectiveSkipProbe
-        ? { activity: true, reason: probeSkipReason, mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult
+        ? { activity: true, reason: probeSkipReason, mutation_count: 0, url_changed: false, weak: false, after_url: before_url, focused_after: null } as ActivityProbeResult
         : isScriptableUrl(tab.url) && tab.id
         ? await phaseRace("activity_probe", probeBudgetMs, runActivityProbe(tab.id, before_url, activityTimeoutMs, preClickVisibleCount, markerIds.clickTargetAttr())).catch((e) => {
             const err = e as Error & { phase?: string };
@@ -456,13 +473,29 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
               reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
               mutation_count: 0,
               url_changed: false,
+              weak: false,
               after_url: before_url,
               focused_after: null,
             } as ActivityProbeResult;
           })
-        : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
+        : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, weak: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
 
-      if (!probe.activity) {
+      // A caller that passed expect_submit cares whether the click's actual
+      // PURPOSE succeeded, not just whether SOMETHING happened. A "weak"
+      // probe signal (a DOM mutation, a focus change) is exactly the kind of
+      // incidental side effect a REJECTED click can still produce — e.g.
+      // LinkedIn's "Send without a note" confirmation dialog closing on
+      // click without the invite actually being sent (see
+      // ISSUE-2026-08-15-antibot-tenant-walls.md). Without this, that weak
+      // signal alone satisfies `!probe.activity` below and skips the ENTIRE
+      // fallback cascade — including try_fiber, even when the caller
+      // explicitly asked for it — before expect_submit's own stricter
+      // URL/toast/alert/modal check ever gets a say. needsFallback() is
+      // re-evaluated at each gate below since a fallback stage can flip
+      // probe.activity/weak as it goes.
+      const needsFallback = (p: ActivityProbeResult) => !p.activity || (expectSubmit && p.weak);
+
+      if (needsFallback(probe)) {
         // First-line automatic fallback when the primary CDP click had
         // valid coordinates: re-dispatch as a CDP synthesizeTapGesture.
         // This is also isTrusted=true (same trust level as the primary)
@@ -480,10 +513,25 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           tab.id
         ) {
           try {
+            // Re-verify the tagged element is still there and re-read its
+            // CURRENT position before dispatching at a coordinate. Previously
+            // this block could only be reached when probe.activity was FALSE
+            // (zero observable change at all), which meant the target could
+            // not have been removed from the DOM yet. needsFallback() above
+            // now also enters here on a WEAK signal (expect_submit only) —
+            // e.g. a confirmation dialog closing IS a mutation, so the tagged
+            // "Send" button inside it may already be gone. Dispatching a tap
+            // at the stale prep.x/prep.y in that case would land on whatever
+            // page content is now underneath instead, a real misclick risk
+            // that didn't exist before this path could be reached. Skip the
+            // coordinate dispatch (falls through to keyboard-enter, which
+            // safely no-ops on its own re-query) rather than guess.
+            const fresh = await freshTargetPoint(tabId, markerIds.clickTargetAttr());
+            if (!fresh) throw new Error("tagged target no longer present");
             await phaseRace(
               "tap_gesture_fallback",
               3500,
-              dispatchTapGesture(tabId, Math.round(prep.x), Math.round(prep.y)),
+              dispatchTapGesture(tabId, Math.round(fresh.x), Math.round(fresh.y)),
             );
             const probeTap = await phaseRace(
               "activity_probe_tap_fallback",
@@ -496,6 +544,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
                 reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
                 mutation_count: 0,
                 url_changed: false,
+                weak: false,
                 after_url: before_url,
                 focused_after: null,
               } as ActivityProbeResult;
@@ -504,6 +553,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
               postNote += ` (fired via CDP synthesizeTapGesture after dispatchMouseEvent silently_rejected)`;
               recoveredVia = "tap-gesture";
               probe.activity = true;
+              probe.weak = probeTap.weak;
               probe.after_url = probeTap.after_url;
               probe.focused_after = probeTap.focused_after;
               probe.mutation_count = probeTap.mutation_count;
@@ -516,7 +566,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         }
       }
 
-      if (!probe.activity) {
+      if (needsFallback(probe)) {
         // Keyboard activation fallback. Reddit's <faceplate-*> web
         // components (flair button, comment composer expand) and similar
         // strict gates check something beyond isTrusted=true on the click
@@ -561,6 +611,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
                   reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
                   mutation_count: 0,
                   url_changed: false,
+                  weak: false,
                   after_url: before_url,
                   focused_after: null,
                 } as ActivityProbeResult;
@@ -569,6 +620,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
                 postNote += ` (fired via CDP keyboard Enter after mouse silently_rejected)`;
                 recoveredVia = "keyboard-enter";
                 probe.activity = true;
+                probe.weak = probeKB.weak;
                 probe.after_url = probeKB.after_url;
                 probe.focused_after = probeKB.focused_after;
                 probe.mutation_count = probeKB.mutation_count;
@@ -579,7 +631,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         }
       }
 
-      if (!probe.activity) {
+      if (needsFallback(probe)) {
         // Pointer chain fallback: dispatch the full pointer event sequence
         // (pointerdown, mousedown, pointerup, mouseup, click) directly ON
         // the tagged element via the content script. This avoids the shadow
@@ -590,8 +642,20 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         // component handler, finds the host instead of the button, and
         // discards the event. Dispatching directly on the element keeps
         // event.target correct within the shadow root's delegation context.
+        //
+        // Also reachable when the PRIMARY cdp_click phase itself timed out
+        // (cdpPhaseError set, usedCdp false) — a hung CDP mouse dispatch (a
+        // renderer main thread pegged busy by an anti-bot/fingerprinting
+        // script is one plausible cause; unlike a coordinate click, this
+        // dispatch needs no hit-testing) is a DIFFERENT failure mode from
+        // "CDP click landed but the page silently rejected it", and this
+        // fallback was previously unreachable in that case even though
+        // nothing pointer-chain-shaped had been tried yet (unlike dom-click
+        // below, which the cdpPhaseError branch above already ran once, so
+        // it correctly stays usedCdp-gated to avoid double-firing). See
+        // ISSUE-2026-08-15-antibot-tenant-walls.md.
         if (
-          usedCdp &&
+          (usedCdp || !!cdpPhaseError) &&
           isScriptableUrl(tab.url) &&
           tab.id
         ) {
@@ -616,6 +680,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
                 reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
                 mutation_count: 0,
                 url_changed: false,
+                weak: false,
                 after_url: before_url,
                 focused_after: null,
               } as ActivityProbeResult;
@@ -625,6 +690,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
               postNote += ` (fired via pointer chain fallback after CDP silently_rejected inside shadow DOM)`;
               recoveredVia = "pointer-chain";
               probe.activity = true;
+              probe.weak = probePC.weak;
               probe.after_url = probePC.after_url;
               probe.focused_after = probePC.focused_after;
               probe.mutation_count = probePC.mutation_count;
@@ -634,7 +700,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         }
       }
 
-      if (!probe.activity) {
+      if (needsFallback(probe)) {
         // DOM .click() fallback (only when the primary CDP path ran):
         // re-dispatch the click via the content-script's `.click()` method,
         // which loses isTrusted=true but catches a class of handlers the CDP
@@ -673,6 +739,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
                 reason: `(probe phase exceeded budget: ${err.phase}; treating as activity)`,
                 mutation_count: 0,
                 url_changed: false,
+                weak: false,
                 after_url: before_url,
                 focused_after: null,
               } as ActivityProbeResult;
@@ -684,6 +751,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
               // Refresh probe with the post-fallback state so the until_*
               // poll below sees the right after_url / focused_after.
               probe.activity = true;
+              probe.weak = probeDom.weak;
               probe.after_url = probeDom.after_url;
               probe.focused_after = probeDom.focused_after;
               probe.mutation_count = probeDom.mutation_count;
@@ -693,7 +761,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         }
       }
 
-      if (!probe.activity) {
+      if (needsFallback(probe)) {
         // Last-resort fallback: walk the React fiber tree from the matched
         // element and invoke __reactProps$.onClick directly. Helps on React-
         // heavy SPAs whose action buttons need the synthetic React handler and
@@ -738,11 +806,12 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
                   reason: `(probe2 phase exceeded budget: ${err.phase}; treating as activity)`,
                   mutation_count: 0,
                   url_changed: false,
+                  weak: false,
                   after_url: before_url,
                   focused_after: null,
                 } as ActivityProbeResult;
               })
-            : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
+            : ({ activity: true, reason: "(non-scriptable; probe skipped)", mutation_count: 0, url_changed: false, weak: false, after_url: before_url, focused_after: null } as ActivityProbeResult);
 
           if (probe2.activity) {
             // Fiber click succeeded. Continue with the existing flow (until_*
@@ -750,11 +819,17 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
             // that the fiber path was used.
             postNote += ` (fired via React fiber after CDP silently_rejected)`;
             recoveredVia = "react-fiber";
-          } else {
+          } else if (!expectSubmit) {
+            // expect_submit callers get a more specific verdict from their
+            // own URL/toast/alert/modal poll further down instead of this
+            // generic message — falling through here (not returning) is what
+            // lets that poll actually run rather than being pre-empted by a
+            // silently_rejected bail-out. Non-expect_submit callers keep the
+            // existing behavior: report the rejection now.
             return {
               type: "click_element_response",
               success: false,
-              message: `Clicked "${prep.label ?? msg.textHint}" but no observable activity (DOM mutations, focus change, URL change, alert/toast/modal) within ${activityTimeoutMs}ms even after the React fiber fallback (${fiberResult.fired ? "fiber onClick invoked, no DOM/URL/focus/alert change" : `no React fiber __reactProps$.onClick found: ${fiberResult.message}`}). The click MAY have succeeded for actions whose state change isn't observable in the DOM (toggling internal state, opening native dialogs). Verify with find_text or execute_script before retrying. If genuinely rejected, switch to highlight_region + wait_for_click.`,
+              message: `Clicked "${prep.label ?? msg.textHint}" but no observable activity (DOM mutations, focus change, URL change, alert/toast/modal) within ${activityTimeoutMs}ms even after the React fiber fallback (${fiberResult.fired ? "fiber onClick invoked, no DOM/URL/focus/alert change" : `no React fiber __reactProps$.onClick found: ${fiberResult.message}`}). The click MAY have succeeded for actions whose state change isn't observable in the DOM (toggling internal state, opening native dialogs). Verify with find_text or execute_script before retrying. If genuinely rejected, this action cannot complete unattended — report it rather than falling back to highlight_region + wait_for_click.`,
               before_url,
               after_url: probe2.after_url,
               navigated: false,
@@ -763,11 +838,12 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
               fiber_attempted: true,
             };
           }
-        } else {
+        } else if (!expectSubmit) {
+          // Same expect_submit deferral as above — let its own poll decide.
           return {
             type: "click_element_response",
             success: false,
-            message: `Clicked "${prep.label ?? msg.textHint}" but no observable activity (DOM mutations, focus change, URL change, alert/toast/modal) within ${activityTimeoutMs}ms. Possible causes: (1) the click DID work but the state change isn't observable in the DOM (toggling internal Lit state, opening native dialogs, setting a value) — verify with find_text or execute_script before retrying; (2) the action takes longer than ${activityTimeoutMs}ms — retry with activity_timeout_ms=3000+; (3) genuine anti-bot rejection — switch to highlight_region + wait_for_click, or retry with try_fiber=true on React SPAs.`,
+            message: `Clicked "${prep.label ?? msg.textHint}" but no observable activity (DOM mutations, focus change, URL change, alert/toast/modal) within ${activityTimeoutMs}ms. Possible causes: (1) the click DID work but the state change isn't observable in the DOM (toggling internal Lit state, opening native dialogs, setting a value) — verify with find_text or execute_script before retrying; (2) the action takes longer than ${activityTimeoutMs}ms — retry with activity_timeout_ms=3000+; (3) genuine anti-bot rejection, retry with try_fiber=true on React SPAs — if that also fails, this action cannot complete unattended; report it rather than falling back to highlight_region + wait_for_click.`,
             before_url,
             after_url: probe.after_url,
             navigated: false,
@@ -816,7 +892,6 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
       // can run 5-15s before the URL flips, so default them longer than
       // selector/text waits. Caller can still override with until_timeout_ms.
       const untilTimeoutMs = (msg.until_timeout_ms as number | undefined) ?? (untilUrlChanges ? 15000 : 5000);
-      const expectSubmit = msg.expect_submit === true;
       const hasUntil = !!(untilSelector || untilUrlContains || untilTextContains || untilUrlChanges);
       // If the substring is already present in the pre-click URL, require
       // an actual URL change too — otherwise /tasks/OLD → /tasks/NEW with
@@ -1075,7 +1150,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           }
           if (t?.id && isScriptableUrl(url)) {
             const counts = await getSubmitSignalCounts(t.id);
-            const pre = preSubmitCounts ?? { alert: 0, toast: 0, modal: 0 };
+            const pre = preSubmitCounts ?? { alert: 0, toast: 0, modal: 0, paired: [] };
             if (counts.alert > pre.alert) {
               untilResult = { ok: true, reason: `alert/aria-live element appeared` };
               break;
@@ -1088,13 +1163,28 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
               untilResult = { ok: true, reason: `modal / [role=dialog] appeared` };
               break;
             }
+            // A confirmed action whose only feedback is a button relabelling
+            // itself (Connect->Pending, Follow->Following) produces none of
+            // the three signals above. Require the SAME pair to move in both
+            // directions (a before-word disappearing, its paired after-word
+            // appearing) so an unrelated page refresh can't satisfy this by
+            // coincidence. See ISSUE-2026-08-16-linkedin-connect-expect-
+            // submit-weak-signal.md.
+            const flipped = earlyPairedCounts && counts.paired.find((now) => {
+              const before = earlyPairedCounts!.find((p) => p.before === now.before && p.after === now.after);
+              return before && now.afterCount > before.afterCount && now.beforeCount < before.beforeCount;
+            });
+            if (flipped) {
+              untilResult = { ok: true, reason: `a control's label flipped from "${flipped.before}" to "${flipped.after}" — the action completed even though no URL/toast/alert/modal signal fired` };
+              break;
+            }
           }
           await new Promise((r) => setTimeout(r, 300));
         }
         if (!untilResult) {
           untilResult = {
             ok: false,
-            reason: `submit silently rejected (likely anti-bot): no URL change, toast, alert, or modal appeared within 4s. Synthetic clicks fail on Reddit / X / mcp.so even though isTrusted passes — pre-fill the form, then highlight + wait_for_click so a real human gesture fires the submit.`,
+            reason: `submit silently rejected (likely anti-bot): no URL change, toast, alert, modal, or label-flip signal appeared within 4s. Synthetic clicks fail on Reddit / X / mcp.so even though isTrusted passes. Retry with try_fiber=true on React SPAs; otherwise this action cannot complete unattended — report the rejection back rather than waiting on highlight_region + wait_for_click, since most sessions have no one present to click.`,
           };
         }
       } else {

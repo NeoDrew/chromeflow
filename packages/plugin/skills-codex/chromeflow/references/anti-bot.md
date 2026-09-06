@@ -15,8 +15,8 @@ validated against the following platforms (as of 0.10.0):
 | Platform | Validated capability |
 |---|---|
 | Reddit `faceplate-textarea-input` (composer expand) | CDP click opens the composer; previously required real user gesture |
-| Reddit `#comment-composer-submit-button` (comment submit) | Pre-fill body via `type_text(into_selector="div[name=body]", clear_first=true)`, then highlight + `wait_for_click` (still requires real gesture) |
-| X / Twitter `[data-testid="tweetTextarea_0"]` | `type_text` with isTrusted=true CDP keystrokes lands; submit still needs real gesture |
+| Reddit `#comment-composer-submit-button` (comment submit) | Pre-fill body via `type_text(into_selector="div[name=body]", clear_first=true)`; the submit click itself still gates on a real human gesture and will report `silently_rejected` for unattended sessions |
+| X / Twitter `[data-testid="tweetTextarea_0"]` | `type_text` with isTrusted=true CDP keystrokes lands; submit still gates on a real human gesture |
 | React-controlled radio/checkbox forms (Radix UI, Headless UI) | `click_element` auto-handles the React fiber `__reactProps$.onClick` path when CDP click silently rejected |
 | Forms whose Submit button is behind a `[role=dialog]` portal | `click_element("Submit", in_dialog=true)` scopes correctly |
 | Closed-shadow-root inputs (Stencil/Lit/Radix portals) | `fill_input(selector=...)` reaches them via content-script tagging |
@@ -27,9 +27,10 @@ This list is shorter than the one above for a reason. Don't oversell:
 
 - **We do NOT bypass reCAPTCHA / hCaptcha / Cloudflare Turnstile solving.**
   `get_form_fields()` reports captcha presence as a `⚠ CAPTCHA detected`
-  line in the response. The submit will be silently rejected; the
-  recovery is `highlight_region` on the submit + `wait_for_click()` so the
-  user solves the captcha personally.
+  line in the response. The submit will be silently rejected and there is
+  no automated recovery — most chromeflow sessions run unattended, so
+  `highlight_region` + `wait_for_click()` just blocks with no one to click.
+  Report the CAPTCHA back rather than waiting on it.
 - **We do NOT defeat IP-based fingerprinting / rate limits.** Those are
   network-layer signals chromeflow cannot influence. If a site refuses
   the user's IP, chromeflow cannot help.
@@ -39,7 +40,9 @@ This list is shorter than the one above for a reason. Don't oversell:
   down-rank or block.
 - **We do NOT claim Reddit / X submit clicks fire without user gesture.**
   These platforms gate submit on isTrusted that survives a real human
-  click ceremony only. Pre-fill, highlight, `wait_for_click`.
+  click ceremony only. Pre-fill everything, retry with `try_fiber: true`,
+  then report the rejection — don't stall a run waiting for a human who
+  typically isn't there.
 
 ## Decision tree for a click that "should have worked"
 
@@ -65,12 +68,14 @@ click_element("Submit")
 │   │   get_form_fields()
 │   │   fill_form([{label, value}, ...])
 │   │
-│   ├── Highlight + handoff:
-│   │   highlight_region("button[type=submit]", "Click to submit")
-│   │   wait_for_click()
-│   │
-│   │  This is the canonical path for Reddit submit, X tweet submit,
-│   │  mcp.so, any reCAPTCHA-protected form.
+│   ├── Still rejected after fiber + pre-fill: this is genuine anti-bot
+│   │   gating (Reddit submit, X tweet submit, mcp.so, any reCAPTCHA-
+│   │   protected form). Most chromeflow sessions run unattended, so
+│   │   `highlight_region` + `wait_for_click()` just blocks on a human who
+│   │   isn't there — don't reach for it by default. Report the rejection
+│   │   (silently_rejected: true, what was tried) back to the caller and
+│   │   stop. Only use highlight_region + wait_for_click if you know a
+│   │   human is actually present for this session.
 │   │
 │   └── DO NOT retry the same click_element. Re-targeting won't help.
 │

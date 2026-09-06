@@ -1,7 +1,25 @@
 import { WebSocketServer, WebSocket } from "ws";
 import path from "path";
+import { homedir } from "node:os";
+import { mkdirSync, writeFileSync } from "node:fs";
 import type { ClientMessage, DistributiveOmit, ServerMessage } from "./types.js";
 import { timeAndRecord } from "./usage-log.js";
+
+// Diagnostic aid added 2026-08-11: writes the identity of whichever extension
+// last completed a "ready" handshake to a plain file, so it can be inspected
+// directly (`cat ~/.chromeflow/last-connection-identity.json`) without relying
+// on knowing where a given MCP-server subprocess's stderr ends up. Not gated
+// behind anything — cheap, local-only, no PII beyond the extension's own id.
+function recordConnectionIdentity(port: number, extId: string | undefined, extVersion: string | undefined): void {
+  try {
+    const dir = path.join(homedir(), ".chromeflow");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path.join(dir, "last-connection-identity.json"),
+      JSON.stringify({ ts: new Date().toISOString(), port, extId: extId ?? null, extVersion: extVersion ?? null }, null, 2),
+    );
+  } catch { /* best-effort */ }
+}
 
 type ServerMessagePayload = DistributiveOmit<ServerMessage, "requestId">;
 
@@ -86,7 +104,14 @@ export class WsBridge {
           const token = typeof (msg as { token?: unknown }).token === "string"
             ? (msg as { token?: string }).token
             : undefined;
-          console.error(`[chromeflow] Extension ready${token ? " (token presented)" : ""}`);
+          const extId = typeof (msg as { extId?: unknown }).extId === "string"
+            ? (msg as { extId?: string }).extId
+            : undefined;
+          const extVersion = typeof (msg as { extVersion?: unknown }).extVersion === "string"
+            ? (msg as { extVersion?: string }).extVersion
+            : undefined;
+          console.error(`[chromeflow] Extension ready${token ? " (token presented)" : ""}${extId ? ` id=${extId} version=${extVersion ?? "?"}` : " (no extId reported — pre-2026-08-11 extension build)"}`);
+          recordConnectionIdentity(this.port, extId, extVersion);
           // Send identity so the extension knows which project this server belongs to.
           // `host` tells the popup whether this MCP server was spawned by Claude Code
           // or Codex CLI:

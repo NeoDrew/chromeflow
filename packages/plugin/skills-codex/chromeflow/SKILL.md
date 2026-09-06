@@ -66,12 +66,16 @@ seamless handoff.
 3. **Use `wait_for(selector=…)` / `wait_for(text=…)` for async page
    changes.** Never poll with repeated `take_screenshot`.
 
-4. **Form submits on anti-bot platforms require a real human gesture.**
-   Reddit, X / Twitter, mcp.so all silently reject
-   synthetic submit clicks. For these platforms: pre-fill the form
-   with `fill_form` / `fill_input`, then `highlight_region` the submit
-   button and `wait_for_click()`. See `references/anti-bot.md` for the
-   full decision tree.
+4. **Form submits on anti-bot platforms can still gate on a real human
+   gesture.** Reddit, X / Twitter, mcp.so all silently reject synthetic
+   submit clicks. For these platforms: pre-fill the form with
+   `fill_form` / `fill_input`, retry with `try_fiber: true`, and pass
+   `expect_submit: true` to detect the silent rejection. Most sessions
+   run unattended, so treat a confirmed rejection as a hard stop and
+   report it rather than falling back to `highlight_region` +
+   `wait_for_click()` — reserve that pairing for sessions where a human
+   is actually present. See `references/anti-bot.md` for the full
+   decision tree.
 
 ## Standard flow pattern
 
@@ -215,11 +219,14 @@ click_element(selector="#submit-post-button", until_url_changes=true, until_time
 # On success URL changes to /r/<sub>/?created=t3_<postID>... (the new post's ID)
 ```
 
-**X / Twitter, LinkedIn, Facebook composer submits** — these still gate hard
-on real user gesture for the submit step. Pre-fill body via
-`type_text(into_selector="[data-testid='tweetTextarea_0']", ...)` then
-`highlight_region` the submit and `wait_for_click(redispatch=true)` so the
-user's gesture is re-fired via CDP. See `references/anti-bot.md`.
+**X / Twitter, LinkedIn, Facebook composer submits** — these can still gate
+hard on a real user gesture for the submit step. Pre-fill body via
+`type_text(into_selector="[data-testid='tweetTextarea_0']", ...)`, click
+submit with `expect_submit: true`, and retry once with `try_fiber: true`
+if it silently rejects. If it's still rejected, report the rejection
+rather than falling back to `highlight_region` +
+`wait_for_click(redispatch=true)`; reserve that pairing for sessions where
+a human is actually present. See `references/anti-bot.md`.
 
 **Closed shadow DOM (Radix portal, Stencil):**
 ```

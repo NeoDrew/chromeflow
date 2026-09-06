@@ -20,7 +20,10 @@ shadow roots. Each field carries `type`, `label`, current `value`,
 Also reports:
 - **CAPTCHA presence** (`⚠ CAPTCHA detected: recaptcha/turnstile/hcaptcha`)
   with the sitekey when available. Synthetic submits will be silently
-  rejected — pre-fill, then highlight the submit and `wait_for_click`.
+  rejected and there's no automated way through it — pre-fill everything
+  else, then report the CAPTCHA back rather than blocking on
+  `highlight_region` + `wait_for_click`, since most sessions run
+  unattended with no one to solve it.
 - **OAuth provider buttons** (`Continue with Google`, `Sign in with
   GitHub`) detected on the page. If the user wants OAuth, click the
   provider button instead of filling email/password.
@@ -172,10 +175,28 @@ fill_input(selector='input[id*="react-select-3-input"]', value="Target Option")
 execute_script("document.querySelector('[id*=\"react-select-3-option-0\"]').click()")
 ```
 
-Then verify the control shows the value:
+`get_form_fields()` reads this correctly on its own — no manual verification
+needed. react-select's search input's own `.value` stays `""` after a real
+selection (the chosen option renders in a separate sibling node, react-select's
+stable `singleValue` CSS class), which used to make `get_form_fields()` report
+the field as permanently empty even after a genuine selection, no matter how
+many times you called it or how long you waited — not a timing gap, a
+structural blind spot. It now reads the sibling `singleValue` node when the
+input's own value is empty, so a plain `get_form_fields()` (or `get_page_text`
+/ `find_text`) call shows the real selected value directly. If you ever still
+need to check it by hand:
 ```
 execute_script("document.querySelector('[class*=\"singleValue\"]').textContent.trim()")
 ```
+
+**This generalizes to every custom dropdown/combobox/autocomplete widget, not
+just react-select** (Workday-style listbox country pickers, Radix comboboxes,
+Lit/Stencil selects — anything that isn't a native `<select>`). Never reach
+for `take_screenshot` to confirm one of these landed the right option instead
+of a stray one — a screenshot is pixels you still can't grep, and for widgets
+`get_form_fields()` doesn't have dedicated handling for yet, a text read via
+`get_page_text` / `find_text` / `execute_script` gets the same confirmation
+for a fraction of the cost.
 
 ### File inputs (including hidden drag-zone uploaders)
 
@@ -190,6 +211,18 @@ Default 3000ms commit-wait; pass `verify_selector` or bump `wait_ms`
 for slow uploaders. Reports `targeted <id>` and `page-level file count:
 N → M` in the response so you can confirm which slot received the file
 and spot uploaders that consume-and-reset the input vs. retain it.
+
+**An input that clears with no visible confirmation is reported as a
+failure, not a success.** Some drag-and-drop widgets (react-dropzone and
+similar) read the file from the input, then clear it — a legitimate
+pattern when the file genuinely landed, but indistinguishable from a
+silent rejection by file-count alone. `set_file_input` now also checks
+whether the filename shows up anywhere on the page (shadow-piercing)
+before trusting a cleared input as success. If it never does,
+`success:false` with `consumed_unconfirmed: true` and a "looks like a
+silent rejection" message — don't retry blindly; verify with
+`get_page_text` / `take_screenshot`, and if the tenant is genuinely
+walling automated uploads, hand off to the user rather than looping.
 
 **A "#"/"."/"["-prefixed hint is an exact selector, not a search term.**
 When several sibling file inputs each have a unique id (a common

@@ -37,8 +37,15 @@ export function opStartClickWatch(msg: IncomingMessage): unknown {
   return { type: "action_done", requestId: msg.requestId };
 }
 
-export function opClickElement(msg: IncomingMessage): unknown {
-  const result = clickElement(msg.textHint as string, msg.nth as number | undefined);
+export async function opClickElement(msg: IncomingMessage): Promise<unknown> {
+  // clickElement() takes no target args — it clicks whatever prepareClickTarget
+  // already resolved and tagged in the DOM (see clickElement's own jsdoc for
+  // why: this used to re-resolve by msg.textHint, which crashed outright on
+  // selector-mode calls since textHint is undefined then, and was never
+  // awaited here either, so the response was ALWAYS missing success/message
+  // regardless of mode. Fixed 2026-08-15, see
+  // ISSUE-2026-08-15-antibot-tenant-walls.md.
+  const result = await clickElement();
   return { type: "click_element_response", requestId: msg.requestId, ...result };
 }
 
@@ -115,7 +122,7 @@ export function opReactFiberClick(msg: IncomingMessage): unknown {
       const label = (el as HTMLElement).innerText?.trim() || el.getAttribute("aria-label") || fiberSelector;
       result = fiber.fired
         ? { success: true, message: `Invoked React fiber onClick on "${label}"${fiber.component ? ` (component: ${fiber.component})` : ""}`, fired: true, component: fiber.component, label }
-        : { success: false, message: `Found "${label}" but no React fiber __reactProps$.onClick exists on it or its ancestors. Bound via addEventListener, or React's prop key was mangled. Fall back to highlight_region + wait_for_click.`, fired: false, label };
+        : { success: false, message: `Found "${label}" but no React fiber __reactProps$.onClick exists on it or its ancestors. Bound via addEventListener, or React's prop key was mangled. This element can't be driven via fiber; try the CDP click path instead (via: "auto" or "cdp").`, fired: false, label };
     }
   } else {
     result = reactFiberClickByHint(

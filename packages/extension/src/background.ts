@@ -69,6 +69,8 @@ import {
 } from "./background/handlers/react";
 import {
   handleTypeText,
+  handleFillInput,
+  handleFillForm,
 } from "./background/handlers/type";
 import {
   handleSetFileInput,
@@ -275,6 +277,10 @@ async function handleMcpMessage(msg: {
       return handleClickAtCoordinates(msg, port);
     case "type_text":
       return handleTypeText(msg, port);
+    case "fill_input":
+      return handleFillInput(msg, port);
+    case "fill_form":
+      return handleFillForm(msg, port);
     case "set_file_input":
       return handleSetFileInput(msg, port);
     case "react_set_input":

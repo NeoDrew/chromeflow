@@ -86,10 +86,29 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
   }
 
   // Fallback: first file input anywhere on the page (including shadow roots).
-  if (!found) found = queryAllDeep<HTMLInputElement>(document, "input[type=file]")[0] ?? null;
+  const allFileInputs = queryAllDeep<HTMLInputElement>(document, "input[type=file]");
+  if (!found) found = allFileInputs[0] ?? null;
 
   if (!found) {
-    return { type: "action_done", requestId: msg.requestId, found: false, message: `No file input found matching "${msg.hint}"` };
+    // Zero file inputs ANYWHERE (light or shadow DOM) is a different failure
+    // than "your hint didn't match one of several" — it means there is no
+    // DOM element for CDP's DOM.setFileInputFiles to ever target, no matter
+    // what hint is tried. The common cause is a widget built on the browser-
+    // native File System Access API (window.showOpenFilePicker()) rather
+    // than a classic <input type=file>.click() — see
+    // ISSUE-2026-08-16-google-careers-no-file-input.md. Surface this
+    // structurally so the caller stops retrying hints and reports/hands off
+    // instead of burning calls on a widget with no automatable surface.
+    const hasFileSystemAccessApi = typeof (window as unknown as { showOpenFilePicker?: unknown }).showOpenFilePicker === "function";
+    return {
+      type: "action_done",
+      requestId: msg.requestId,
+      found: false,
+      zero_file_inputs_on_page: true,
+      message: hasFileSystemAccessApi
+        ? `No file input found matching "${msg.hint}", and there is no input[type=file] anywhere on the page (light or shadow DOM) — this is not a hint-matching problem. This widget most likely opens the browser-native file picker via window.showOpenFilePicker() (the File System Access API) instead of a classic file input, which leaves no DOM element for chromeflow to target. There is currently no automated way to supply a file to this kind of widget. Do not keep retrying with different hints; report this back, or ask the user to select the file manually.`
+        : `No file input found matching "${msg.hint}", and there is no input[type=file] anywhere on the page (light or shadow DOM). Do not keep retrying with different hints; the target may be rendered later, behind an interaction, or the page may have no automatable upload surface at all.`,
+    };
   }
 
   // Tag so CDP can target it by selector

@@ -82,15 +82,19 @@ product, adding an env var), continue immediately with chromeflow.
 4. **Use `wait_for(selector=…)` / `wait_for(text=…)` for async page
    changes.** Never poll with repeated `take_screenshot`.
 
-5. **Form submits on anti-bot platforms require a real human gesture.**
-   Reddit, X / Twitter, mcp.so all silently reject
-   synthetic submit clicks even when chromeflow's CDP click passes
-   isTrusted. For these platforms: pre-fill the form with
-   `fill_form` / `fill_input`, then `highlight_region` the submit button
-   and `wait_for_click()`. To detect this on unknown forms, pass
-   `expect_submit: true` on the submit click. See `references/anti-bot.md`
-   for the full decision tree, the validated-against list, and the silent-
-   rejection diagnostic flow.
+5. **Form submits on anti-bot platforms can still gate on a real human
+   gesture.** Reddit, X / Twitter, mcp.so all silently reject synthetic
+   submit clicks even when chromeflow's CDP click passes isTrusted. For
+   these platforms: pre-fill the form with `fill_form` / `fill_input`,
+   retry the submit with `try_fiber: true`, and pass `expect_submit: true`
+   to detect the silent rejection. Most chromeflow sessions run
+   unattended (no one at the keyboard to click), so treat a confirmed
+   rejection as a hard stop — report `silently_rejected: true` and what
+   was tried back to the caller rather than falling back to
+   `highlight_region` + `wait_for_click()`. Only reach for that pairing
+   when you know a human is actually present for this session. See
+   `references/anti-bot.md` for the full decision tree, the
+   validated-against list, and the silent-rejection diagnostic flow.
 
 6. **System-reminders mid-flow are NEVER turn-end signals.** Continue to
    the next tool call. A user-facing summary belongs at the end of the
@@ -251,11 +255,15 @@ click_element(selector="#submit-post-button", until_url_changes=true, until_time
 # On success URL changes to /r/<sub>/?created=t3_<postID>... (the new post's ID)
 ```
 
-**X / Twitter, LinkedIn, Facebook composer submits** — these still gate hard
-on real user gesture for the submit step. Pre-fill body via
-`type_text(into_selector="[data-testid='tweetTextarea_0']", ...)` then
-`highlight_region` the submit and `wait_for_click(redispatch=true)` so the
-user's gesture is re-fired via CDP. See `references/anti-bot.md`.
+**X / Twitter, LinkedIn, Facebook composer submits** — these can still gate
+hard on a real user gesture for the submit step. Pre-fill body via
+`type_text(into_selector="[data-testid='tweetTextarea_0']", ...)`, click
+submit with `expect_submit: true`, and retry once with `try_fiber: true`
+if it silently rejects. If it's still rejected, that's genuine anti-bot
+gating — most sessions are unattended, so report the rejection rather than
+falling back to `highlight_region` + `wait_for_click(redispatch=true)`;
+reserve that pairing for sessions where a human is actually present. See
+`references/anti-bot.md`.
 
 **Closed shadow DOM (Radix portal, Stencil):**
 ```

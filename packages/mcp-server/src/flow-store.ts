@@ -14,18 +14,30 @@
 //   - Capture is automatic. The in-memory buffer records only NOTABLE atoms (ones
 //     that cost something to discover). Leaving an origin (or flushAll() on
 //     shutdown) AUTOSAVES the buffer as a PROVISIONAL flow — no model call needed.
-//   - Provisional flows are NEVER recalled. A wrong / one-off autosave can never
-//     misdirect a future run; it simply sits unused and TTL-expires.
+//   - Provisional flows are recalled ONLY as a last resort (no trusted flow exists
+//     for this exact URL or a sibling URL — see coarsenKey below), and only for
+//     the EXACT same URL, never pooled across sibling pages. A wrong / one-off
+//     autosave can therefore misdirect at most one attempt on the one page it
+//     came from, before the self-correction loop below prunes it.
 //   - A provisional flow is PROMOTED to trusted only once its exact step-signature
 //     has been independently re-observed PROMOTE_AT_SUCCESS times, OR when the
 //     model explicitly save_flow()s it (an instant vouch).
-//   - Only TRUSTED flows are surfaced on recall, and only while they are RELIABLE
-//     (success_count > fail_count and the last replay didn't fail).
+//   - TRUSTED flows are surfaced on recall once RELIABLE (success_count >
+//     fail_count and the last replay didn't fail) — for this exact URL, or,
+//     absent that, for a SIBLING URL that shares the same origin and path shape
+//     once its per-instance segments (job ids, order ids, ticket ids) are
+//     templated out (see coarsenKey). This is what lets a hard-won discovery on
+//     one posting/listing/ticket recall on a DIFFERENT one at the same site,
+//     instead of being permanently locked to the one exact URL it was learned on
+//     (see ISSUE-2026-08-14-workday-flow-memory-unrecallable.md — a real Workday
+//     job application relearned the same button fight on every new posting
+//     because the job id lives in the URL path).
 //   - Self-correction: a recalled step that FAILS on replay, or that the agent
 //     silently rediscovered with a different locator (mismatch), DEMOTES the flow
 //     to provisional on the first miss (so it stops misleading) and PRUNES it on
 //     the second. This is what keeps memory net-positive on dynamic / anti-bot
-//     sites where a stored selector can drift.
+//     sites where a stored selector can drift — and is what bounds the risk of a
+//     bad sibling-URL merge to "one wasted attempt".
 
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
@@ -74,12 +86,31 @@ export const MAX_PROVISIONAL_PER_ORIGIN = 20;             // backstop: cap dead 
 // field (or a caller mistake) can never leak typed text / PII to disk.
 const ATOM_KEYS: (keyof Atom)[] = ["tool", "target", "selector", "recovered_via", "signal", "verification", "clear_first", "fragile", "reason"];
 
+// Google's own numbered-account-slot URL convention for Gmail
+// ("mail.google.com/mail/u/0", "/u/1", ...) and its account-chooser flow
+// ("accounts.google.com/.../accountchooser") are the one URL shape chromeflow
+// already knows resolves to DIFFERENT content depending on which of possibly
+// several signed-in accounts is active — the URL itself carries no identity
+// signal at all. See ISSUE-2026-08-18-known-flow-hint-audit.md: a flow
+// recorded while driving one identity's Gmail/account-chooser replayed
+// verbatim in a different identity's session on the exact same URL shape,
+// twice, 2-for-2 — once nearly opening a stranger's inbox thread, once nearly
+// picking the wrong Google account mid-application. Excluded from the cache
+// entirely (both capture and recall) via originKey() returning undefined,
+// the same mechanism already used for non-http(s) URLs.
+function isMultiAccountSurface(u: URL): boolean {
+  if (u.hostname === "mail.google.com" && /^\/mail\/u\/\d+/.test(u.pathname)) return true;
+  if (u.hostname === "accounts.google.com" && /accountchooser/i.test(u.pathname)) return true;
+  return false;
+}
+
 // origin + pathname, query/hash stripped (so session tokens never hit disk).
 export function originKey(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
     const u = new URL(url);
     if (u.protocol !== "http:" && u.protocol !== "https:") return undefined;
+    if (isMultiAccountSurface(u)) return undefined;
     const path = u.pathname && u.pathname !== "/" ? u.pathname.replace(/\/+$/, "") : "";
     return u.origin + path;
   } catch {
@@ -87,7 +118,68 @@ export function originKey(url: string | undefined): string | undefined {
   }
 }
 
+// Cheap, general content-shape guard: a click target that IS (or contains) an
+// email address is near-universally unsafe to cache-and-replay across
+// sessions, on ANY site — not just Google's. Whoever's account happens to be
+// active when the step is recorded is baked into the recorded text itself
+// (ISSUE-2026-08-18-known-flow-hint-audit.md's account-chooser case:
+// `textHint="molly.sulli1904@gmail.com"` recorded for one identity, replayed
+// against a chooser listing a different one). Deliberately just an email-
+// shape check, not a domain check, so it also catches the same failure mode
+// on any other multi-account admin panel / CRM / support tool addressed by
+// email, not only Google's.
+const EMAIL_RE = /[a-z0-9][a-z0-9._%+-]*@[a-z0-9.-]+\.[a-z]{2,}/i;
+function looksLikeEmail(s: string | undefined): boolean {
+  return !!s && EMAIL_RE.test(s);
+}
+
+function atomLooksIdentifying(a: Atom): boolean {
+  return looksLikeEmail(a.target) || looksLikeEmail(a.selector);
+}
+
+// Split an originKey()-shaped string ("https://host/path/...") into its origin
+// and non-empty path segments. originKey() already guarantees no query/hash and
+// a single scheme://authority prefix, so a straight regex split is safe.
+function splitOriginAndSegments(exactKey: string): { origin: string; segs: string[] } {
+  const m = exactKey.match(/^([a-z][a-z0-9+.-]*:\/\/[^/]+)(\/.*)?$/i);
+  if (!m) return { origin: exactKey, segs: [] };
+  return { origin: m[1], segs: (m[2] ?? "").split("/").filter(Boolean) };
+}
+
+// Structural signal for "this path segment is a per-instance resource id" (a
+// job posting number, an order id, a ticket id...) rather than a stable route
+// segment (a section name, a two-digit page number, a four-digit year). A run
+// of 5+ consecutive digits anywhere in the segment is the general tell — e.g.
+// Workday's job slug "Analyst-Associate--Sustainable-Client-Solutions_10074887-WD"
+// embeds an 8-digit job code (see ISSUE-2026-08-14-workday-flow-memory-unrecallable.md).
+// Deliberately just the digit-run check — no Workday-shaped suffix ("_<digits>-WD")
+// is baked in, so it fires equally on an order id in a path ("/orders/583201"), a
+// ticket number, a SKU, etc.
+function isInstanceSegment(seg: string): boolean {
+  return /\d{5,}/.test(seg);
+}
+
+// Coarsen an exact origin+path key by templating out per-instance segments:
+//   "https://h/MUFG-Careers/job/London/Analyst..._10074887-WD"
+//     -> "https://h/MUFG-Careers/job/London/*"
+// Segments that don't look instance-shaped (route words, locations, categories)
+// are left VERBATIM — coarsening only ever collapses pages that share every
+// OTHER path segment. It never merges genuinely different routes
+// ("/product/*/reviews" stays distinct from "/product/*").
+export function coarsenKey(exactKey: string): string {
+  const { origin, segs } = splitOriginAndSegments(exactKey);
+  if (segs.length === 0) return exactKey;
+  return origin + "/" + segs.map((s) => (isInstanceSegment(s) ? "*" : s)).join("/");
+}
+
 const FRAGILE_RE = /:nth-(of-type|child)\(|>\s*\w+:nth/;
+// Long hex runs / UUIDs embedded in an id or selector are usually regenerated
+// per page render or per session (Workday's questionnaire/language fields,
+// Salesforce Lightning, ServiceNow, Okta all do this) — not a durable identity,
+// whatever site emits it. >=16 consecutive hex chars is well past anything an
+// English selector word could accidentally form, so this is a cheap,
+// low-false-positive structural signal, not a Workday-specific check.
+const GUID_RE = /[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}|[0-9a-f]{16,}/i;
 
 // Stable signature of a step sequence — promotion and dedupe both key on this.
 function signatureOf(steps: Atom[]): string {
@@ -253,6 +345,7 @@ export class FlowStore {
   /** Buffer a notable atom against an origin (defaults to last-seen origin). */
   observe(atom: Atom | null, url?: string): void {
     if (!atom) return;
+    if (atomLooksIdentifying(atom)) return; // see atomLooksIdentifying's jsdoc
     const k = originKey(url) ?? this.lastOrigin;
     if (!k) return;
     this.reconcileAgainstRecalled(k, atom); // confirm or ding the recalled flow this step relates to
@@ -380,13 +473,54 @@ export class FlowStore {
     return { saved: steps.length };
   }
 
-  /** Compact recall hint for an origin (RELIABLE trusted flows only), once per origin per session. */
+  /**
+   * Compact recall hint for an origin, once per origin per session. Priority:
+   *   1. RELIABLE trusted flows recorded for this exact URL.
+   *   2. RELIABLE trusted flows recorded for a SIBLING URL that coarsens to the
+   *      same template (see coarsenKey) — i.e. already independently proven on
+   *      a different job posting / order / ticket at this same site+route
+   *      shape. Provisional (unproven) data is never pooled across siblings —
+   *      only what has already earned "trusted" transfers.
+   *   3. RELIABLE provisional flows for this exact URL (a single unproven
+   *      success) — surfaced as a lower-confidence `possible_flow` hint, never
+   *      pooled across siblings. This is what lets a hard-won discovery recall
+   *      on the very next visit to the same URL, instead of requiring the
+   *      near-impossible second identical revisit trusted promotion needs.
+   */
   recallHint(url: string | undefined): string {
     const k = originKey(url);
     if (!k || this.surfaced.has(k)) return "";
-    const flows = (this.data.origins[k] ?? []).filter(
-      (f) => f.tier === "trusted" && f.success_count > f.fail_count && f.last_replay_ok !== false,
-    );
+    // Defense in depth for flows persisted before the atomLooksIdentifying()
+    // capture-time guard existed — never surface a flow whose steps contain
+    // an identifying target, regardless of tier/reliability.
+    const isSafe = (f: Flow) => !f.steps.some(atomLooksIdentifying);
+    const isReliableTrusted = (f: Flow) =>
+      f.tier === "trusted" && f.success_count > f.fail_count && f.last_replay_ok !== false && isSafe(f);
+    const isReliableProvisional = (f: Flow) =>
+      f.tier === "provisional" && f.success_count > f.fail_count && f.last_replay_ok !== false && isSafe(f);
+
+    const own = this.data.origins[k] ?? [];
+    let flows = own.filter(isReliableTrusted);
+    let source: "own" | "sibling" | "provisional" = "own";
+
+    if (flows.length === 0) {
+      const c = coarsenKey(k);
+      if (c !== k) {
+        const { origin } = splitOriginAndSegments(k);
+        const prefix = origin + "/";
+        for (const [k2, fl] of Object.entries(this.data.origins)) {
+          if (k2 === k || !k2.startsWith(prefix) || coarsenKey(k2) !== c) continue;
+          flows = flows.concat(fl.filter(isReliableTrusted));
+        }
+      }
+      if (flows.length > 0) source = "sibling";
+    }
+
+    if (flows.length === 0) {
+      flows = own.filter(isReliableProvisional);
+      if (flows.length > 0) source = "provisional";
+    }
+
     if (flows.length === 0) return "";
     this.surfaced.add(k);
     this.recalled.add(k);                 // failures may now be attributed to these flows
@@ -405,8 +539,12 @@ export class FlowStore {
       const stale = f.chromeflow_version !== this.version ? ` recorded on v${f.chromeflow_version}, re-verify` : "";
       return `  "${f.task_label}" (${f.steps.length} steps, ${f.success_count}x ok${stale}):\n${steps}`;
     });
-    return `\n\nℹ known_flow for ${k} — these calls worked before; prefer them over rediscovery, but VERIFY each. ` +
-      `If a recalled step fails or its element isn't found on the first attempt, do NOT retry it — discard the hint and rediscover from scratch.\n${lines.join("\n")}`;
+    const label = source === "own"
+      ? `ℹ known_flow for ${k} — these calls worked before; prefer them over rediscovery, but VERIFY each. If a recalled step fails or its element isn't found on the first attempt, do NOT retry it — discard the hint and rediscover from scratch.`
+      : source === "sibling"
+      ? `ℹ known_flow (from a sibling page, same site+route shape) for ${k} — these calls worked on a similar page here (e.g. a different posting/listing/ticket at this site); the DOM may differ slightly on this exact page. Prefer them over cold rediscovery, but VERIFY each before trusting. If a recalled step fails or its element isn't found on the first attempt, do NOT retry it — discard the hint and rediscover from scratch.`
+      : `ℹ possible_flow for ${k} — this worked once before but hasn't been proven a second time; try it first, but verify more carefully than a known_flow. If it fails or the element isn't found on the first attempt, do NOT retry — abandon it and rediscover from scratch.`;
+    return `\n\n${label}\n${lines.join("\n")}`;
   }
 
   /**
@@ -418,7 +556,11 @@ export class FlowStore {
   observeFailure(url: string | undefined, selectorOrText: string | undefined): void {
     const k = originKey(url) ?? this.lastOrigin;
     if (!k || !selectorOrText || !this.recalled.has(k)) return;
-    const flows = this.data.origins[k];
+    // Use what was actually RECALLED, not this.data.origins[k] — a sibling-URL
+    // flow shown via coarsenKey lives in a DIFFERENT origin bucket, so reading
+    // origins[k] here would silently miss it and the flow could never demote or
+    // prune on a bad sibling merge (see recallHint's "sibling" source).
+    const flows = this.recalledFlows.get(k) ?? this.data.origins[k];
     if (!flows) return;
     let changed = false;
     for (const f of flows) {
@@ -440,7 +582,14 @@ export class FlowStore {
     const buf = this.buffer.get(k);
     if (!buf || buf.length === 0) return "";
     const reasons = [...new Set(buf.map((a) => a.reason))].slice(0, 2).join("; ");
-    return `\n\nℹ flow_capturable: ${buf.length} hard-won step(s) on ${k} buffered (${reasons}). They autosave on leaving the site; call save_flow("<task label>") to trust them immediately.`;
+    // Once a flow is trusted it can now recall on SIBLING urls too (see
+    // coarsenKey/recallHint), so save_flow's payoff on an instance-id-shaped
+    // page is bigger than the wording used to suggest — worth saying so at the
+    // moment it matters, since save_flow otherwise sees essentially no use.
+    const reuseNote = coarsenKey(k) !== k
+      ? " This looks like one of several similar pages at this site (e.g. other postings/listings/tickets) — save_flow now to make these steps recallable there too, not just here."
+      : "";
+    return `\n\nℹ flow_capturable: ${buf.length} hard-won step(s) on ${k} buffered (${reasons}). They autosave on leaving the site; call save_flow("<task label>") to trust them immediately.${reuseNote}`;
   }
 
   /** Manual save_flow: commit the buffered atoms for an origin as a TRUSTED flow. */
@@ -486,5 +635,5 @@ export class FlowStore {
  *  multiple fallback selectors (a comma list = "we weren't sure which matched"). */
 export function isFragileSelector(selector: string | undefined): boolean {
   if (!selector) return false;
-  return FRAGILE_RE.test(selector) || selector.includes(",");
+  return FRAGILE_RE.test(selector) || GUID_RE.test(selector) || selector.includes(",");
 }

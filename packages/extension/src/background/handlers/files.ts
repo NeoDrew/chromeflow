@@ -15,10 +15,16 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
         type: "tag_file_input",
         requestId: msg.requestId,
         hint: msg.hint,
-      }) as { found: boolean; message?: string; attr?: string; matched_desc?: string; matched_via?: string };
+      }) as { found: boolean; message?: string; attr?: string; matched_desc?: string; matched_via?: string; zero_file_inputs_on_page?: boolean };
 
       if (!tagResult.found) {
-        return { type: "action_done", requestId: msg.requestId, success: false, message: tagResult.message ?? "No file input found" };
+        return {
+          type: "action_done",
+          requestId: msg.requestId,
+          success: false,
+          message: tagResult.message ?? "No file input found",
+          ...(tagResult.zero_file_inputs_on_page ? { zero_file_inputs_on_page: true } : {}),
+        };
       }
 
       const tabId = tab.id!;
@@ -109,8 +115,10 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
       const pollStart = Date.now();
       let committed = false;
       let consumed = false;
+      let consumedUnconfirmed = false;
       let postTotal = preTotal;
       let verifyMatched = false;
+      let filenameEverVisible = false;
 
       while (Date.now() - pollStart < waitMs) {
         await new Promise((r) => setTimeout(r, 200));
@@ -120,20 +128,29 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
           func: pierceFilePoll,
           args: [filename, verifySelector ?? ""],
         });
-        const result = post[0]?.result as { total: number; stillHasOurFile: boolean; verifyOk: boolean } | undefined;
+        const result = post[0]?.result as { total: number; stillHasOurFile: boolean; verifyOk: boolean; filenameVisible: boolean } | undefined;
         if (!result) continue;
 
         postTotal = result.total;
         verifyMatched = result.verifyOk;
+        if (result.filenameVisible) filenameEverVisible = true;
 
         if (verifyMatched) { committed = true; break; }
         if (postTotal > preTotal) { committed = true; break; }
-        // Some uploaders consume the file: read it from .files and reset the input.
-        // If our file disappeared without an increase elsewhere, treat it as consumed.
+        // Some uploaders consume the file: read it from .files and reset the
+        // input (a File object moved into the framework's own state — a
+        // common, legitimate pattern). But that alone is NOT proof the file
+        // was accepted: a widget can equally read-then-discard on rejection
+        // (see ISSUE-2026-08-15-antibot-tenant-walls.md Class B). Require the
+        // filename to have shown up SOMEWHERE on the page (this tick or an
+        // earlier one) before trusting "consumed" as success.
         if (!result.stillHasOurFile && Date.now() - pollStart > 400) {
-          committed = true;
-          consumed = true;
-          break;
+          if (filenameEverVisible) {
+            committed = true;
+            consumed = true;
+            break;
+          }
+          consumedUnconfirmed = true; // keep polling — a late confirmation, or verifySelector/total, may still land
         }
       }
 
@@ -143,7 +160,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
       }
       noteParts.push(`page-level file count: ${preTotal} → ${postTotal}`);
       if (verifySelector) noteParts.push(`verifySelector "${verifySelector}" ${verifyMatched ? "matched" : "did not match"}`);
-      if (consumed) noteParts.push("file was consumed by the page (input was reset)");
+      if (consumed) noteParts.push("file was consumed by the page (input was reset) and the filename appeared on the page, confirming it landed");
       const note = noteParts.join("; ");
 
       if (committed) {
@@ -152,6 +169,15 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
           requestId: msg.requestId,
           success: true,
           message: `File "${filename}" uploaded — ${note}`,
+        };
+      }
+      if (consumedUnconfirmed) {
+        return {
+          type: "action_done",
+          requestId: msg.requestId,
+          success: false,
+          consumed_unconfirmed: true,
+          message: `File "${filename}" was accepted by the input then immediately cleared (input was reset), but the filename never appeared anywhere on the page and no file-count increase or verifySelector match was observed within ${waitMs}ms — ${note}. This looks like a silent rejection, not a successful upload (seen on react-dropzone-style widgets that read-then-discard on tenant-level rejection). Do NOT trust this as landed; verify with get_page_text/take_screenshot before retrying or reporting to the user.`,
         };
       }
       return {

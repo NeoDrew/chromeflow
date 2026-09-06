@@ -142,6 +142,44 @@ function getDocumentY(el: HTMLElement, doc: Document): number {
 }
 
 /**
+ * True for react-select's internal search/filter input (its `react-select-N-
+ * input` id is a stable, library-wide convention set by the library itself,
+ * not a site-specific hook — any site using react-select gets this exact id
+ * shape). Used to widen the label-climb depth and to redirect value-reading
+ * to the sibling display node below, both because this input is nested
+ * several DOM levels deeper (control -> value-container -> input) than a
+ * plain labelled input.
+ */
+function isReactSelectInput(el: Element): boolean {
+  return /^react-select-.*-input$/.test(el.id);
+}
+
+/**
+ * A react-select-style combobox keeps its OWN search input's `.value` empty
+ * after a real selection — the chosen option renders in a separate sibling
+ * node instead (react-select's stable "singleValue" CSS class, present
+ * across every site using the library, not one specific tenant). Reading
+ * only `el.value` makes a selection permanently invisible: not a timing gap
+ * that a re-call fixes, the input's value never carries it at all.
+ *
+ * Scoped to THIS field's own "value-container"/"control" wrapper (react-
+ * select's stable class convention — one such wrapper per field, never
+ * shared between two different fields). A page with several react-select
+ * controls (a country picker AND a language picker, say) means an
+ * unscoped ancestor walk would find the FIRST singleValue anywhere in a
+ * shared parent's subtree and misreport every OTHER field as holding the
+ * same value — reproduced live on a real multi-select form (Bending
+ * Spoons' application, six react-select fields on one page) where every
+ * field wrongly echoed the one field that actually had a selection.
+ */
+function deriveSelectDisplayValue(el: Element): string {
+  const control = el.closest('[class*="value-container"], [class*="valueContainer"], [class*="__control"], [class*="-control"]');
+  if (!control) return "";
+  const sv = control.querySelector('[class*="singleValue"], [class*="single-value"]');
+  return sv ? (sv.textContent ?? "").trim() : "";
+}
+
+/**
  * Derive a human-readable label for a form input by checking, in order:
  * placeholder, aria-label, associated <label>, and nearby parent text.
  */
@@ -154,8 +192,12 @@ export function deriveInputLabel(el: HTMLElement, doc: Document): string {
     if (lbl) label = (lbl.textContent ?? "").trim();
   }
   if (!label) {
+    // react-select's search input sits deeper below the field's <label>
+    // (control -> value-container -> input) than the general climb below
+    // reaches, so it needs more levels before giving up.
+    const maxDepth = isReactSelectInput(el) ? 10 : 4;
     let node: Element | null = el.parentElement;
-    for (let d = 0; d < 4 && node && node !== doc.body; d++) {
+    for (let d = 0; d < maxDepth && node && node !== doc.body; d++) {
       const heading = node.querySelector(
         "label, h1, h2, h3, h4, h5, legend, [class*='label']"
       );
@@ -327,6 +369,13 @@ function isFieldEmpty(el: HTMLElement): boolean {
   if (el instanceof HTMLInputElement) {
     if (el.type === "checkbox" || el.type === "radio") return !el.checked;
     if (el.type === "file") return !el.files || el.files.length === 0;
+    if (el.value.trim().length === 0) {
+      // A react-select input's own value stays "" after a real selection —
+      // check the sibling display node before calling the field empty (see
+      // deriveSelectDisplayValue). Otherwise only_empty wrongly lists an
+      // already-answered combobox as required-and-empty.
+      return deriveSelectDisplayValue(el).trim().length === 0;
+    }
     return el.value.trim().length === 0;
   }
   if (el instanceof HTMLTextAreaElement) {
@@ -395,6 +444,12 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
       value = el.checked ? "checked" : "unchecked";
     } else {
       value = (el as HTMLInputElement | HTMLTextAreaElement).value ?? "";
+      // react-select's search input reports "" here even after a real
+      // selection (the choice lives in a sibling "singleValue" node, not
+      // this input's own value) — see deriveSelectDisplayValue.
+      if (!value && el instanceof HTMLInputElement) {
+        value = deriveSelectDisplayValue(el);
+      }
     }
 
     const context = getNearestHeading(el, doc);

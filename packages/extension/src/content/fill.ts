@@ -47,7 +47,7 @@ export function fillInput(
   value: string,
   nth?: number,
   exact: boolean = false
-): { success: boolean; message: string; matched?: string } {
+): { success: boolean; message: string; matched?: string; needsTrustedKeystrokes?: boolean; resolvedSelector?: string } {
   const lower = textHint.toLowerCase().trim();
   const nthExplicit = typeof nth === "number" && nth >= 1;
 
@@ -101,6 +101,12 @@ export function fillInput(
       }
       if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) {
         if (isEditable(active)) {
+          // Try-then-verify, same as the findInput()-matched path below: try
+          // the native setter FIRST and only escalate to trusted keystrokes
+          // if the read-back shows it genuinely didn't land. See that path's
+          // comment for why escalating on marker-presence alone is wrong on
+          // tenants where it's the native setter that works and keystrokes
+          // that get dropped (S&P Global, PGIM).
           const nativeSetter = Object.getOwnPropertyDescriptor(
             active instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
             "value"
@@ -110,6 +116,10 @@ export function fillInput(
           active.dispatchEvent(new Event("input", { bubbles: true }));
           active.dispatchEvent(new Event("change", { bubbles: true }));
           const matched = describeElement(active);
+          if (active.value !== value) {
+            const escalation = checkTrustedKeystrokeEscalation(active, textHint, " (currently-focused input)");
+            if (escalation) return escalation;
+          }
           return { success: true, message: `Filled "${textHint}" → ${matched} (currently-focused input)`, matched };
         }
       }
@@ -213,6 +223,18 @@ export function fillInput(
   }
   const matched = describeElement(input);
   const matchNote = `matched via ${kind}`;
+  if (!accepted) {
+    // Only escalate to trusted keystrokes once the native setter has
+    // VERIFIABLY failed, not on the mere presence of a Workday-style marker.
+    // The two are NOT interchangeable: on some anti-bot-hardened tenants
+    // (S&P Global, PGIM) it's the OPPOSITE of the original Workday case —
+    // the native setter lands fine and CDP keystrokes are what gets dropped.
+    // Escalating unconditionally on the marker cost ~20 wasted tool calls
+    // chasing the wrong fix on those tenants before this was caught (see
+    // HINTS-REVIEW-2026-08-18.md #1/#4, ISSUE-2026-08-15-antibot-tenant-walls.md).
+    const escalation = checkTrustedKeystrokeEscalation(input, textHint, ` (${matchNote})`);
+    if (escalation) return escalation;
+  }
   return {
     success: true,
     matched,
@@ -220,6 +242,101 @@ export function fillInput(
       ? `Filled "${textHint}" → ${matched} (${matchNote})${normalizedNote}`
       : `Filled "${textHint}" → ${matched} (${matchNote}) — but value may not have been accepted by React (got back: "${confirmedValue.slice(0, 60)}")`,
   };
+}
+
+/**
+ * Some component libraries' controlled-input state sometimes only registers
+ * a REAL trusted keystroke sequence, not the native-setter + synthetic-event
+ * path fillInput() otherwise uses — that path can still set input.value
+ * correctly (visible on screen, execute_script confirms it) but the
+ * framework's own validation model never sees it, so the field reads back as
+ * required-but-empty only later, at step-transition (see
+ * ISSUE-2026-08-11-workday-fill-input-not-binding.md).
+ *
+ * This is NOT a reliable per-platform rule, only a per-TENANT one: on other
+ * anti-bot-hardened tenants running the SAME component library it's the
+ * opposite — the native setter lands fine and CDP-dispatched keystrokes are
+ * what gets silently dropped (see ISSUE-2026-08-15-antibot-tenant-walls.md's
+ * S&P Global / PGIM cases). So this function is only ever called AFTER the
+ * caller has already tried the native setter and read back a verified
+ * mismatch — never on marker-presence alone. Escalating unconditionally on
+ * the marker (the original design) cost ~20 wasted tool calls chasing the
+ * wrong fix on tenants where the native setter was the one that actually
+ * worked (HINTS-REVIEW-2026-08-18.md #1/#4).
+ *
+ * Still gated on Workday's own data-automation-id marker — a structural
+ * framework signature, not a domain check, so it also covers non-
+ * myworkdayjobs.com hosts running the same component library, and
+ * generalises to any framework that stamps the same convention. Returns null
+ * when no Workday marker is present. Returns a result to return immediately
+ * otherwise — either the needsTrustedKeystrokes escalation signal (this
+ * content script has no chrome.debugger access to type real keystrokes
+ * itself, so the background handler that does must do it), or an explicit
+ * failure when a marker was found but no stable selector could be derived to
+ * hand off.
+ */
+function checkTrustedKeystrokeEscalation(
+  input: HTMLInputElement | HTMLTextAreaElement,
+  textHint: string,
+  matchNote: string,
+): { success: boolean; needsTrustedKeystrokes?: boolean; resolvedSelector?: string; matched?: string; message: string } | null {
+  if (!input.closest("[data-automation-id]")) return null;
+  const matched = describeElement(input);
+  const resolvedSelector = canonicalSelector(input);
+  if (!resolvedSelector) {
+    return {
+      success: false,
+      matched,
+      message: `"${textHint}" resolved to a Workday-style field (${matched}${matchNote}) — the native-setter fill didn't verifiably land, and this field's validation model may only register trusted keystrokes, but no stable selector (id/name/data-automation-id/aria-label/placeholder) could be derived to hand off to type_text. Fill it directly: type_text(into_selector="<selector for this field>", text="...", clear_first=true).`,
+    };
+  }
+  return {
+    success: false,
+    needsTrustedKeystrokes: true,
+    resolvedSelector,
+    matched,
+    message: `"${textHint}" resolved to a Workday-style field (${matched}${matchNote}) — the native-setter fill didn't verifiably land, escalating to trusted keystrokes (type_text).`,
+  };
+}
+
+/**
+ * A stable, single, re-queryable CSS selector for an already-resolved
+ * element — needed so the background handler can hand the SAME element to
+ * type_text's into_selector after fillInput found it by hint/label/fuzzy
+ * matching (into_selector can't re-run that matching itself). Skips ids
+ * that look auto-generated so a re-render between resolving here and the
+ * background handler's follow-up query doesn't land on a stale/wrong node.
+ *
+ * Tries each candidate attribute in preference order and returns the first
+ * one that resolves UNIQUELY back to `el` (verified via the same shadow-
+ * piercing query the background handler's own into_selector resolution
+ * uses) — a repeated form section (e.g. two "Address Line 1" fields for
+ * Home/Mailing) can share an aria-label or placeholder with no id/name/
+ * data-automation-id on the leaf input, and handing back an ambiguous
+ * selector would let the background handler's fresh query land on the WRONG
+ * field. Returns null rather than a selector we can't confirm is unique.
+ */
+function canonicalSelector(el: HTMLElement): string | null {
+  const tag = el.tagName.toLowerCase();
+  const looksHashed = (s: string) => s.length > 12 && /\d/.test(s) && /[a-z]/i.test(s) && !/[\s_-]/.test(s);
+  const candidates: string[] = [];
+  const id = el.id;
+  if (id && !looksHashed(id)) { try { candidates.push(`#${CSS.escape(id)}`); } catch { candidates.push(`#${id}`); } }
+  const name = el.getAttribute("name");
+  if (name) candidates.push(`${tag}[name="${name.replace(/"/g, '\\"')}"]`);
+  const automationId = el.getAttribute("data-automation-id");
+  if (automationId) candidates.push(`${tag}[data-automation-id="${automationId.replace(/"/g, '\\"')}"]`);
+  const aria = el.getAttribute("aria-label");
+  if (aria) candidates.push(`${tag}[aria-label="${aria.replace(/"/g, '\\"')}"]`);
+  const ph = el.getAttribute("placeholder");
+  if (ph) candidates.push(`${tag}[placeholder="${ph.replace(/"/g, '\\"')}"]`);
+  for (const candidate of candidates) {
+    try {
+      const matches = queryAllDeep<Element>(document, candidate);
+      if (matches.length === 1 && matches[0] === el) return candidate;
+    } catch { /* invalid selector from an unusual attribute value — skip */ }
+  }
+  return null;
 }
 
 /**
