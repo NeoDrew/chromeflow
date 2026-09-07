@@ -212,14 +212,23 @@ Do NOT add new content to this file. Repo-developer concerns only.
 
 ## CI / publish credentials
 
-- **npm token**: lives as `NPM_TOKEN` masked + protected variable in
-  GitLab CI/CD Variables (Settings → CI/CD → Variables) on
-  `NeoDrew/chromeflow`. Granular, Bypass 2FA enabled, scoped to the
-  chromeflow package only, Read+Write. Expires every 90 days; rotate
-  via https://www.npmjs.com/settings/neodrew/tokens.
-- **OIDC**: GitLab CI signs npm publishes via Sigstore using GitLab's
-  OIDC tokens (`id_tokens.SIGSTORE_ID_TOKEN: aud: sigstore`). No
-  separate signing key.
+- **npm auth**: Trusted Publishing (OIDC) — configured on npmjs.com under
+  chromeflow's package Settings → Trusted Publisher, pointing at
+  `NeoDrew` / `chromeflow` / `.gitlab-ci.yml`. The pipeline requests an
+  `NPM_ID_TOKEN` (`aud: "npm:registry.npmjs.org"`), which npm CLI >= 11.5.1
+  auto-detects and exchanges for a short-lived publish credential — no
+  long-lived `NPM_TOKEN` variable, no manual rotation. Set up 2026-09-07,
+  replacing the old 90-day granular-token rotation (the token had also
+  started hitting npm's new restrictions on bypass-2FA tokens for
+  account changes and, from Jan 2027, direct publishing).
+- **OIDC**: GitLab CI also signs npm's provenance attestation via Sigstore
+  using a second OIDC token (`id_tokens.SIGSTORE_ID_TOKEN: aud: sigstore`).
+  Provenance generation itself is automatic once Trusted Publishing is
+  active — no `--provenance` flag needed on `npm publish`.
+- If Trusted Publishing ever needs re-establishing: npmjs.com →
+  chromeflow → Settings → Trusted Publisher → GitLab CI/CD. The
+  connection's provider/fields can't be edited after creation — delete
+  and recreate to change anything.
 
 ## Chrome Web Store distribution
 

@@ -1,18 +1,25 @@
 # GitLab CI: publish chromeflow to npm on push to main, when the publishable
 # surface changes. Mirrors the prior GitHub Actions workflow.
 #
-# Provenance is supplied via GitLab's OIDC ID token (aud=sigstore). Auth to
-# npm uses the NPM_TOKEN CI/CD variable (masked + protected). Trusted
-# Publishing on npmjs.com is a fast-follow that would let us drop NPM_TOKEN
-# entirely.
+# Auth to npm is via Trusted Publishing (OIDC) — configured on npmjs.com
+# under chromeflow's package settings, pointing at this exact
+# namespace/project/CI-file combination (NeoDrew/chromeflow/.gitlab-ci.yml).
+# No NPM_TOKEN needed: npm CLI >= 11.5.1 auto-detects the NPM_ID_TOKEN below
+# and exchanges it for a short-lived publish credential. Provenance is
+# generated automatically as part of that exchange (no --provenance flag
+# needed) but still needs SIGSTORE_ID_TOKEN for the actual attestation
+# signing step, per npm's own GitLab CI example.
+# https://docs.npmjs.com/trusted-publishers
 
 stages:
   - publish
 
 publish:
   stage: publish
-  image: node:20
+  image: node:22
   id_tokens:
+    NPM_ID_TOKEN:
+      aud: "npm:registry.npmjs.org"
     SIGSTORE_ID_TOKEN:
       aud: sigstore
   rules:
@@ -22,6 +29,11 @@ publish:
         - packages/plugin/scripts/build-server.sh
         - CLAUDE.md
   script:
+    # Trusted publishing needs npm CLI >= 11.5.1 — don't rely on whatever
+    # version happens to ship in the node:22 image.
+    - npm install -g npm@latest
+    - npm --version
+
     # Install deps at repo root so the plugin's build-server.sh finds esbuild.
     # Use `npm install` (not `npm ci`) because nested package-lock files drift.
     # `npm rebuild` re-runs the platform-resolution for esbuild — without it the
@@ -54,5 +66,4 @@ publish:
         exit 0
       fi
       echo "Will publish chromeflow@$CURRENT (npm has $PUBLISHED)"
-      echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > ~/.npmrc
-      npm publish --access public --provenance
+      npm publish --access public
