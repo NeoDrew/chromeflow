@@ -28,6 +28,7 @@ publish:
         - packages/mcp-server/**/*
         - packages/plugin/scripts/build-server.sh
         - CLAUDE.md
+        - .gitlab-ci.yml
   script:
     # Trusted publishing needs npm CLI >= 11.5.1 — don't rely on whatever
     # version happens to ship in the node:22 image.
@@ -66,4 +67,5 @@ publish:
         exit 0
       fi
       echo "Will publish chromeflow@$CURRENT (npm has $PUBLISHED)"
+      if [ -n "$NPM_ID_TOKEN" ]; then echo "NPM_ID_TOKEN present, length=${#NPM_ID_TOKEN}"; else echo "NPM_ID_TOKEN MISSING"; fi
       npm publish --access public
