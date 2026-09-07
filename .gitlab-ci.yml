@@ -68,4 +68,10 @@ publish:
       fi
       echo "Will publish chromeflow@$CURRENT (npm has $PUBLISHED)"
       if [ -n "$NPM_ID_TOKEN" ]; then echo "NPM_ID_TOKEN present, length=${#NPM_ID_TOKEN}"; else echo "NPM_ID_TOKEN MISSING"; fi
-      npm publish --access public
+      echo "GITLAB_CI=$GITLAB_CI CI_SERVER_URL=$CI_SERVER_URL CI_PROJECT_PATH=$CI_PROJECT_PATH CI_CONFIG_PATH=$CI_CONFIG_PATH"
+      npm publish --access public --loglevel silly > /tmp/publish.log 2>&1; EXIT=$?
+      echo "--- relevant lines ---"
+      grep -iE "oidc|trusted|ideal|token|auth" /tmp/publish.log || true
+      echo "--- full log ---"
+      cat /tmp/publish.log
+      exit $EXIT
