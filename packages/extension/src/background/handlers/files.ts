@@ -2,7 +2,7 @@
 // switch. Each function IS the original case body, unchanged.
 import type { McpMsg } from "./types";
 import { getActiveTab, forwardToContentScript } from "../state";
-import { withDebugger, pierceFileCount, pierceFilePoll, findShadowMarkedBackendNodeId } from "../cdp";
+import { withDebugger, pierceFileCount, pierceFilePoll, findShadowMarkedBackendNodeId, freshTargetPoint, dispatchDragDropFile } from "../cdp";
 import { SET_FILE_FROM_CONTENT } from "../../connections";
 
 export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unknown> {
@@ -15,9 +15,16 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
         type: "tag_file_input",
         requestId: msg.requestId,
         hint: msg.hint,
-      }) as { found: boolean; message?: string; attr?: string; matched_desc?: string; matched_via?: string; zero_file_inputs_on_page?: boolean };
+      }) as { found: boolean; message?: string; attr?: string; matched_desc?: string; matched_via?: string; zero_file_inputs_on_page?: boolean; drop_zone_tagged?: boolean; drop_zone_attr?: string };
 
       if (!tagResult.found) {
+        // No <input type=file> anywhere, but a drop-zone candidate was tagged
+        // AND we have a real on-disk path — CDP drag delivery needs a path,
+        // not bytes, so inline-content mode can't use this fallback. Attempt
+        // it instead of failing outright.
+        if (tagResult.zero_file_inputs_on_page && tagResult.drop_zone_tagged && tagResult.drop_zone_attr && typeof msg.filePath === "string" && msg.filePath) {
+          return await handleDropZoneFileUpload(tab, msg, tagResult.drop_zone_attr);
+        }
         return {
           type: "action_done",
           requestId: msg.requestId,
@@ -186,4 +193,77 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
         success: false,
         message: `File "${filename}" set on input but the page did not show an observable change within ${waitMs}ms — ${note}. The page may have rejected the upload (size, type, format), or the change handler may be slower than the wait window. Use verifySelector or get_page_text to confirm.`,
       };
+}
+
+// Fallback path for widgets with zero <input type=file> anywhere (built on
+// window.showOpenFilePicker() — see content/ops/files.ts's
+// findDropZoneCandidate). Delivers the file via a simulated OS-level drag-
+// and-drop onto the tagged drop-zone element instead of DOM.setFileInputFiles,
+// since there's no DOM input to point that at.
+async function handleDropZoneFileUpload(tab: chrome.tabs.Tab, msg: McpMsg, dropZoneAttr: string): Promise<unknown> {
+  const tabId = tab.id!;
+  const filePath = msg.filePath as string;
+  const filename = filePath.split("/").pop() ?? "";
+  const waitMs = (msg.waitMs as number | undefined) ?? 3000;
+  const verifySelector = msg.verifySelector as string | undefined;
+
+  try {
+    const point = await freshTargetPoint(tabId, dropZoneAttr);
+    if (!point) {
+      return {
+        type: "action_done",
+        requestId: msg.requestId,
+        success: false,
+        message: `Located a drop-zone candidate but it disappeared before its coordinates could be read. The page may render its upload widget lazily — try again once it's visible.`,
+      };
+    }
+    await dispatchDragDropFile(tabId, point.x, point.y, filePath);
+  } finally {
+    await forwardToContentScript(tab, { type: "untag_file_input", requestId: msg.requestId }).catch(() => {});
+  }
+
+  // Deliberately NOT pierceFilePoll (the shadow-piercing helper the normal
+  // input-based path above uses): empirically, injecting it via
+  // chrome.scripting.executeScript in THIS call pattern silently returned no
+  // result on every poll tick (confirmed 0/3 across 3s/7s/15s waits, logged
+  // via a temporary in-page console probe on 2026-09-09) even though the page
+  // had visibly updated within milliseconds — while this plain, non-shadow-
+  // piercing check succeeded 3/3. Root cause not fully isolated (suspected:
+  // chrome.dom.openOrClosedShadowRoot behaving differently for a function
+  // re-injected repeatedly in a tight loop vs. pierceFilePoll's proven call
+  // site in the input-based path above), so the pragmatic fix is a simpler
+  // check rather than a herculean chase into an intermittent extension-API
+  // edge case. Trade-off: a drop-zone widget that renders its post-upload
+  // filename/thumbnail ONLY inside a shadow root won't be detected here even
+  // though input-based uploads on shadow-rooted inputs still work fine above.
+  const pollStart = Date.now();
+  let committed = false;
+  let verifyMatched = false;
+  while (Date.now() - pollStart < waitMs) {
+    await new Promise((r) => setTimeout(r, 200));
+    const post = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (name: string, sel: string) => {
+        const bodyText = document.body ? (document.body.textContent ?? "") : "";
+        const filenameVisible = name ? bodyText.includes(name) : false;
+        const verifyOk = sel ? document.querySelectorAll(sel).length > 0 : false;
+        return { verifyOk, filenameVisible };
+      },
+      args: [filename, verifySelector ?? ""],
+    });
+    const result = post[0]?.result as { verifyOk: boolean; filenameVisible: boolean } | undefined;
+    if (!result) continue;
+    if (result.verifyOk || result.filenameVisible) { committed = true; verifyMatched = result.verifyOk; break; }
+  }
+
+  const note = `delivered via simulated drag-and-drop onto a located drop zone (no DOM file input existed on this page)${verifySelector ? `; verifySelector "${verifySelector}" ${verifyMatched ? "matched" : "did not match"}` : ""}`;
+  if (committed) {
+    return { type: "action_done", requestId: msg.requestId, success: true, message: `File "${filename}" uploaded — ${note}.` };
+  }
+  return {
+    type: "action_done",
+    requestId: msg.requestId,
+    success: false,
+    message: `File "${filename}" was dropped onto a located drop zone but the page did not show an observable change within ${waitMs}ms (no filename text appeared${verifySelector ? ", verifySelector did not match" : ""}). The drop may have been rejected, or the drop-zone candidate chromeflow found may not be this widget's actual drop target — verify with get_page_text/take_screenshot before retrying.`,
+  };
 }

@@ -207,6 +207,45 @@ export async function dispatchHumanMouseClick(
 }
 
 /**
+ * Deliver a real on-disk file to a drop-zone element via CDP's native drag
+ * simulation, for widgets with zero <input type=file> anywhere (built on
+ * window.showOpenFilePicker(), the File System Access API, which has no
+ * scriptable DOM surface — see content/ops/files.ts's findDropZoneCandidate).
+ * Input.dispatchDragEvent is the same CDP Input domain dispatchHumanMouseClick
+ * and dispatchKeyboardActivation already use for isTrusted=true events, so a
+ * drop delivered this way is a real, trusted DragEvent carrying a real File
+ * backed by `filePath` — not a synthetic in-page DataTransfer construction,
+ * which only works when a DOM element exists to assign .files on in the first
+ * place. dragOperationsMask: 1 is "copy" (the Blink DragOperation bitmask —
+ * Copy=1, Link=2, Move=16), the operation a file-drop expects. No
+ * setInterceptDrags call needed: that CDP method is for observing/replaying a
+ * REAL user-initiated drag, a separate workflow from synthesizing one outright
+ * (see chromedevtools.github.io/devtools-protocol/tot/Input/#method-dispatchDragEvent).
+ */
+export async function dispatchDragDropFile(
+  tabId: number,
+  cx: number,
+  cy: number,
+  filePath: string,
+): Promise<void> {
+  await withDebugger(tabId, async () => {
+    const dbg = chrome.debugger as unknown as {
+      sendCommand: (t: { tabId: number }, method: string, params?: object) => Promise<unknown>;
+    };
+    const data = { items: [], files: [filePath], dragOperationsMask: 1 };
+    await dbg.sendCommand({ tabId }, "Input.dispatchDragEvent", { type: "dragEnter", x: cx, y: cy, data });
+    await new Promise((r) => setTimeout(r, 60 + Math.random() * 40));
+    await dbg.sendCommand({ tabId }, "Input.dispatchDragEvent", { type: "dragOver", x: cx, y: cy, data });
+    await new Promise((r) => setTimeout(r, 60 + Math.random() * 40));
+    await dbg.sendCommand({ tabId }, "Input.dispatchDragEvent", { type: "drop", x: cx, y: cy, data });
+    // Short tail, matching dispatchHumanMouseClick's convention, so an
+    // immediately-firing beforeunload dialog is still caught by the outer
+    // handler's listener before this function returns.
+    await new Promise((r) => setTimeout(r, 200));
+  });
+}
+
+/**
  * Re-read the tagged click target's CURRENT viewport center, scrolling it into
  * view first if it sits outside the viewport. The coordinate captured by
  * prepareClickTarget can go stale before the CDP click dispatches: a tall modal
