@@ -25744,7 +25744,7 @@ function registerTypingTools(server, bridge, flowStore) {
 function registerFileInputTools(server, bridge) {
   server.tool(
     "set_file_input",
-    `Upload a file to a file input \u2014 works even when the input is hidden behind a custom drag-and-drop zone. Returns success=true only after an observable commit: file count goes up, verify_selector appears, OR the input is reset AND the filename shows up somewhere on the page. An input reset with NO filename ever appearing anywhere returns success=false with a "silent rejection" message (some drag-and-drop widgets read then discard a file on tenant-level rejection with zero visible error) \u2014 do not trust that case as landed even though the input accepted the file momentarily. If there is no input[type=file] anywhere on the page (light or shadow DOM, checked for ALL hints, not just yours), the widget likely opens the browser-native file picker via window.showOpenFilePicker() instead of a classic file input \u2014 there is no DOM element for chromeflow to target in that case, so stop retrying with different hints and report it back. See CLAUDE.md for batch-upload guidance.
+    `Upload a file to a file input \u2014 works even when the input is hidden behind a custom drag-and-drop zone. Returns success=true only after an observable commit: file count goes up, verify_selector appears, OR the input is reset AND the filename shows up somewhere on the page. An input reset with NO filename ever appearing anywhere returns success=false with a "silent rejection" message (some drag-and-drop widgets read then discard a file on tenant-level rejection with zero visible error) \u2014 do not trust that case as landed even though the input accepted the file momentarily. If there is no input[type=file] anywhere on the page (light or shadow DOM, checked for ALL hints, not just yours), the widget likely opens the browser-native file picker via window.showOpenFilePicker() instead of a classic file input \u2014 chromeflow automatically tries a simulated drag-and-drop delivery onto a located drop-zone element instead (this fallback needs file_path, not file_content \u2014 it delivers a real on-disk file via a CDP-level drag simulation, not an in-page DataTransfer). If no drop-zone candidate can be found either, there is truly no automatable surface: stop retrying with different hints and report it back. See CLAUDE.md for batch-upload guidance.
 
 Two ways to supply the file:
 - file_path (CDP mode): an absolute path on the machine running this server. Reaches both open AND closed shadow roots.
@@ -26780,7 +26780,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.12.6" : "dev";
+var PACKAGE_VERSION = true ? "0.12.7" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

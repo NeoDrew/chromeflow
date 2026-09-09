@@ -68,6 +68,7 @@ export const markerIds = {
   animationPulse: () => `${prefix()}-pulse`,
   animationFade: () => `${prefix()}-fade`,
   fileTargetAttr: () => `data-${prefix()}-file`,
+  dropZoneAttr: () => `data-${prefix()}-drop`,
   clickTargetAttr: () => `data-${prefix()}-click`,
   preCheckedAttr: () => `data-${prefix()}-prech`,
   preDimensionsAttr: () => `data-${prefix()}-predim`,

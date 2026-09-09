@@ -13,6 +13,7 @@ export {
   dispatchTapGesture,
   dispatchKeyboardActivation,
   dispatchHumanMouseClick,
+  dispatchDragDropFile,
   freshTargetPoint,
 } from "./cdp/dispatch";
 export {

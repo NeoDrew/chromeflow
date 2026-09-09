@@ -3,6 +3,45 @@ import { markerIds } from "../../markers.js";
 import { type SetFileFromContentMessage } from "../../connections.js";
 import type { IncomingMessage } from "./frame-util.js";
 
+// Common upload-widget phrasing, used only when the caller passed no hint (or
+// the hint didn't match anything) — deliberately just a vocabulary of the
+// phrases these widgets themselves render ("Drag and drop", "browse files",
+// "Choose file"), not a site-specific class/attribute name, so it generalizes
+// across whatever framework built the widget.
+const DROP_ZONE_TEXT_RE = /drag.{0,10}(and )?drop|drop.{0,10}(file|here|zone)|browse.{0,10}(file|computer)|choose file|select file|upload.{0,15}(file|resume|document|cv)/i;
+
+// Candidate tags for a drop-zone element: interactive-shaped elements plus
+// generic div/span, since most of these widgets are custom-styled containers
+// with no semantic role. Bounded (not "*") and length-capped in the caller so
+// this doesn't tag some giant page-level wrapper whose text happens to
+// contain a match.
+const DROP_ZONE_SELECTOR = 'button, [role="button"], a, label, [class*="drop" i], [class*="upload" i], div, span';
+
+/**
+ * Locate a plausible drag-and-drop target for a page with zero <input
+ * type=file> elements. Only called when window.showOpenFilePicker() exists
+ * (see caller) — the two-part signal that a classic set_file_input can never
+ * work here. Picks the SMALLEST visible element whose own text/aria-label
+ * matches the hint (or, with no hint, common upload-widget phrasing), so a
+ * match on a large ancestor wrapper doesn't win over the actual widget.
+ */
+function findDropZoneCandidate(hint: string): HTMLElement | null {
+  const hintLower = hint.toLowerCase();
+  let best: HTMLElement | null = null;
+  let bestArea = Infinity;
+  for (const el of queryAllDeep<HTMLElement>(document, DROP_ZONE_SELECTOR)) {
+    const ownText = (el.getAttribute("aria-label") ?? el.textContent ?? "").replace(/\s+/g, " ").trim();
+    if (!ownText || ownText.length > 150) continue;
+    const matches = hintLower ? ownText.toLowerCase().includes(hintLower) : DROP_ZONE_TEXT_RE.test(ownText);
+    if (!matches) continue;
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) continue;
+    const area = rect.width * rect.height;
+    if (area < bestArea) { best = el; bestArea = area; }
+  }
+  return best;
+}
+
 export function opTagFileInput(msg: IncomingMessage): unknown {
   const hint = ((msg.hint as string) ?? "").trim();
   const hintLower = hint.toLowerCase();
@@ -100,13 +139,35 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
     // structurally so the caller stops retrying hints and reports/hands off
     // instead of burning calls on a widget with no automatable surface.
     const hasFileSystemAccessApi = typeof (window as unknown as { showOpenFilePicker?: unknown }).showOpenFilePicker === "function";
+    // These widgets almost always wire a standard HTML5 drag-and-drop listener
+    // onto the same clickable surface as a redundant/accessible upload path
+    // (react-dropzone, Uppy, FilePond, and hand-rolled equivalents all do this)
+    // — that path doesn't go through showOpenFilePicker() at all, so a drop
+    // event can still deliver a file with no DOM input element in sight. Tag a
+    // candidate drop-zone element so background.ts can attempt a CDP-level
+    // Input.dispatchDragEvent delivery (see ISSUE-2026-09-07-tradinghub-no-
+    // file-input.md).
+    const dropZone = hasFileSystemAccessApi ? findDropZoneCandidate(hint) : null;
+    if (dropZone) {
+      const dropAttr = markerIds.dropZoneAttr();
+      dropZone.setAttribute(dropAttr, "true");
+      return {
+        type: "action_done",
+        requestId: msg.requestId,
+        found: false,
+        zero_file_inputs_on_page: true,
+        drop_zone_tagged: true,
+        drop_zone_attr: dropAttr,
+        message: `No file input found matching "${msg.hint}", and there is no input[type=file] anywhere on the page — this widget most likely opens the browser-native file picker via window.showOpenFilePicker() (the File System Access API), which leaves no DOM element to target directly. Found a plausible drop-zone element instead; chromeflow will attempt a simulated drag-and-drop file delivery onto it. This only works with file_path (an on-disk path) — file_content/inline mode cannot use this fallback.`,
+      };
+    }
     return {
       type: "action_done",
       requestId: msg.requestId,
       found: false,
       zero_file_inputs_on_page: true,
       message: hasFileSystemAccessApi
-        ? `No file input found matching "${msg.hint}", and there is no input[type=file] anywhere on the page (light or shadow DOM) — this is not a hint-matching problem. This widget most likely opens the browser-native file picker via window.showOpenFilePicker() (the File System Access API) instead of a classic file input, which leaves no DOM element for chromeflow to target. There is currently no automated way to supply a file to this kind of widget. Do not keep retrying with different hints; report this back, or ask the user to select the file manually.`
+        ? `No file input found matching "${msg.hint}", and there is no input[type=file] anywhere on the page (light or shadow DOM) — this is not a hint-matching problem. This widget most likely opens the browser-native file picker via window.showOpenFilePicker() (the File System Access API) instead of a classic file input, which leaves no DOM element for chromeflow to target, and no drag-and-drop zone could be found either. There is currently no automated way to supply a file to this kind of widget. Do not keep retrying with different hints; report this back, or ask the user to select the file manually.`
         : `No file input found matching "${msg.hint}", and there is no input[type=file] anywhere on the page (light or shadow DOM). Do not keep retrying with different hints; the target may be rendered later, behind an interaction, or the page may have no automatable upload surface at all.`,
     };
   }
@@ -119,10 +180,14 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
 }
 
 export function opUntagFileInput(msg: IncomingMessage): unknown {
-  const attr = markerIds.fileTargetAttr();
-  queryAllDeep(document, `[${attr}]`).forEach((el) => {
-    el.removeAttribute(attr);
-  });
+  // Strips both marker attrs unconditionally — a given upload attempt only
+  // ever sets one of the two (file input OR drop zone), so clearing both is
+  // simpler than threading which path fired back into the untag call.
+  for (const attr of [markerIds.fileTargetAttr(), markerIds.dropZoneAttr()]) {
+    queryAllDeep(document, `[${attr}]`).forEach((el) => {
+      el.removeAttribute(attr);
+    });
+  }
   return { type: "action_done", requestId: msg.requestId };
 }
 
