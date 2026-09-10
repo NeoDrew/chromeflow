@@ -79,7 +79,7 @@ export type ServerMessage =
   | { type: "set_file_input"; requestId: string; hint: string; filePath?: string; fileContent?: string; fileName?: string; mimeType?: string; waitMs?: number; verifySelector?: string }
   | { type: "type_text"; requestId: string; text: string; frame?: string; into_selector?: string; clear_first?: boolean }
   | { type: "inspect_request_headers"; requestId: string; url: string; new_tab?: boolean }
-  | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string }
+  | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string; nth?: number }
   | {
       type: "react_call_prop";
       requestId: string;
