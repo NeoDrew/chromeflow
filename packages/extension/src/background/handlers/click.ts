@@ -40,6 +40,9 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         skipClick?: boolean;
         nextCandidate?: string;
         scope_missed?: boolean;
+        ambiguous_match?: boolean;
+        match_count?: number;
+        other_matches?: string[];
         target_disabled?: boolean;
         disabled_state?: {
           disabled: boolean;
@@ -134,7 +137,15 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
       // The page is already in the desired state, so firing the click would
       // toggle it OFF on React-controlled forms.
       if (prep.skipClick) {
-        return { type: "click_element_response", success: true, message: prep.message, before_url, after_url: before_url, navigated: false };
+        return {
+          type: "click_element_response",
+          success: true,
+          message: prep.message,
+          before_url,
+          after_url: before_url,
+          navigated: false,
+          ...(prep.ambiguous_match ? { ambiguous_match: true, match_count: prep.match_count, other_matches: prep.other_matches } : {}),
+        };
       }
 
       // Pre-flight disabled handling. When the resolved match is disabled and
@@ -1270,6 +1281,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           ...(recoveredVia ? { recovered_via: recoveredVia } : {}),
           ...(untilResult.request_in_flight ? { request_in_flight: true } : {}),
           ...(untilResult.dialog ? { dialog_opened: untilResult.dialog } : {}),
+          ...(prep.ambiguous_match ? { ambiguous_match: true, match_count: prep.match_count, other_matches: prep.other_matches } : {}),
         };
       }
 
@@ -1281,8 +1293,46 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         message += `\n\nPAGE ALERT: "${alertMessage}" — the page showed a dialog with this message. Read it and act on it before proceeding (e.g. fill a missing field, uncheck a checkbox).`;
       }
 
-      return { type: "click_element_response", success: true, message, before_url, after_url, navigated, focused_after: probe.focused_after, ...(recoveredVia ? { recovered_via: recoveredVia } : {}) };
+      if (prep.ambiguous_match) {
+        message += `\n\n⚠ selector matched ${prep.match_count} elements — clicked the first (nth=${msg.nth ?? 1}). Other matches: ${(prep.other_matches ?? []).join("; ") || "(none captured)"}. If this selector was meant to target ONE specific control, duplicate/repeated elements on the page mean this click may have hit the wrong copy — verify the result, or re-issue with within_selector/near_text/nth to disambiguate.`;
+      }
+
+      return {
+        type: "click_element_response",
+        success: true,
+        message,
+        before_url,
+        after_url,
+        navigated,
+        focused_after: probe.focused_after,
+        ...(recoveredVia ? { recovered_via: recoveredVia } : {}),
+        ...(prep.ambiguous_match ? { ambiguous_match: true, match_count: prep.match_count, other_matches: prep.other_matches } : {}),
+      };
       }; // end runClickFlow
+
+      // Safety net for the ambiguous-match warning: several of runClickFlow's
+      // internal return points (the various "no observable activity" /
+      // silently_rejected branches for each fallback stage) were written
+      // before this signal existed and don't append it themselves. Rather
+      // than touch every one of those branches individually, catch anything
+      // that slipped through here — this is exactly the case that matters
+      // MOST (a click that looks like it failed might actually have hit the
+      // WRONG duplicate). Guarded by a distinctive substring so a branch that
+      // ALREADY appended the note (the success paths above do) doesn't get it
+      // twice.
+      const withAmbiguityNote = (res: unknown): unknown => {
+        if (!prep.ambiguous_match || typeof res !== "object" || res === null) return res;
+        const r = res as { message?: unknown; ambiguous_match?: boolean };
+        if (r.ambiguous_match) return res; // already annotated
+        const note = `\n\n⚠ selector matched ${prep.match_count} elements — this call resolved to the first (nth=${msg.nth ?? 1}). Other matches: ${(prep.other_matches ?? []).join("; ") || "(none captured)"}. Duplicate/repeated elements on the page mean this may have targeted the wrong copy — verify the result, or re-issue with within_selector/near_text/nth to disambiguate.`;
+        return {
+          ...r,
+          message: typeof r.message === "string" ? r.message + note : r.message,
+          ambiguous_match: true,
+          match_count: prep.match_count,
+          other_matches: prep.other_matches,
+        };
+      };
 
       // Wrap the entire post-prep flow in an outer withDebugger when CDP is
       // available, so the beforeunload listener registered inside stays armed
@@ -1292,11 +1342,11 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         return await withDebugger(tabId, async () => {
           const buCtx = await armBeforeunloadDismissOnAttachedTab(tabId);
           try {
-            return await runClickFlow();
+            return withAmbiguityNote(await runClickFlow());
           } finally {
             buCtx.release();
           }
         });
       }
-      return await runClickFlow();
+      return withAmbiguityNote(await runClickFlow());
 }

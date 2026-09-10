@@ -25475,13 +25475,14 @@ function registerSnapshotTools(server, bridge) {
       } catch {
         return { content: [{ type: "text", text: "interactive_snapshot is unavailable (reload/update the chromeflow extension). Fall back to get_page_text + find_text for now." }] };
       }
-      const items = response.items ?? [];
+      const r = response;
+      const items = r.items ?? [];
       if (items.length === 0) {
         return { content: [{ type: "text", text: "No actionable elements found (page may render inside a cross-origin iframe, or content is non-interactive)." }] };
       }
-      const lines = items.map((it, i) => `${i + 1}. [${it.role}]${it.name ? " " + it.name : ""} \u2014 ${it.selector}`);
+      const lines = items.map((it, i) => `${i + 1}. [${it.role}]${it.name ? " " + it.name : ""} \u2014 ${it.selector}${it.duplicate_id ? "  \u26A0duplicate id" : ""}`);
       return { content: [{ type: "text", text: `Actionable elements (${items.length}):
-${lines.join("\n")}` }] };
+${lines.join("\n")}${r.warning ?? ""}` }] };
     }
   );
 }
@@ -25681,7 +25682,8 @@ To fill: fill_input("${r2.fields[0].label}", "<value>")` }] };
         const val = f.value ? ` [currently: "${f.value}"]` : "";
         const ctx = f.context ? ` [under: "${f.context}"]` : "";
         const req = f.required ? " *required" : "";
-        return `${f.index}. [${f.type}] "${f.label}"${req}${val}${ctx} \u2014 y:${f.y}`;
+        const dup = f.duplicate_id ? "  \u26A0duplicate id" : "";
+        return `${f.index}. [${f.type}] "${f.label}"${req}${val}${ctx} \u2014 y:${f.y}${dup}`;
       });
       const header = only_empty ? `Required-but-empty fields (${fields.length}):` : `Form fields (${fields.length} total, sorted top-to-bottom):`;
       return { content: [{ type: "text", text: `${header}
@@ -26780,7 +26782,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.12.7" : "dev";
+var PACKAGE_VERSION = true ? "0.12.8" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);
