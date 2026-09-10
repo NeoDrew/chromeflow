@@ -157,6 +157,8 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
       // doesn't run inside iframe documents.
       const tagId = `chromeflow-react-target-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
       let taggedInShadow = false;
+      let ambiguousMatch = false;
+      let matchCount: number | undefined;
       if (!frameSelector) {
         try {
           const tagResult = await forwardToContentScript(tab, {
@@ -164,9 +166,13 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
             requestId: msg.requestId + "-tag",
             selector,
             tagId,
-          }) as { tagged: boolean; in_shadow: boolean };
+          }) as { tagged: boolean; in_shadow: boolean; ambiguous_match?: boolean; match_count?: number };
           if (tagResult?.tagged) {
             taggedInShadow = !!tagResult.in_shadow;
+            if (tagResult.ambiguous_match) {
+              ambiguousMatch = true;
+              matchCount = tagResult.match_count;
+            }
           }
         } catch {
           // Tagging is best-effort; fall back to plain doc.querySelector below
@@ -216,7 +222,16 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
             };
             el = findTagged(doc);
           }
-          if (!el) el = doc.querySelector(sel);
+          // fallbackMatchCount is only meaningful when the tag-based lookup
+          // above didn't already resolve `el` (frame path, or tagging
+          // failed) — that's the only case this querySelectorAll reflects
+          // which element `el` ends up being.
+          let fallbackMatchCount: number | undefined;
+          if (!el) {
+            const all = doc.querySelectorAll(sel);
+            fallbackMatchCount = all.length;
+            el = all[0] ?? null;
+          }
           if (!el) return { ok: false, reason: `selector "${sel}" not found${frameSel ? ` inside iframe "${frameSel}"` : ""}` };
 
           // Use the prototype FROM THE INSTANCE so the setter is callable on
@@ -250,6 +265,7 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
             id: el.id ?? "",
             type: (el as HTMLInputElement).type ?? "",
             readBack: typeof readBack === "string" ? readBack : String(readBack),
+            ...(fallbackMatchCount && fallbackMatchCount > 1 ? { fallback_match_count: fallbackMatchCount } : {}),
           };
         },
         args: [selector, value, frameSelector, tagId],
@@ -257,7 +273,7 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
 
       const result = r[0]?.result as
         | { ok: false; reason: string }
-        | { ok: true; reason: string; tag: string; name: string; id: string; type: string; readBack: string }
+        | { ok: true; reason: string; tag: string; name: string; id: string; type: string; readBack: string; fallback_match_count?: number }
         | undefined;
       if (!result) return { type: "action_done", requestId: msg.requestId, success: false, message: "no response from page" };
       if (!result.ok) return { type: "action_done", requestId: msg.requestId, success: false, message: result.reason };
@@ -281,13 +297,19 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
       }
       const desc = `<${result.tag}${result.type ? ` type="${result.type}"` : ""}${result.name ? ` name="${result.name}"` : ""}${result.id ? ` id="${result.id}"` : ""}>`;
       const shadowNote = taggedInShadow ? " (resolved inside shadow DOM)" : "";
+      const effectiveMatchCount = matchCount ?? result.fallback_match_count;
+      const isAmbiguous = ambiguousMatch || (result.fallback_match_count ?? 0) > 1;
+      const ambiguousNote = isAmbiguous
+        ? `\n\n⚠ selector "${selector}" matched ${effectiveMatchCount} elements — set the first. Duplicate elements sharing this selector (e.g. a page rendering two copies of the same form, see ISSUE-2026-09-10-workday-duplicate-id-colliding-create-account-form.md) mean this may have landed in a stale/wrong copy. Verify the result, or scope with a more specific selector.`
+        : "";
       return {
         type: "action_done",
         requestId: msg.requestId,
         success: true,
-        message: accepted
+        message: (accepted
           ? `Set ${desc} to "${value.slice(0, 60)}"${frameSelector ? ` (inside iframe "${frameSelector}")` : ""}${shadowNote}${normalizedNote}`
-          : `Set ${desc} via native setter, but React reported back "${result.readBack.slice(0, 60)}" — the page may be controlling the value externally.${shadowNote}`,
+          : `Set ${desc} via native setter, but React reported back "${result.readBack.slice(0, 60)}" — the page may be controlling the value externally.${shadowNote}`) + ambiguousNote,
+        ...(isAmbiguous ? { ambiguous_match: true, match_count: effectiveMatchCount } : {}),
       };
 }
 

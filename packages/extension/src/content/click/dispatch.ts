@@ -42,6 +42,9 @@ export async function prepareClickTarget(
   skipClick?: boolean;
   nextCandidate?: string;
   scope_missed?: boolean;
+  ambiguous_match?: boolean;
+  match_count?: number;
+  other_matches?: string[];
   target_disabled?: boolean;
   disabled_state?: {
     disabled: boolean;
@@ -103,6 +106,9 @@ export async function prepareClickTarget(
   let el: Element | undefined;
   let nextCandidate: string | undefined;
   let descriptor: string;
+  let ambiguousMatch: boolean | undefined;
+  let matchCount: number | undefined;
+  let otherMatches: string[] | undefined;
   if (selector) {
     const matches = queryAllDeep(scope, selector);
     const idx = (nth && nth >= 1 ? nth : 1) - 1;
@@ -110,6 +116,24 @@ export async function prepareClickTarget(
     descriptor = `selector "${selector}"`;
     if (!el) {
       return { success: false, message: `No element matched ${descriptor}${matches.length > 0 ? ` at nth=${nth ?? 1} (found ${matches.length} total)` : ""}` };
+    }
+    // A selector that resolves to 2+ elements is a real correctness risk, not
+    // just noise: two DUPLICATE forms sharing element ids (Workday's Create
+    // Account step rendering two full copies of the same fields, see
+    // ISSUE-2026-09-10-workday-duplicate-id-colliding-create-account-form.md)
+    // silently click into whichever copy happens to be first in document
+    // order, which can be a stale/inert clone. Surfacing the count (and a
+    // peek at the other candidates) costs nothing on the common, harmless
+    // case of N interchangeable list-row buttons, but is the one signal that
+    // would have made the duplicate-form problem visible on the FIRST call
+    // instead of after ~15 blind attempts.
+    if (matches.length > 1) {
+      ambiguousMatch = true;
+      matchCount = matches.length;
+      otherMatches = matches
+        .filter((_, i) => i !== idx)
+        .slice(0, 4)
+        .map((m) => describeCandidate(m, selector));
     }
   } else {
     const lower = (textHint ?? "").toLowerCase().trim();
@@ -203,6 +227,9 @@ export async function prepareClickTarget(
     height: rect.height,
     label,
     nextCandidate,
+    ambiguous_match: ambiguousMatch,
+    match_count: matchCount,
+    other_matches: otherMatches,
     target_disabled: targetDisabled || undefined,
     disabled_state: targetDisabled ? disabledState : undefined,
   };

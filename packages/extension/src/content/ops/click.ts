@@ -95,7 +95,17 @@ export function opTagForReact(msg: IncomingMessage): unknown {
       cur = cur.parentNode;
     }
     el.setAttribute("data-chromeflow-react-target", tagId);
-    return { type: "action_done", requestId: msg.requestId, tagged: true, in_shadow: inShadow };
+    // A selector resolving to 2+ elements here means react_set_input picked
+    // WHICHEVER one happens to be first in document order — the same
+    // duplicate-form risk documented for click_element's selector mode (see
+    // dispatch.ts's prepareClickTarget and
+    // ISSUE-2026-09-10-workday-duplicate-id-colliding-create-account-form.md,
+    // where two full copies of a form shared element ids). Surface the count
+    // so a silent fill into a stale/wrong duplicate is at least visible.
+    const ambiguous = matches.length > 1
+      ? { ambiguous_match: true, match_count: matches.length }
+      : {};
+    return { type: "action_done", requestId: msg.requestId, tagged: true, in_shadow: inShadow, ...ambiguous };
   } catch {
     return { type: "action_done", requestId: msg.requestId, tagged: false, in_shadow: false };
   }

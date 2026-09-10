@@ -282,6 +282,17 @@ export function opGetFormFields(msg: IncomingMessage): unknown {
   if (hiddenFieldCount > 0) {
     warning = `\n\n⚠ ${hiddenFieldCount} hidden field(s) not shown above — they may appear after you interact with radio buttons, checkboxes, or toggles. Call get_form_fields() again after any such interaction to get an updated inventory.`;
   }
+  // A duplicated id means the page rendered more than one instance of the
+  // same field simultaneously (see ISSUE-2026-09-10-workday-duplicate-id-
+  // colliding-create-account-form.md — Workday's Create Account step showed
+  // two full copies of the form, several elements sharing literal ids across
+  // copies). Every fill_input/click_element call against one of these fields
+  // by id/selector risks silently landing in the wrong copy — flag it before
+  // the caller spends a dozen calls rediscovering that themselves.
+  const duplicateIdFields = fields.filter((f) => f.duplicate_id);
+  if (duplicateIdFields.length > 0) {
+    warning += `\n\n⚠ ${duplicateIdFields.length} field(s) above have an id that's DUPLICATED elsewhere on the page (indices: ${duplicateIdFields.map((f) => f.index).join(", ")}) — this usually means the page rendered more than one copy of the same form at once. Their selector already avoids the ambiguous #id form, but treat this page as unreliable for id/selector-based targeting generally: prefer scoping with within_selector/near_text, verify every fill by reading the value back immediately before submit, and expect a single fill_input/click_element call to possibly land in the WRONG copy of the form.`;
+  }
   const filtered = onlyEmpty ? fields.filter((f) => f.required && f.empty) : fields;
   // Renumber so visible indices stay 1..N within the filtered slice.
   filtered.forEach((f, i) => { f.index = i + 1; });

@@ -17,12 +17,13 @@ export function registerSnapshotTools(server: McpServer, bridge: WsBridge) {
         // Old extension without the handler — degrade instead of hard-failing.
         return { content: [{ type: "text", text: "interactive_snapshot is unavailable (reload/update the chromeflow extension). Fall back to get_page_text + find_text for now." }] };
       }
-      const items = (response as { items?: Array<{ role: string; name: string; selector: string }> }).items ?? [];
+      const r = response as { items?: Array<{ role: string; name: string; selector: string; duplicate_id?: boolean }>; warning?: string };
+      const items = r.items ?? [];
       if (items.length === 0) {
         return { content: [{ type: "text", text: "No actionable elements found (page may render inside a cross-origin iframe, or content is non-interactive)." }] };
       }
-      const lines = items.map((it, i) => `${i + 1}. [${it.role}]${it.name ? " " + it.name : ""} — ${it.selector}`);
-      return { content: [{ type: "text", text: `Actionable elements (${items.length}):\n${lines.join("\n")}` }] };
+      const lines = items.map((it, i) => `${i + 1}. [${it.role}]${it.name ? " " + it.name : ""} — ${it.selector}${it.duplicate_id ? "  ⚠duplicate id" : ""}`);
+      return { content: [{ type: "text", text: `Actionable elements (${items.length}):\n${lines.join("\n")}${r.warning ?? ""}` }] };
     }
   );
 }

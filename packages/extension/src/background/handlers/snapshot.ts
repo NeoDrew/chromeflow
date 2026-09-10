@@ -45,10 +45,31 @@ export async function handleInteractiveSnapshot(msg: McpMsg, port: number): Prom
             const n = el.getAttribute("name"); if (n) return "name=" + n;
             return "";
           }
+          // Ids duplicated anywhere on the page (shadow-piercing) — a page
+          // rendering two full copies of the same form at once (Workday's
+          // Create Account step, see ISSUE-2026-09-10-workday-duplicate-id-
+          // colliding-create-account-form.md) leaves colliding ids behind.
+          // canonical() below must not hand out an ambiguous "#id" for one of
+          // these, and the dedupe-by-key step further down would otherwise
+          // silently collapse two genuinely different duplicate elements into
+          // one row (same id -> same canonical() selector -> same key) with
+          // no sign a duplicate ever existed.
+          const idCounts = new Map<string, number>();
+          {
+            const idStack: ParentNode[] = [document];
+            while (idStack.length) {
+              const root = idStack.pop()!;
+              for (const el of Array.from(root.querySelectorAll("[id]"))) {
+                const id = el.getAttribute("id"); if (id) idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+                const sr = getShadowRoot(el); if (sr) idStack.push(sr);
+              }
+            }
+          }
+          const duplicatedIds = new Set([...idCounts.entries()].filter(([, c]) => c > 1).map(([id]) => id));
           function canonical(el: Element): string {
             const tag = el.tagName.toLowerCase();
             const hashed = (s: string) => s.length > 12 && /\d/.test(s) && /[a-z]/i.test(s) && !/[\s_-]/.test(s);
-            const id = el.getAttribute("id"); if (id && !hashed(id)) { try { return "#" + CSS.escape(id); } catch { return "#" + id; } }
+            const id = el.getAttribute("id"); if (id && !hashed(id) && !duplicatedIds.has(id)) { try { return "#" + CSS.escape(id); } catch { return "#" + id; } }
             const n = el.getAttribute("name"); if (n) return `${tag}[name="${n}"]`;
             const a = el.getAttribute("aria-label"); if (a) return `${tag}[aria-label="${a.replace(/"/g, '\\"').slice(0, 40)}"]`;
             const p = el.getAttribute("placeholder"); if (p) return `${tag}[placeholder="${p.replace(/"/g, '\\"').slice(0, 40)}"]`;
@@ -59,11 +80,12 @@ export async function handleInteractiveSnapshot(msg: McpMsg, port: number): Prom
           // things you usually act on) vs plain navigation LINKS. Controls are
           // kept in full; links are capped, so a content/article page (mostly
           // links) yields a small focused snapshot instead of a giant link dump.
-          const controls: Array<{ role: string; name: string; selector: string }> = [];
-          const links: Array<{ role: string; name: string; selector: string }> = [];
+          const controls: Array<{ role: string; name: string; selector: string; duplicate_id?: boolean }> = [];
+          const links: Array<{ role: string; name: string; selector: string; duplicate_id?: boolean }> = [];
           const LINK_CAP = 15;
           const seen = new Set<string>();
           let walked = 0;
+          let duplicateIdHits = 0;
           const stack: ParentNode[] = [document];
           while (stack.length && walked < 12000 && (controls.length < cap || links.length < LINK_CAP)) {
             const root = stack.pop()!;
@@ -74,17 +96,34 @@ export async function handleInteractiveSnapshot(msg: McpMsg, port: number): Prom
               if (!interactive(el) || !visible(el)) continue;
               const role = el.getAttribute("role") || el.tagName.toLowerCase();
               const name = nm(el); const selector = canonical(el);
-              const key = role + "|" + name + "|" + selector;
+              const rawId = el.getAttribute("id");
+              const isDupeId = !!rawId && duplicatedIds.has(rawId);
+              // Two elements sharing a duplicated id often ALSO share the same
+              // role/name (two copies of the same form), which would otherwise
+              // collapse into one seen-key and hide the second copy entirely —
+              // fold in the element's own document position to keep them
+              // distinct rows instead of silently dropping one.
+              const key = isDupeId
+                ? role + "|" + name + "|" + selector + "|" + Math.round(el.getBoundingClientRect().top + (window.scrollY || 0))
+                : role + "|" + name + "|" + selector;
               if (seen.has(key)) continue; seen.add(key);
+              if (isDupeId) duplicateIdHits++;
               const isLink = (el.tagName.toLowerCase() === "a" && el.hasAttribute("href")) || el.getAttribute("role") === "link";
-              if (isLink) { if (links.length < LINK_CAP) links.push({ role, name, selector }); }
-              else if (controls.length < cap) { controls.push({ role, name, selector }); }
+              const item = { role, name, selector, ...(isDupeId ? { duplicate_id: true } : {}) };
+              if (isLink) { if (links.length < LINK_CAP) links.push(item); }
+              else if (controls.length < cap) { controls.push(item); }
             }
           }
           // Controls first (prioritized), then a capped tail of links, overall cap.
-          return [...controls, ...links].slice(0, cap);
+          return { items: [...controls, ...links].slice(0, cap), duplicateIdCount: duplicateIdHits };
         },
         args: [max],
       });
-      return { type: "interactive_snapshot_response", requestId: msg.requestId, items: r[0]?.result ?? [] };
+      const out = r[0]?.result as { items: unknown[]; duplicateIdCount: number } | undefined;
+      const items = out?.items ?? [];
+      const duplicateIdCount = out?.duplicateIdCount ?? 0;
+      const warning = duplicateIdCount > 0
+        ? `\n\n⚠ ${duplicateIdCount} item(s) above have an id that's DUPLICATED elsewhere on the page (duplicate_id:true) — this usually means the page rendered more than one copy of the same form/section at once (see ISSUE-2026-09-10-workday-duplicate-id-colliding-create-account-form.md). Their selector already avoids the ambiguous #id form, but treat this page as unreliable for id-based targeting generally: verify which copy a click/fill actually landed in before trusting it.`
+        : "";
+      return { type: "interactive_snapshot_response", requestId: msg.requestId, items, warning };
 }

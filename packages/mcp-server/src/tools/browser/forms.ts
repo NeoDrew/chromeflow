@@ -39,7 +39,7 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
       const response = await bridge.request({ type: "get_form_fields", only_empty });
       if (response.type !== "form_fields_response") throw new Error("Unexpected response");
       const r = response as {
-        fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string; required?: boolean; empty?: boolean }>;
+        fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string; required?: boolean; empty?: boolean; duplicate_id?: boolean }>;
         warning?: string;
         captcha?: { kind: string; sitekey: string | null } | null;
         oauthIndicators?: string[];
@@ -61,7 +61,8 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
         const val = f.value ? ` [currently: "${f.value}"]` : "";
         const ctx = f.context ? ` [under: "${f.context}"]` : "";
         const req = f.required ? " *required" : "";
-        return `${f.index}. [${f.type}] "${f.label}"${req}${val}${ctx} — y:${f.y}`;
+        const dup = f.duplicate_id ? "  ⚠duplicate id" : "";
+        return `${f.index}. [${f.type}] "${f.label}"${req}${val}${ctx} — y:${f.y}${dup}`;
       });
       const header = only_empty
         ? `Required-but-empty fields (${fields.length}):`

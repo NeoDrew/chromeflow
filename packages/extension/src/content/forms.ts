@@ -31,6 +31,16 @@ export interface EnumeratedField {
    *  Combined with `required`, lets the caller filter to required-but-empty
    *  fields in one pass. */
   empty?: boolean;
+  /** True when this field's `id` attribute is not unique on the page — a
+   *  `fill_input`/`click_element` selector call using `#id` would then be
+   *  ambiguous, resolving to whichever duplicate happens to come first in
+   *  document order. Seen when a page renders two full copies of the same
+   *  form simultaneously with colliding element ids (see
+   *  ISSUE-2026-09-10-workday-duplicate-id-colliding-create-account-form.md).
+   *  `selector` already avoids `#id` for these fields (falls back to
+   *  `tag:nth-of-type(n)`), but the flag is surfaced too since it's evidence
+   *  the PAGE itself, not just this one field, may have duplicate content. */
+  duplicate_id?: boolean;
 }
 
 export interface EnumerateResult {
@@ -386,11 +396,36 @@ function isFieldEmpty(el: HTMLElement): boolean {
 }
 
 /**
+ * Every `id` value that appears on 2+ elements in `doc` — shadow-piercing so
+ * a duplicate spanning a light-DOM/shadow-DOM boundary is still caught. A
+ * page rendering two full copies of the same form (Workday's Create Account
+ * step, see ISSUE-2026-09-10-workday-duplicate-id-colliding-create-account-
+ * form.md) produces exactly this: two independent component-instance id
+ * counters both starting from the same seed, so `#input-6` resolves to
+ * DIFFERENT elements (even different `type`s) depending on which copy
+ * happened to render first. Computed once per enumeration, not per field.
+ */
+function findDuplicateIds(doc: Document): Set<string> {
+  const counts = new Map<string, number>();
+  for (const el of queryAllDeep<Element>(doc, "[id]")) {
+    if (!el.id) continue;
+    counts.set(el.id, (counts.get(el.id) ?? 0) + 1);
+  }
+  const dupes = new Set<string>();
+  for (const [id, count] of counts) if (count > 1) dupes.add(id);
+  return dupes;
+}
+
+/**
  * Build a unique-ish CSS selector for an element. Prefers id, falls back
  * to tag:nth-of-type. Mirrors the inline pattern in get_form_fields.
+ * Never returns `#id` for an id that's duplicated elsewhere on the page —
+ * that selector would be genuinely ambiguous (resolves to first-in-document-
+ * order, not necessarily THIS element) — nth-of-type at least stays pinned
+ * to the exact element enumerateFormFields is looking at right now.
  */
-function buildSelector(el: Element, doc: Document): string {
-  if (el.id) return `#${CSS.escape(el.id)}`;
+function buildSelector(el: Element, doc: Document, duplicateIds: Set<string>): string {
+  if (el.id && !duplicateIds.has(el.id)) return `#${CSS.escape(el.id)}`;
   const tag = el.tagName.toLowerCase();
   // Pierce shadow roots so the nth-of-type fallback is stable across
   // light/shadow boundaries (otherwise the index re-counts after each shadow
@@ -408,12 +443,14 @@ function buildSelector(el: Element, doc: Document): string {
 export function enumerateFormFields(doc: Document = document): EnumerateResult {
   const fields: EnumeratedField[] = [];
   let idx = 0;
+  const duplicateIds = findDuplicateIds(doc);
 
   // File inputs — always include even if visually hidden (often 0×0 behind
   // custom drag zones). Tagged label includes a usage hint for Claude.
   for (const el of queryAllDeep<HTMLInputElement>(doc, "input[type=file]")) {
     const label = deriveFileLabel(el, doc);
     const context = getNearestHeading(el, doc);
+    const idDuplicated = !!el.id && duplicateIds.has(el.id);
     fields.push({
       index: ++idx,
       type: "file",
@@ -422,9 +459,10 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
         " — use set_file_input(hint, filePath) to upload",
       value: el.files?.[0]?.name ?? "",
       y: getDocumentY(el, doc),
-      selector: el.id ? `#${CSS.escape(el.id)}` : "input[type=file]",
+      selector: el.id && !idDuplicated ? `#${CSS.escape(el.id)}` : "input[type=file]",
       required: isRequiredField(el, doc),
       empty: isFieldEmpty(el),
+      ...(idDuplicated ? { duplicate_id: true } : {}),
       ...(context ? { context } : {}),
     });
   }
@@ -459,9 +497,10 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
       label: label.replace(/\s+/g, " ").slice(0, 80),
       value: value.slice(0, 60),
       y: getDocumentY(el, doc),
-      selector: buildSelector(el, doc),
+      selector: buildSelector(el, doc, duplicateIds),
       required: isRequiredField(el, doc),
       empty: isFieldEmpty(el),
+      ...(el.id && duplicateIds.has(el.id) ? { duplicate_id: true } : {}),
       ...(context ? { context } : {}),
     });
   }
