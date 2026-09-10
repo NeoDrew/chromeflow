@@ -25917,14 +25917,14 @@ function registerInputTools(server, bridge) {
 
 \`selector\` mode (replaces the old react_set_input): targets the input directly and routes through the React-aware native value-setter so React's onChange picks up the change. Handles same-origin iframe inputs via \`frame\`.
 
-Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirror 6 editors. Use \`nth\` (1-based) when multiple inputs share the same label.
+Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirror 6 editors. Use \`nth\` (1-based) when multiple inputs share the same label (textHint mode) or when a selector resolves to more than one element (selector mode, e.g. two duplicate elements sharing an id, see ISSUE-2026-09-10-workday-duplicate-id-colliding-create-account-form.md). A selector-mode call that resolves to 2+ elements reports match_count and other candidates in the response instead of silently picking the first.
 
 **Workday auto-escalation** (textHint mode): fill_input always tries the native-setter fill first and reads the value back. On fields marked with Workday's \`data-automation-id\` convention where that read-back genuinely fails, it transparently re-enters the value via trusted keystrokes instead, same mechanism as type_text \u2014 the response message says "Escalated to trusted keystrokes" when this fires. This is a per-tenant behavior, not a per-platform one: on some anti-bot-hardened tenants it's the OPPOSITE (native setter lands, trusted keystrokes get dropped) \u2014 which is exactly why escalation only fires after a verified failure, never on marker-presence alone.`,
     {
       textHint: external_exports.string().optional().describe("Label / placeholder / aria-label identifying the input. Exactly one of textHint or selector must be set."),
       selector: external_exports.string().optional().describe("CSS selector of the input (e.g. 'input[name=email]'). Bypasses fuzzy matching."),
       value: external_exports.string().describe("Value to fill"),
-      nth: external_exports.number().int().min(1).optional().describe("Which match to fill when multiple inputs share the same label (1 = first, default 1). textHint mode only."),
+      nth: external_exports.number().int().min(1).optional().describe("Which match to fill when multiple candidates match (1 = first, default 1). Works in both textHint mode (multiple inputs sharing a label) and selector mode (a selector resolving to 2+ elements)."),
       exact: external_exports.boolean().optional().describe("Refuse fuzzy text-walk and *-includes matches. textHint mode only. Default false."),
       frame: external_exports.string().optional().describe("Same-origin iframe CSS selector for selector-mode targeting of inputs inside an iframe.")
     },
@@ -25936,7 +25936,7 @@ Works on React-controlled inputs, contenteditable (Stripe, Notion), and CodeMirr
         return { content: [{ type: "text", text: "fill_input: pass textHint OR selector, not both." }] };
       }
       if (selector) {
-        const response2 = await bridge.request({ type: "react_set_input", selector, value, frame: frame ?? "" });
+        const response2 = await bridge.request({ type: "react_set_input", selector, value, frame: frame ?? "", nth });
         const r2 = response2;
         if (!r2.success) {
           const workaround = `
@@ -26782,7 +26782,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.12.8" : "dev";
+var PACKAGE_VERSION = true ? "0.12.9" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

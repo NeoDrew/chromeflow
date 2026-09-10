@@ -4,6 +4,7 @@ import type { McpMsg } from "./types";
 import { getActiveTab, forwardToContentScript, resolvePostClickTab } from "../state";
 import { phaseRace, dispatchHumanMouseClick } from "../cdp";
 import { isScriptableUrl } from "../policy";
+import { handleTypeText } from "./type";
 
 export async function handleClickAtCoordinates(msg: McpMsg, port: number): Promise<unknown> {
       const tab = await getActiveTab(port);
@@ -149,6 +150,7 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
       const selector = msg.selector as string;
       const value = msg.value as string;
       const frameSelector = msg.frame as string | undefined;
+      const nth = typeof msg.nth === "number" && msg.nth >= 1 ? msg.nth : 1;
 
       // Tag the element in the content script first (queryAllDeep pierces
       // open AND closed shadow roots). The MAIN-world script then reads by
@@ -159,6 +161,12 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
       let taggedInShadow = false;
       let ambiguousMatch = false;
       let matchCount: number | undefined;
+      // Tracks whether the content script's tag actually landed — only then
+      // is [data-chromeflow-react-target="tagId"] guaranteed resolvable as an
+      // escalation selector below (the iframe path and a failed tag both skip
+      // it, in which case a native-setter mismatch just fails plainly rather
+      // than escalating to a selector that wouldn't resolve to anything).
+      let contentScriptTagged = false;
       if (!frameSelector) {
         try {
           const tagResult = await forwardToContentScript(tab, {
@@ -166,8 +174,10 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
             requestId: msg.requestId + "-tag",
             selector,
             tagId,
+            nth,
           }) as { tagged: boolean; in_shadow: boolean; ambiguous_match?: boolean; match_count?: number };
           if (tagResult?.tagged) {
+            contentScriptTagged = true;
             taggedInShadow = !!tagResult.in_shadow;
             if (tagResult.ambiguous_match) {
               ambiguousMatch = true;
@@ -183,7 +193,7 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
       const r = await chrome.scripting.executeScript({
         target: { tabId },
         world: "MAIN",
-        func: (sel: string, val: string, frameSel: string | undefined, tag: string) => {
+        func: (sel: string, val: string, frameSel: string | undefined, tag: string, nthArg: number) => {
           // Resolve the input — top-frame document by default, contentDocument
           // when frameSel is given (same-origin iframes only).
           let doc: Document = document;
@@ -230,7 +240,7 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
           if (!el) {
             const all = doc.querySelectorAll(sel);
             fallbackMatchCount = all.length;
-            el = all[0] ?? null;
+            el = all[(nthArg >= 1 ? nthArg : 1) - 1] ?? null;
           }
           if (!el) return { ok: false, reason: `selector "${sel}" not found${frameSel ? ` inside iframe "${frameSel}"` : ""}` };
 
@@ -250,10 +260,13 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
           el.dispatchEvent(new Event("input", { bubbles: true }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
 
-          // Clean up the chromeflow tag so we don't pollute the DOM. Best
-          // effort; if removeAttribute throws (frozen elements, custom
-          // proxies), the tag is harmless.
-          try { el.removeAttribute("data-chromeflow-react-target"); } catch { /* ignore */ }
+          // Deliberately NOT cleaning up the chromeflow tag here anymore — if
+          // the read-back below shows the value didn't land, the caller needs
+          // the tag to still be on the page to hand off
+          // [data-chromeflow-react-target="tag"] as a stable escalation
+          // selector for trusted keystrokes (see handleReactSetInput's
+          // needsTrustedKeystrokes handling). The background handler cleans
+          // it up itself once it knows whether escalation is needed.
 
           // Read back to confirm React accepted it
           const readBack = (el as unknown as { value?: unknown }).value;
@@ -265,15 +278,23 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
             id: el.id ?? "",
             type: (el as HTMLInputElement).type ?? "",
             readBack: typeof readBack === "string" ? readBack : String(readBack),
+            // Workday's (and similarly-built platforms') own component marker
+            // — a structural signature, not a domain check, so this also
+            // covers non-myworkdayjobs.com hosts running the same component
+            // library (see ISSUE-2026-08-11-workday-fill-input-not-binding.md).
+            // Only meaningful combined with a mismatch on read-back below;
+            // presence alone does NOT mean escalation is needed (some tenants
+            // are the opposite: native setter works, keystrokes get dropped).
+            hasWorkdayMarker: !!(el.closest && el.closest("[data-automation-id]")),
             ...(fallbackMatchCount && fallbackMatchCount > 1 ? { fallback_match_count: fallbackMatchCount } : {}),
           };
         },
-        args: [selector, value, frameSelector, tagId],
+        args: [selector, value, frameSelector, tagId, nth],
       });
 
       const result = r[0]?.result as
         | { ok: false; reason: string }
-        | { ok: true; reason: string; tag: string; name: string; id: string; type: string; readBack: string; fallback_match_count?: number }
+        | { ok: true; reason: string; tag: string; name: string; id: string; type: string; readBack: string; fallback_match_count?: number; hasWorkdayMarker?: boolean }
         | undefined;
       if (!result) return { type: "action_done", requestId: msg.requestId, success: false, message: "no response from page" };
       if (!result.ok) return { type: "action_done", requestId: msg.requestId, success: false, message: result.reason };
@@ -295,21 +316,68 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
           normalizedNote = ` (normalised "${value}" → "${result.readBack}")`;
         }
       }
+
+      // Selector-mode equivalent of fill_input(textHint mode)'s Workday
+      // auto-escalation (see checkTrustedKeystrokeEscalation in content/
+      // fill.ts and ISSUE-2026-08-11-workday-fill-input-not-binding.md) —
+      // previously MISSING entirely from this path, which forced callers on
+      // duplicate-id pages (where selector mode + nth-of-type scoping is the
+      // only way to hit a SPECIFIC instance) to choose between disambiguation
+      // and Workday-binding protection. Only fires after a VERIFIED mismatch,
+      // never on marker-presence alone (some tenants are the opposite: native
+      // setter works, keystrokes get dropped — see ISSUE-2026-08-15-antibot-
+      // tenant-walls.md). Escalates via the same tag attribute already used
+      // to resolve `el`, not a fresh id/name-derived selector, so it can't
+      // regress into the exact duplicate-id ambiguity this was built to avoid.
+      let escalated = false;
+      let escalationMessage = "";
+      // Mirrors handleFillInput's convention (background/handlers/type.ts):
+      // when escalation isn't attempted at all, `accepted` staying false still
+      // reports success:true with a soft warning in the message (a non-Workday
+      // normalisation mismatch is common and a hard failure there would be
+      // worse than a clearly-worded uncertain success) — only an ATTEMPTED
+      // escalation's own verified outcome should flip success to false.
+      let finalSuccess = true;
+      if (!accepted && result.hasWorkdayMarker && contentScriptTagged) {
+        const retyped = await handleTypeText(
+          { ...msg, text: value, into_selector: `[data-chromeflow-react-target="${tagId}"]`, clear_first: true },
+          port,
+        ) as { success: boolean; landed?: boolean; message: string };
+        escalated = true;
+        accepted = retyped.success;
+        finalSuccess = retyped.success;
+        escalationMessage = ` Escalated to trusted keystrokes: ${retyped.message}`;
+      }
+      // Clean up the tag now that both the native-setter attempt and any
+      // escalation (which resolves through the same attribute) are done.
+      if (contentScriptTagged) {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          world: "MAIN",
+          func: (tag: string) => {
+            const el = document.querySelector(`[data-chromeflow-react-target="${tag}"]`);
+            try { el?.removeAttribute("data-chromeflow-react-target"); } catch { /* ignore */ }
+          },
+          args: [tagId],
+        }).catch(() => {});
+      }
+
       const desc = `<${result.tag}${result.type ? ` type="${result.type}"` : ""}${result.name ? ` name="${result.name}"` : ""}${result.id ? ` id="${result.id}"` : ""}>`;
       const shadowNote = taggedInShadow ? " (resolved inside shadow DOM)" : "";
       const effectiveMatchCount = matchCount ?? result.fallback_match_count;
       const isAmbiguous = ambiguousMatch || (result.fallback_match_count ?? 0) > 1;
       const ambiguousNote = isAmbiguous
-        ? `\n\n⚠ selector "${selector}" matched ${effectiveMatchCount} elements — set the first. Duplicate elements sharing this selector (e.g. a page rendering two copies of the same form, see ISSUE-2026-09-10-workday-duplicate-id-colliding-create-account-form.md) mean this may have landed in a stale/wrong copy. Verify the result, or scope with a more specific selector.`
+        ? `\n\n⚠ selector "${selector}" matched ${effectiveMatchCount} elements — set nth=${nth}. Duplicate elements sharing this selector (e.g. a page rendering two copies of the same form, see ISSUE-2026-09-10-workday-duplicate-id-colliding-create-account-form.md) mean this may have landed in the wrong copy if nth wasn't deliberately chosen. Verify the result, or pass nth=1..${effectiveMatchCount} to target a specific one.`
         : "";
       return {
         type: "action_done",
         requestId: msg.requestId,
-        success: true,
+        success: finalSuccess,
         message: (accepted
-          ? `Set ${desc} to "${value.slice(0, 60)}"${frameSelector ? ` (inside iframe "${frameSelector}")` : ""}${shadowNote}${normalizedNote}`
-          : `Set ${desc} via native setter, but React reported back "${result.readBack.slice(0, 60)}" — the page may be controlling the value externally.${shadowNote}`) + ambiguousNote,
+          ? `Set ${desc} to "${value.slice(0, 60)}"${frameSelector ? ` (inside iframe "${frameSelector}")` : ""}${shadowNote}${normalizedNote}${escalationMessage}`
+          : `Set ${desc} via native setter, but React reported back "${result.readBack.slice(0, 60)}" — the page may be controlling the value externally.${shadowNote}${escalationMessage}`) + ambiguousNote,
         ...(isAmbiguous ? { ambiguous_match: true, match_count: effectiveMatchCount } : {}),
+        ...(escalated ? { escalated_to_trusted_keystrokes: true } : {}),
       };
 }
 

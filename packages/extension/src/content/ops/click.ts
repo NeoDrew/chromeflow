@@ -81,9 +81,10 @@ export function opTagForReact(msg: IncomingMessage): unknown {
   // doc.querySelector from MAIN world wouldn't find them.
   const sel = msg.selector as string;
   const tagId = msg.tagId as string;
+  const nth = typeof msg.nth === "number" && msg.nth >= 1 ? msg.nth : 1;
   try {
     const matches = queryAllDeep<Element>(document, sel);
-    const el = matches[0];
+    const el = matches[nth - 1];
     if (!el) {
       return { type: "action_done", requestId: msg.requestId, tagged: false, in_shadow: false };
     }
