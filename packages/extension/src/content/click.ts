@@ -5,5 +5,4 @@
 // unchanged.
 export { prepareClickTarget, postClickInspect, clickElement } from "./click/dispatch.js";
 export { scrollSmartIntoView, pointerChainOnTagged } from "./click/pointer.js";
-export { reactFiberClick, reactFiberClickByHint } from "./click/fiber.js";
 export { findTopmostDialog, findDialogByQuery } from "./click/dialog.js";

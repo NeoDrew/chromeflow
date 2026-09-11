@@ -6,6 +6,111 @@ import { withDebugger, getSubmitSignalCounts, classifyTopDialog, phaseRace, disp
 import { isBlockedUrl, isScriptableUrl } from "../policy";
 import { markerIds } from "../../markers";
 
+/**
+ * The REAL React-fiber click mechanism — MUST run in the page's MAIN world.
+ *
+ * content/click/fiber.ts's reactFiberClick (isolated-world content-script
+ * code, invoked via the react_fiber_click message) walks Object.keys(node)
+ * looking for a __reactProps$<hash> key, but content.js has no "world":
+ * "MAIN" entry in manifest.json — it runs in the DEFAULT isolated world.
+ * Chrome's isolated worlds share the live DOM tree but NOT arbitrary
+ * JS-level properties attached to DOM objects by page scripts: "a content
+ * script has no access to any variables or functions created by page
+ * scripts" is the isolation guarantee, and a property assigned by React
+ * (which runs as a page script, in MAIN world) is exactly that kind of
+ * page-script state. So the isolated-world walk can never see a real
+ * __reactProps$ key on a real page — confirmed empirically against a
+ * controlled reproduction (see ISSUE-2026-09-11-workday-multiselect-
+ * option-click-not-registering.md): the property was verified present via
+ * a MAIN-world execute_script read immediately before the SAME isolated-
+ * world code reported "no React fiber __reactProps$.onClick exists".
+ * Every prior "fired via react-fiber" success in this codebase's history
+ * was fiber invocation on a target where the CDP click (or some other
+ * fallback) had ALREADY succeeded moments earlier — the fiber attempt
+ * itself, walking the wrong world, could only ever have found nothing.
+ *
+ * Fix: resolve the target in isolated world as before (prepareClickTarget
+ * already tags it with markerIds.clickTargetAttr() — reuse that tag rather
+ * than a second resolve), then walk the fiber tree in an
+ * chrome.scripting.executeScript({world:"MAIN"}) injection instead, the
+ * same bridge pattern background/handlers/react.ts already uses for
+ * react_set_input. MAIN-world script has no chrome.dom access, so it can
+ * only re-find the tagged element through OPEN shadow roots (same
+ * limitation react.ts's findTagged already accepts) — a closed-shadow
+ * target simply reports "not found" rather than silently misfiring.
+ *
+ * Also checks onMouseDown and onPointerDown, not just onClick: listbox/
+ * combobox option rows (Workday's multiselect prompt widget, react-select,
+ * downshift, Radix Combobox) commonly bind selection on mousedown
+ * specifically — with event.preventDefault() — to keep the triggering
+ * input focused and avoid a "blur closes the list before click fires"
+ * race. onClick-only invocation would silently no-op on exactly the
+ * widget shape this was built to fix.
+ */
+async function mainWorldFiberInvoke(
+  tabId: number,
+  tagAttr: string,
+): Promise<{ fired: boolean; component?: string; propUsed?: string; reason?: string }> {
+  const r = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: "MAIN",
+    func: (attr: string) => {
+      const findTagged = (root: ParentNode): Element | null => {
+        const direct = root.querySelector(`[${attr}]`);
+        if (direct) return direct;
+        for (const el of Array.from(root.querySelectorAll("*"))) {
+          const sr = (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot;
+          if (sr) {
+            const nested = findTagged(sr);
+            if (nested) return nested;
+          }
+        }
+        return null;
+      };
+      const el = findTagged(document);
+      if (!el) return { fired: false, reason: "tagged element not found in MAIN world (closed shadow root, or removed from the DOM since it was resolved)" };
+
+      let node: Element | null = el;
+      for (let depth = 0; depth < 12 && node; depth++) {
+        try {
+          const propsKey = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
+          const props = propsKey ? (node as unknown as Record<string, Record<string, unknown>>)[propsKey] : null;
+          for (const [propName, evType] of [["onClick", "click"], ["onMouseDown", "mousedown"], ["onPointerDown", "pointerdown"]] as const) {
+            const handler = props?.[propName];
+            if (typeof handler === "function") {
+              const ev = {
+                preventDefault() { /* noop */ },
+                stopPropagation() { /* noop */ },
+                stopImmediatePropagation() { /* noop */ },
+                nativeEvent: { isTrusted: true },
+                target: el,
+                currentTarget: el,
+                type: evType,
+                bubbles: true,
+                cancelable: true,
+                defaultPrevented: false,
+                isDefaultPrevented: () => false,
+                isPropagationStopped: () => false,
+              };
+              try {
+                (handler as (e: unknown) => void)(ev);
+              } catch { /* component threw; still counts as "fired" */ }
+              return { fired: true, component: node instanceof Element ? node.tagName.toLowerCase() : undefined, propUsed: propName };
+            }
+          }
+        } catch {
+          // Property access on cross-boundary/detached nodes can throw.
+        }
+        node = node.parentElement;
+      }
+      return { fired: false, reason: "no onClick/onMouseDown/onPointerDown fiber prop found on the element or its ancestors (up to 12 levels) — bound via addEventListener (not React), or React's prop key was mangled by a production minifier" };
+    },
+    args: [tagAttr],
+  }).catch((e) => [{ result: { fired: false, reason: String(e) } }]);
+  return (r[0]?.result as { fired: boolean; component?: string; propUsed?: string; reason?: string } | undefined)
+    ?? { fired: false, reason: "no response from page" };
+}
+
 export async function handleClickElement(msg: McpMsg, port: number): Promise<unknown> {
       const tab = await getActiveTab(port);
       const tabId = tab.id!;
@@ -40,6 +145,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         skipClick?: boolean;
         nextCandidate?: string;
         scope_missed?: boolean;
+        role?: string | null;
         ambiguous_match?: boolean;
         match_count?: number;
         other_matches?: string[];
@@ -59,32 +165,6 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
       // fallback ever fires. via:"auto" (default) does CDP first, then fiber
       // when try_fiber=true was also set and activity probe failed.
       const via = (msg.via as "auto" | "cdp" | "fiber" | undefined) ?? "auto";
-
-      if (via === "fiber") {
-        const fiberResult = await forwardToContentScript(tab, {
-          type: "react_fiber_click",
-          requestId: msg.requestId + "-fiber-only",
-          textHint: msg.textHint,
-          nth: msg.nth,
-          within_selector: msg.within_selector,
-          near_text: msg.near_text,
-          in_dialog: msg.in_dialog,
-          dialog_query: msg.dialog_query,
-        }).catch((e) => ({ success: false, message: String(e), fired: false })) as {
-          success: boolean; message: string; fired: boolean; component?: string; label?: string;
-        };
-        const postTabF = await resolvePostClickTab(port, tab.windowId!);
-        const afterUrlF = postTabF?.url ?? before_url;
-        return {
-          type: "click_element_response",
-          success: fiberResult.success,
-          message: fiberResult.message,
-          before_url,
-          after_url: afterUrlF,
-          navigated: afterUrlF !== before_url,
-          fiber_attempted: true,
-        };
-      }
 
       let prep: PrepResult | undefined;
       for (let attempt = 0; attempt < 3; attempt++) {
@@ -131,6 +211,63 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           } catch { /* best-effort diagnostic */ }
         }
         return { type: "click_element_response", success: false, message: failMsg, before_url, after_url: before_url, navigated: false, scope_missed: prep?.scope_missed };
+      }
+
+      // via:"fiber" — the target is already resolved and tagged (prep,
+      // above); invoke the fiber prop directly in MAIN world instead of
+      // dispatching any real CDP click at all. See mainWorldFiberInvoke's
+      // own comment for why this has to be a MAIN-world injection, not the
+      // isolated-world content-script walk this used to do.
+      if (via === "fiber") {
+        const fiberResult = await mainWorldFiberInvoke(tab.id!, markerIds.clickTargetAttr());
+        const postTabF = await resolvePostClickTab(port, tab.windowId!);
+        const afterUrlF = postTabF?.url ?? before_url;
+        return {
+          type: "click_element_response",
+          success: fiberResult.fired,
+          message: fiberResult.fired
+            ? `Invoked React fiber ${fiberResult.propUsed} on "${prep.label ?? msg.textHint ?? msg.selector}"${fiberResult.component ? ` (component: ${fiberResult.component})` : ""}`
+            : `Found "${prep.label ?? msg.textHint ?? msg.selector}" but ${fiberResult.reason}`,
+          before_url,
+          after_url: afterUrlF,
+          navigated: afterUrlF !== before_url,
+          fiber_attempted: true,
+        };
+      }
+
+      // Auto-fiber-FIRST for role="option" targets — listbox/combobox option
+      // rows (react-select, downshift, Radix Combobox, Workday's multiselect
+      // prompt widget) are commonly torn down by an "outside pointerdown
+      // closes the list" handler that fires on ANY real pointer event,
+      // including ones aimed AT the option itself, before the option's own
+      // handler gets a chance to run. By the time the NORMAL post-rejection
+      // fiber fallback (further below) would try, the real CDP click has
+      // already triggered that teardown and the element is gone — confirmed
+      // empirically against a reproduction harness (see ISSUE-2026-09-11-
+      // workday-multiselect-option-click-not-registering.md): the automatic
+      // fallback reported "tagged element not found in MAIN world" because
+      // the FIRST (CDP) attempt had already removed it, while going straight
+      // to fiber (no real pointer event ever dispatched, so the buggy closer
+      // never fires) worked. So for this one structural shape, try fiber
+      // BEFORE any real click, not after — falling through to the normal CDP
+      // cascade below only if no fiber handler exists at all (non-React
+      // option, or a real addEventListener-bound one), so a non-React
+      // listbox degrades gracefully instead of losing its click.
+      if (via !== "cdp" && prep.role === "option") {
+        const earlyFiber = await mainWorldFiberInvoke(tab.id!, markerIds.clickTargetAttr());
+        if (earlyFiber.fired) {
+          const postTabRole = await resolvePostClickTab(port, tab.windowId!);
+          const afterUrlRole = postTabRole?.url ?? before_url;
+          return {
+            type: "click_element_response",
+            success: true,
+            message: `Invoked React fiber ${earlyFiber.propUsed} on "${prep.label ?? msg.textHint ?? msg.selector}"${earlyFiber.component ? ` (component: ${earlyFiber.component})` : ""} (role="option", tried fiber before any real click to avoid losing the race against the list closing)`,
+            before_url,
+            after_url: afterUrlRole,
+            navigated: afterUrlRole !== before_url,
+            fiber_attempted: true,
+          };
+        }
       }
 
       // Pre-flight skip: matched element resolved to an already-checked radio.
@@ -791,18 +928,22 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         // path where the user can opt in deliberately. via:"cdp" skips it
         // entirely (callers who never want the undocumented fiber-prop path).
         if (via !== "cdp" && (!msg.selector || msg.try_fiber === true)) {
-          const fiberResult = await phaseRace("react_fiber_click", 3500, forwardToContentScript(tab, {
-            type: "react_fiber_click",
-            requestId: msg.requestId + "-fiber",
-            textHint: msg.textHint,
-            selector: msg.selector,
-            nth: msg.nth,
-            within_selector: msg.within_selector,
-            near_text: msg.near_text,
-            in_dialog: msg.in_dialog,
-            dialog_query: msg.dialog_query,
-          })).catch((e) => ({ success: false, message: String(e), fired: false })) as {
-            success: boolean; message: string; fired: boolean; component?: string; label?: string;
+          // Reuses prep's existing tag (markerIds.clickTargetAttr()) rather
+          // than re-resolving by textHint/selector — the element found a
+          // moment ago is the one that was just clicked and silently
+          // rejected; re-matching by text risks landing on a DIFFERENT
+          // element if the page changed in between (e.g. the LinkedIn-
+          // footer-icon mismatch class of bug), and the tag is already
+          // guaranteed to point at the exact right one.
+          const fiberOutcome = await phaseRace("react_fiber_click", 3500, mainWorldFiberInvoke(tab.id!, markerIds.clickTargetAttr()))
+            .catch((e) => ({ fired: false, component: undefined, propUsed: undefined, reason: String(e) }));
+          const fiberResult = {
+            success: fiberOutcome.fired,
+            fired: fiberOutcome.fired,
+            component: fiberOutcome.component,
+            message: fiberOutcome.fired
+              ? `Invoked React fiber ${fiberOutcome.propUsed} on "${prep.label ?? msg.textHint ?? msg.selector}"${fiberOutcome.component ? ` (component: ${fiberOutcome.component})` : ""}`
+              : `Found "${prep.label ?? msg.textHint ?? msg.selector}" but ${fiberOutcome.reason}`,
           };
 
           // Re-probe activity after the fiber invocation. If the onClick

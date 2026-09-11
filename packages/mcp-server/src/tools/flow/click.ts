@@ -82,7 +82,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       try_fiber: z
         .boolean()
         .optional()
-        .describe(`Opt-in last-resort fallback when silently_rejected fires. After the activity probe reports zero activity, chromeflow walks the React fiber tree from the matched element (up to 12 levels), finds the nearest \`__reactProps$.onClick\` prop, and invokes it with a minimal synthetic event. Now shadow-DOM-aware: when the element is inside a shadow root, the fiber walk searches for React root containers inside that shadow root instead of walking the light DOM. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this; reserve for repeat silently_rejected on a known-safe React site.`),
+        .describe(`Opt-in last-resort fallback when silently_rejected fires. After the activity probe reports zero activity, chromeflow walks the React fiber tree from the already-matched element (up to 12 levels, in the page's own MAIN world so it can actually see React's internal props) checking for \`onClick\`, then \`onMouseDown\`, then \`onPointerDown\` — the last two matter for listbox/combobox option rows (react-select, downshift, Radix Combobox, Workday's multiselect prompt widget), which commonly bind selection on mousedown specifically to survive a "blur closes the list" race — and invokes whichever is found with a minimal synthetic event. Reaches elements inside OPEN shadow roots; a closed-shadow target reports not-found rather than misfiring. Returns fiber_attempted=true in the response when the path was taken. Do NOT default to this; reserve for repeat silently_rejected on a known-safe React site, or for listbox/combobox options where the CDP click cascade risks losing the race against the list closing (use via="fiber" there to skip straight to it).`),
       activity_timeout_ms: z
         .number()
         .int()
@@ -96,7 +96,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       via: z
         .enum(["auto", "cdp", "fiber"])
         .optional()
-        .describe(`Click dispatch mode. "auto" (default): CDP click, then fiber fallback when try_fiber=true and the activity probe failed. "cdp": CDP click only, no fiber fallback ever. "fiber": skip the CDP bezier + activity probe entirely and invoke __reactProps$.onClick directly. Use "fiber" on React-heavy SPAs (fiber-only annotation dashboards) where you already know the site is fiber-only — cuts ~3 seconds of ceremony off the round trip. The fiber path is undocumented React internal access, prefer "auto" until you've confirmed the site needs it.`),
+        .describe(`Click dispatch mode. "auto" (default): CDP click, then fiber fallback when try_fiber=true and the activity probe failed. "cdp": CDP click only, no fiber fallback ever. "fiber": skip the CDP bezier + activity probe entirely and invoke the element's onClick/onMouseDown/onPointerDown fiber prop directly. Use "fiber" on React-heavy SPAs (fiber-only annotation dashboards) where you already know the site is fiber-only, and especially on listbox/combobox options (a real CDP click risks losing the race against the list closing before the option's own handler fires) — cuts ~3 seconds of ceremony off the round trip either way. The fiber path is undocumented React internal access, prefer "auto" until you've confirmed the site needs it.`),
       in_dialog: z
         .boolean()
         .optional()

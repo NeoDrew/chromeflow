@@ -2,8 +2,6 @@ import {
   clickElement,
   prepareClickTarget,
   postClickInspect,
-  reactFiberClick,
-  reactFiberClickByHint,
   pointerChainOnTagged,
 } from "../click.js";
 import { queryAllDeep } from "../shadow.js";
@@ -110,40 +108,4 @@ export function opTagForReact(msg: IncomingMessage): unknown {
   } catch {
     return { type: "action_done", requestId: msg.requestId, tagged: false, in_shadow: false };
   }
-}
-
-export function opReactFiberClick(msg: IncomingMessage): unknown {
-  // Opt-in fallback used by background.click_element when the activity
-  // probe reports silently_rejected. SELECTOR-mode clicks resolve the
-  // element directly via the CSS selector and invoke __reactProps$.onClick
-  // on it — they have no textHint, so the by-hint matcher would crash on
-  // `undefined.toLowerCase()` (this is the bug that left LinkedIn's Easy
-  // Apply "Submit application" un-fired). textHint-mode re-resolves with the
-  // same match logic the original click used.
-  const fiberSelector = msg.selector as string | undefined;
-  let result: { success: boolean; message: string; fired: boolean; component?: string; label?: string };
-  if (fiberSelector) {
-    const all = queryAllDeep<Element>(document, fiberSelector);
-    const nth = msg.nth as number | undefined;
-    const el = all[(nth && nth >= 1 ? nth : 1) - 1];
-    if (!el) {
-      result = { success: false, message: `react_fiber_click: selector "${fiberSelector}" matched no element`, fired: false };
-    } else {
-      const fiber = reactFiberClick(el);
-      const label = (el as HTMLElement).innerText?.trim() || el.getAttribute("aria-label") || fiberSelector;
-      result = fiber.fired
-        ? { success: true, message: `Invoked React fiber onClick on "${label}"${fiber.component ? ` (component: ${fiber.component})` : ""}`, fired: true, component: fiber.component, label }
-        : { success: false, message: `Found "${label}" but no React fiber __reactProps$.onClick exists on it or its ancestors. Bound via addEventListener, or React's prop key was mangled. This element can't be driven via fiber; try the CDP click path instead (via: "auto" or "cdp").`, fired: false, label };
-    }
-  } else {
-    result = reactFiberClickByHint(
-      msg.textHint as string,
-      msg.nth as number | undefined,
-      msg.within_selector as string | undefined,
-      msg.near_text as string | undefined,
-      msg.in_dialog as boolean | undefined,
-      msg.dialog_query as string | undefined,
-    );
-  }
-  return { type: "action_done", requestId: msg.requestId, ...result };
 }
