@@ -21,7 +21,7 @@ import {
 } from "./highlight.js";
 import { readElementValue } from "./capture.js";
 import { fillInput } from "./fill.js";
-import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView, reactFiberClick, reactFiberClickByHint, findTopmostDialog, findDialogByQuery, pointerChainOnTagged } from "./click.js";
+import { clickElement, prepareClickTarget, postClickInspect, scrollSmartIntoView, findTopmostDialog, findDialogByQuery, pointerChainOnTagged } from "./click.js";
 import { collectShadowHosts, countShadowHosts, extractTextDeep, queryAllDeep } from "./shadow.js";
 import { enumerateFormFields } from "./forms.js";
 import { findText, findInputs, waitForText } from "./find.js";
@@ -45,7 +45,6 @@ import {
   opPointerChainClick,
   opPostClickInspect,
   opTagForReact,
-  opReactFiberClick,
 } from "./ops/click.js";
 import { opWaitForChange, opScrollPage, opScrollToElement } from "./ops/wait.js";
 import {
@@ -94,8 +93,6 @@ async function handleMessage(msg: IncomingMessage): Promise<unknown> {
       return opPostClickInspect(msg);
     case "tag_for_react":
       return opTagForReact(msg);
-    case "react_fiber_click":
-      return opReactFiberClick(msg);
     case "wait_for_change":
       return opWaitForChange(msg);
     case "scroll_page":

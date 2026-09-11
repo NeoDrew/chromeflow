@@ -42,6 +42,7 @@ export async function prepareClickTarget(
   skipClick?: boolean;
   nextCandidate?: string;
   scope_missed?: boolean;
+  role?: string | null;
   ambiguous_match?: boolean;
   match_count?: number;
   other_matches?: string[];
@@ -227,6 +228,7 @@ export async function prepareClickTarget(
     height: rect.height,
     label,
     nextCandidate,
+    role: el.getAttribute("role"),
     ambiguous_match: ambiguousMatch,
     match_count: matchCount,
     other_matches: otherMatches,
