@@ -182,7 +182,19 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
         // Inline-content mode can't use this (dispatchDragDropFile needs a
         // real on-disk path for CDP to point at).
         if (result.consumedUnconfirmed && !inlineContent && typeof msg.filePath === "string" && msg.filePath) {
-          const point = await freshTargetPoint(tabId, fileAttr);
+          // visibleAncestorFallback: the tagged element here is the real
+          // <input type=file> itself (found by opTagFileInput), which on
+          // dropzone-style widgets (Personio, SmartRecruiters, most
+          // react-dropzone/Uppy/FilePond builds) is routinely hidden
+          // (display:none or a 0-size clip rect) behind a styled wrapper.
+          // Without this, freshTargetPoint returns null for every such
+          // widget and the escalation silently never fires, confirmed via
+          // ISSUE-2026-09-14-personio-cv-upload-still-rejected.md (no
+          // "trusted drag-and-drop retry" note ever appeared in the tool
+          // response). Climbing to the nearest visible ancestor gives CDP's
+          // drag-drop a real pixel to target, matching where a human's OS
+          // drop would actually land.
+          const point = await freshTargetPoint(tabId, fileAttr, { visibleAncestorFallback: true });
           if (point) {
             retriedViaDragDrop = true;
             await dispatchDragDropFile(tabId, point.x, point.y, msg.filePath as string);

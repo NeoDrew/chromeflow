@@ -289,16 +289,37 @@ export async function dispatchDragDropFile(
  * coordinate click lands on the wrong element (or misses entirely) and the
  * action never fires. Reading fresh here, after a settle, makes the humanlike
  * bezier click land on the button it actually resolved. Shadow-piercing so it
- * works on web-component modals. Returns null if the element is gone or 0x0.
+ * works on web-component modals. Returns null if the element is gone or 0x0
+ * (unless visibleAncestorFallback climbs to a visible container, see below).
  */
 export async function freshTargetPoint(
   tabId: number,
   markerAttr: string,
+  opts: {
+    /**
+     * When the tagged element itself is a real but 0x0/display:none element,
+     * climb to the nearest ancestor (crossing out of shadow roots via .host)
+     * that has a non-zero rect and use ITS center instead of bailing out.
+     * Off by default, since click_element's target genuinely IS the marked
+     * element; a 0x0 click target is a real failure signal there, not
+     * something to paper over by clicking a random ancestor. Needed for the
+     * file-upload drag-drop escalation: dropzone widgets (Personio,
+     * SmartRecruiters, and most react-dropzone/Uppy/FilePond-style
+     * uploaders) commonly keep the real <input type=file> visually hidden
+     * (display:none or a 0-size clip rect) and render a styled wrapper on
+     * top as the actual drop surface, see
+     * ISSUE-2026-09-14-personio-cv-upload-still-rejected.md, where the
+     * escalation added for ISSUE-2026-09-12-personio-cv-upload-rejection.md
+     * never fired at all because this function returned null for the hidden
+     * input and the caller had no coordinate to drop onto.
+     */
+    visibleAncestorFallback?: boolean;
+  } = {},
 ): Promise<{ x: number; y: number; in_view: boolean } | null> {
   try {
     const r = await chrome.scripting.executeScript({
       target: { tabId },
-      func: async (attr: string) => {
+      func: async (attr: string, climbToVisibleAncestor: boolean) => {
         const cd = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
         const getSR = (el: Element): ShadowRoot | null => {
           try { if (cd?.openOrClosedShadowRoot) { const sr = cd.openOrClosedShadowRoot(el); if (sr) return sr; } } catch { /* ignore */ }
@@ -313,8 +334,20 @@ export async function freshTargetPoint(
           for (const e of Array.from(root.querySelectorAll("*"))) { const sr = getSR(e); if (sr) stack.push(sr); }
         }
         if (!el) return null;
-        const target = el as HTMLElement;
+        let target = el as HTMLElement;
         let rect = target.getBoundingClientRect();
+        if (climbToVisibleAncestor && rect.width === 0 && rect.height === 0) {
+          let climb: Element | null = target;
+          for (let i = 0; i < 20 && climb; i++) {
+            const root = climb.getRootNode();
+            const parent: Element | null = climb.parentElement
+              ?? (root instanceof ShadowRoot ? root.host : null);
+            if (!parent) break;
+            climb = parent;
+            const crect = (climb as HTMLElement).getBoundingClientRect();
+            if (crect.width > 0 || crect.height > 0) { target = climb as HTMLElement; rect = crect; break; }
+          }
+        }
         const outside = rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth
           || rect.top < 0 || rect.bottom > innerHeight;
         if (outside) {
@@ -339,7 +372,7 @@ export async function freshTargetPoint(
         if (rect.width === 0 && rect.height === 0) return null;
         return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, in_view: rect.top >= 0 && rect.bottom <= innerHeight };
       },
-      args: [markerAttr],
+      args: [markerAttr, opts.visibleAncestorFallback ?? false],
     });
     const v = r[0]?.result as { x: number; y: number; in_view: boolean } | null | undefined;
     return v ?? null;
