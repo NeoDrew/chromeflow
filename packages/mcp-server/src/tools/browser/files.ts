@@ -11,6 +11,8 @@ Two ways to supply the file:
 - file_path (CDP mode): an absolute path on the machine running this server. Reaches both open AND closed shadow roots.
 - file_content + file_name (inline-content mode): base64 file bytes plus a filename, materialized into the input directly. Use this when the server has no local disk access (e.g. a remote endpoint that can't see your filesystem). Caveat: inline-content mode reaches OPEN shadow roots only — if the input lives in a closed shadow root, use file_path instead.
 
+Pass \`frame\` (a same-origin iframe CSS selector, same param as fill_input/find_text/click_element) to target a file input rendered inside that iframe instead of the top-level document — e.g. an application form rendered inside \`#content_iframe\`. Without it, a file input that only exists inside a same-origin iframe looks identical to a genuine window.showOpenFilePicker() widget with no automatable surface at all — it isn't, it just wasn't being searched for in the right place. Cross-origin iframes still aren't reachable this way.
+
 Provide file_path OR file_content, not both.`,
     {
       hint: z.string().describe("Label text, name, or surrounding text of the file input. Use empty string to target the first file input on the page."),
@@ -40,8 +42,12 @@ Provide file_path OR file_content, not both.`,
         .string()
         .optional()
         .describe('Optional CSS selector that should appear after a successful upload (e.g. ".photo-thumbnail", "[data-uploaded=true]"). When matched, set_file_input returns success immediately.'),
+      frame: z
+        .string()
+        .optional()
+        .describe("Same-origin iframe CSS selector to search inside for the file input. Cross-origin iframes are not supported."),
     },
-    async ({ hint, file_path, file_content, file_name, mime_type, wait_ms, verify_selector }) => {
+    async ({ hint, file_path, file_content, file_name, mime_type, wait_ms, verify_selector, frame }) => {
       // file_path XOR file_content: one source is required, both is ambiguous.
       if (!file_path && !file_content) {
         return {
@@ -71,6 +77,7 @@ Provide file_path OR file_content, not both.`,
           mimeType: mime_type,
           waitMs: wait_ms,
           verifySelector: verify_selector,
+          frame,
         },
         wsTimeout
       );

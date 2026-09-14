@@ -157,6 +157,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           opacity: string;
           visible: boolean;
         };
+        frame_error?: string;
       };
       // via:"fiber" skips the CDP click entirely and goes straight to React
       // fiber prop invocation. Use when the caller already knows the site is
@@ -178,6 +179,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           near_text: msg.near_text,
           in_dialog: msg.in_dialog,
           dialog_query: msg.dialog_query,
+          frame: msg.frame,
         }) as PrepResult;
         if (prep.success) break;
         // Don't retry when the scope itself was missing — it won't appear on a 500ms delay.
@@ -210,7 +212,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
             }
           } catch { /* best-effort diagnostic */ }
         }
-        return { type: "click_element_response", success: false, message: failMsg, before_url, after_url: before_url, navigated: false, scope_missed: prep?.scope_missed };
+        return { type: "click_element_response", success: false, message: failMsg, before_url, after_url: before_url, navigated: false, scope_missed: prep?.scope_missed, frame_error: prep?.frame_error };
       }
 
       // via:"fiber" — the target is already resolved and tagged (prep,
@@ -312,6 +314,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
             near_text: msg.near_text,
             in_dialog: msg.in_dialog,
             dialog_query: msg.dialog_query,
+            frame: msg.frame,
           }) as PrepResult;
           if (reprep.success && !reprep.target_disabled) {
             prep = reprep;
@@ -364,6 +367,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
             near_text: msg.near_text,
             in_dialog: msg.in_dialog,
             dialog_query: msg.dialog_query,
+            frame: msg.frame,
           }) as PrepResult;
           if (reprep.success && reprep.width !== 0 && reprep.height !== 0) {
             // Replace prep so the rest of the flow uses the visible candidate.
@@ -1088,6 +1092,11 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           ? await classifyTopDialog(tab.id)
           : null;
         let earlyDialog: { kind: string; label: string; primary_action: string } | undefined;
+        // Set when a URL change was observed but reverted back to before_url
+        // within the settle window below — carried out to the post-loop
+        // failure-message block so a caller doesn't mistake the earlier push
+        // for a real success.
+        let revertedUrl: string | null = null;
         let iter = 0;
         while (Date.now() < deadline) {
           iter++;
@@ -1096,9 +1105,31 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           const currentUrl = currentTab?.url ?? "";
 
           if (untilUrlChanges && currentUrl && currentUrl !== before_url) {
-            untilResult = { ok: true, reason: `URL changed to ${currentUrl}` };
-            navigationResult = currentUrl;
-            break;
+            // A single tick where the URL differs from before_url is not proof
+            // the navigation is durable: many SPA frameworks push the next
+            // route optimistically and roll it back if the async action behind
+            // it (e.g. an account-creation POST) is rejected server-side. Hold
+            // for a short settle window and only declare success if the URL is
+            // still different from before_url once it elapses. See
+            // ISSUE-2026-09-14-workday-create-account-still-silently-fails.md
+            // for a captured case where the URL advanced then bounced back to
+            // the original step on a fresh load of the "new" address.
+            const changedUrl = currentUrl;
+            const settleDeadline = Date.now() + 1250;
+            let settledUrl = changedUrl;
+            let reverted = false;
+            while (Date.now() < settleDeadline) {
+              await new Promise((r) => setTimeout(r, 250));
+              const [settleTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+              settledUrl = settleTab?.url ?? settledUrl;
+              if (settledUrl === before_url) { reverted = true; break; }
+            }
+            if (!reverted) {
+              untilResult = { ok: true, reason: `URL changed to ${settledUrl}` };
+              navigationResult = settledUrl;
+              break;
+            }
+            revertedUrl = changedUrl;
           }
 
           if (
@@ -1271,6 +1302,18 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
               ...(sawInFlight ? { request_in_flight: true } : {}),
               reason: `Click fired and opened a dialog instead of ${conditions} within ${waited}ms; the click DID register, do NOT re-click it.${blockerHint}`,
             };
+          } else if (revertedUrl) {
+            // The URL DID change after the click, then reverted to the
+            // pre-click address before it could settle — an optimistic
+            // client-side route that rolled back once the server-side action
+            // was rejected. Report this distinctly rather than as a bare
+            // timeout so the caller doesn't mistake the earlier push for a
+            // durable success and move on to the next wizard step.
+            untilResult = {
+              ok: false,
+              ...(sawInFlight ? { request_in_flight: true } : {}),
+              reason: `URL changed to ${revertedUrl} then reverted to the original address (${before_url}) before settling; likely an optimistic client-side route that rolled back after the server-side action was rejected. The click did NOT durably succeed — do not treat the earlier URL change as success. Re-check page state (e.g. execute_script or find_text) before retrying.`,
+            };
           } else if (sawInFlight) {
             // The click fired a network request that was still resolving — it
             // DID register. Surface that instead of "may not have registered",
@@ -1292,13 +1335,36 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         // 4s. Catches the "synthetic click silently rejected" case on Reddit /
         // X submit without needing a specific until_* destination.
         const start = Date.now();
+        // Set when a URL change was observed but reverted back to before_url
+        // within the settle window below — see the matching comment on the
+        // until_url_changes branch above for the rationale.
+        let revertedUrl: string | null = null;
         while (Date.now() - start < 4000) {
           const [t] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
           const url = t?.url ?? "";
           if (url && url !== before_url) {
-            untilResult = { ok: true, reason: `URL changed to ${url}` };
-            navigationResult = url;
-            break;
+            // Same optimistic-route-then-rollback risk as until_url_changes:
+            // don't declare success on the first differing tick. Hold for a
+            // short settle window (capped so it doesn't blow the whole 4s
+            // expect_submit budget) and only succeed if the URL is still
+            // changed once it elapses. See ISSUE-2026-09-14-workday-create-
+            // account-still-silently-fails.md.
+            const changedUrl = url;
+            const settleDeadline = Date.now() + Math.min(1250, Math.max(0, 4000 - (Date.now() - start) - 250));
+            let settledUrl = changedUrl;
+            let reverted = false;
+            while (Date.now() < settleDeadline) {
+              await new Promise((r) => setTimeout(r, 250));
+              const [settleTab] = await chrome.tabs.query({ active: true, windowId: tab.windowId! });
+              settledUrl = settleTab?.url ?? settledUrl;
+              if (settledUrl === before_url) { reverted = true; break; }
+            }
+            if (!reverted) {
+              untilResult = { ok: true, reason: `URL changed to ${settledUrl}` };
+              navigationResult = settledUrl;
+              break;
+            }
+            revertedUrl = changedUrl;
           }
           if (t?.id && isScriptableUrl(url)) {
             const counts = await getSubmitSignalCounts(t.id);
@@ -1334,10 +1400,15 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           await new Promise((r) => setTimeout(r, 300));
         }
         if (!untilResult) {
-          untilResult = {
-            ok: false,
-            reason: `submit silently rejected (likely anti-bot): no URL change, toast, alert, modal, or label-flip signal appeared within 4s. Synthetic clicks fail on Reddit / X / mcp.so even though isTrusted passes. Retry with try_fiber=true on React SPAs; otherwise this action cannot complete unattended — report the rejection back rather than waiting on highlight_region + wait_for_click, since most sessions have no one present to click.`,
-          };
+          untilResult = revertedUrl
+            ? {
+              ok: false,
+              reason: `URL changed to ${revertedUrl} then reverted to the original address (${before_url}) before settling; likely an optimistic client-side route that rolled back after the server-side action was rejected. The click did NOT durably succeed — do not treat the earlier URL change as success. Re-check page state (e.g. execute_script or find_text) before retrying.`,
+            }
+            : {
+              ok: false,
+              reason: `submit silently rejected (likely anti-bot): no URL change, toast, alert, modal, or label-flip signal appeared within 4s. Synthetic clicks fail on Reddit / X / mcp.so even though isTrusted passes. Retry with try_fiber=true on React SPAs; otherwise this action cannot complete unattended — report the rejection back rather than waiting on highlight_region + wait_for_click, since most sessions have no one present to click.`,
+            };
         }
       } else {
         // No until-clause and no expect_submit — race a real-load wait against

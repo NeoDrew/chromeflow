@@ -10,6 +10,7 @@ import {
   resolveLabelledControl,
 } from "./resolve.js";
 import { dispatchHumanClickEvents, firePointerChain, scrollSmartIntoView } from "./pointer.js";
+import { resolveFrameDocument, frameErrorHint } from "../ops/frame-util.js";
 
 /**
  * Phase 1 of the CDP click flow. Find the clickable element, scroll it into
@@ -23,6 +24,23 @@ import { dispatchHumanClickEvents, firePointerChain, scrollSmartIntoView } from 
  * caller should short-circuit without firing the click. Re-clicking an
  * already-checked radio toggles it OFF on React forms whose onChange handler
  * interprets the click as a deselect (common on React-controlled form widgets).
+ *
+ * `frame`: CSS selector for a same-origin iframe to search inside instead of
+ * the top-level document, mirroring fill_input/find_text's `frame` param
+ * (resolved via ops/frame-util.ts's resolveFrameDocument/frameErrorHint, the
+ * same helpers find.ts already uses). Motivating example: iCIMS renders its
+ * whole application form inside `#icims_content_iframe`, and a required
+ * `<select>` left on its placeholder option there disables the submit button
+ * with zero console output or DOM mutation when clicked — indistinguishable
+ * from anti-bot silent rejection from the outside (see
+ * ISSUE-2026-09-11-icims-hcaptcha-silent-submit-block.md and
+ * ISSUE-2026-09-14-icims-hcaptcha-still-silent.md). Any site with a
+ * same-origin iframe hits the same blind spot: prepareClickTarget could never
+ * reach inside one at all, so its existing disabled-target detection never
+ * got a chance to run. This only changes WHERE the element is searched for —
+ * the resolved element still flows through every existing check below
+ * (disabled-state snapshot, checkable-input handling, labelled-control
+ * redirect, marker tagging) unchanged.
  */
 export async function prepareClickTarget(
   textHint: string | undefined,
@@ -32,6 +50,7 @@ export async function prepareClickTarget(
   selector?: string,
   in_dialog?: boolean,
   dialog_query?: string,
+  frame?: string,
 ): Promise<{
   success: boolean;
   message: string;
@@ -55,22 +74,39 @@ export async function prepareClickTarget(
     opacity: string;
     visible: boolean;
   };
+  frame_error?: string;
 }> {
+  // Resolve the search root first. Returns the top-level `document` unchanged
+  // when frame is omitted, so every branch below is byte-for-byte identical
+  // to pre-frame behavior in that case.
+  const rootDoc = resolveFrameDocument(frame);
+  if (rootDoc === null) {
+    const hint = frameErrorHint(frame);
+    return { success: false, message: hint, frame_error: hint };
+  }
+
   // Clear any stale tags from a previous click. Shadow-piercing because the
   // previous click may have tagged an element inside a shadow root. ONE walk
   // over the union of all three marker attributes instead of three separate
   // shadow-tree walks (each ~50-150ms on a 1000+ shadow-host page); we then
-  // strip whichever marker(s) the element actually carries.
+  // strip whichever marker(s) the element actually carries. Always clears the
+  // top-level document (unchanged pre-frame behavior) and, when frame points
+  // at a different document, also clears there — a prior call may have tagged
+  // either one.
   const ct = markerIds.clickTargetAttr();
   const pc = markerIds.preCheckedAttr();
   const pd = markerIds.preDimensionsAttr();
-  for (const el of queryAllDeep(document, `[${ct}], [${pc}], [${pd}]`)) {
-    el.removeAttribute(ct);
-    el.removeAttribute(pc);
-    el.removeAttribute(pd);
-  }
+  const clearMarkersIn = (root: Document) => {
+    for (const el of queryAllDeep(root, `[${ct}], [${pc}], [${pd}]`)) {
+      el.removeAttribute(ct);
+      el.removeAttribute(pc);
+      el.removeAttribute(pd);
+    }
+  };
+  clearMarkersIn(document);
+  if (rootDoc !== document) clearMarkersIn(rootDoc);
 
-  let scope: Document | Element = document;
+  let scope: Document | Element = rootDoc;
   if (dialog_query) {
     const d = findDialogByQuery(dialog_query);
     if (!d) {
@@ -87,8 +123,11 @@ export async function prepareClickTarget(
     // Pierce shadow roots so a selector returned by find_text (which walks
     // closed shadow trees via chrome.dom.openOrClosedShadowRoot) is usable as
     // a click scope. Plain document.querySelector misses elements inside
-    // Radix portals / Stencil components / Lit web components.
-    const scoped = queryAllDeep(document, within_selector)[0] ?? null;
+    // Radix portals / Stencil components / Lit web components. Scoped to
+    // rootDoc (not the bare top-level document) so within_selector composes
+    // with frame — the subtree is searched for inside the iframe when one
+    // was given.
+    const scoped = queryAllDeep(rootDoc, within_selector)[0] ?? null;
     if (!scoped) {
       return { success: false, message: `within_selector "${within_selector}" did not match any element`, scope_missed: true };
     }
@@ -216,11 +255,28 @@ export async function prepareClickTarget(
     }
   }
 
+  // getBoundingClientRect() on an element resolved inside a same-origin
+  // iframe is relative to the IFRAME's own viewport, not the top-level page
+  // — but the CDP click dispatched by background/handlers/click.ts fires at
+  // top-level viewport coordinates. Add the iframe's own offset so the click
+  // actually lands on the resolved element instead of whatever sits at the
+  // same (x, y) in the outer page.
+  let frameOffsetX = 0;
+  let frameOffsetY = 0;
+  if (rootDoc !== document) {
+    const iframeEl = frame ? document.querySelector<HTMLIFrameElement>(frame) : null;
+    if (iframeEl) {
+      const iframeRect = iframeEl.getBoundingClientRect();
+      frameOffsetX = iframeRect.left;
+      frameOffsetY = iframeRect.top;
+    }
+  }
+
   const rect = el.getBoundingClientRect();
   // Random point in central 60% of the element (avoid edges — humans aim
   // roughly at the middle, not perfect-center).
-  const x = rect.left + rect.width * (0.2 + Math.random() * 0.6);
-  const y = rect.top + rect.height * (0.2 + Math.random() * 0.6);
+  const x = frameOffsetX + rect.left + rect.width * (0.2 + Math.random() * 0.6);
+  const y = frameOffsetY + rect.top + rect.height * (0.2 + Math.random() * 0.6);
 
   const label =
     (el as HTMLElement).innerText?.trim() ||

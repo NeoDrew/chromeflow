@@ -76,6 +76,8 @@ export interface SetFileFromContentMessage {
   fileContent: string;
   fileName: string;
   mimeType?: string;
+  /** Same-origin iframe CSS selector the target input was tagged inside, if any. */
+  frame?: string;
 }
 
 /** Just the scope fields, for enforcement lookups. */

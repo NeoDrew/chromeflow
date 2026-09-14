@@ -23,6 +23,8 @@ Returns {success, message, before_url, after_url, navigated}. \`navigated\` is t
 
 Scope matching with \`within_selector\` or \`near_text\` restricts where matches are searched — useful for long forms with repeated labels per section (e.g. one "Approve" radio per row). \`within_selector\` is a CSS selector; \`near_text\` finds the nearest container whose heading starts with the given text.
 
+Pass \`frame\` (a same-origin iframe CSS selector, same param as fill_input/find_text) to search and click inside that iframe instead of the top-level document — e.g. an application form rendered inside \`#content_iframe\`. Reach for this instead of \`click_at_coordinates\` or \`execute_script\` whenever the target lives inside a same-origin iframe: those escape hatches bypass prepareClickTarget entirely, including its disabled-element refusal (target_disabled + disabled_state), which is exactly the check most likely to explain a click that "does nothing" — a required field elsewhere on the form left on its placeholder value can leave a submit button disabled with zero console output or DOM mutation. \`frame\` still dispatches the real CDP click at the iframe's on-screen position, so shadow-DOM piercing and until_* clauses run as usual; the activity probe watches the top-level document only, so it can under-report activity that happens purely inside the iframe (verify with find_text/execute_script instead of trusting a silently_rejected=true here). Cross-origin iframes still aren't reachable this way — use \`click_at_coordinates\` with coordinates from \`list_frames\` for those.
+
 Shadow DOM (open AND closed) is pierced by default via chrome.dom.openOrClosedShadowRoot — Reddit faceplate-* / r-post-form-submit-button / web-component-heavy SPAs no longer need manual deepFind recipes.
 
 ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X / Twitter, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry — pre-fill the form and retry once with \`try_fiber: true\`; if it's still rejected, most sessions run unattended, so report the rejection rather than reaching for highlight_region + wait_for_click. Only use that pairing when a human is actually present for this session.`,
@@ -111,8 +113,12 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         .min(0)
         .optional()
         .describe(`When the matched target is currently disabled (native disabled OR aria-disabled=true), poll for up to this many ms waiting for it to become enabled before clicking. Default 0 (do not wait — return target_disabled immediately). Use 2000-5000 for Submit-style buttons that briefly disable while an async copilot/validator/save is in flight. On timeout the response carries target_disabled=true plus a structured disabled_state snapshot (disabled, aria_disabled, pointer_events, opacity, visible) so the caller can decide between "wait more" or "field is genuinely missing — run get_form_fields(only_empty:true)".`),
+      frame: z
+        .string()
+        .optional()
+        .describe("Same-origin iframe CSS selector to search and click inside. Cross-origin iframes are not supported — use click_at_coordinates instead."),
     },
-    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms }) => {
+    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms, frame }) => {
       // Validate exactly-one-of(textHint, selector)
       if ((!textHint && !selector) || (textHint && selector)) {
         return {
@@ -126,7 +132,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms },
+          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms, frame },
           wsTimeout
         );
       } catch (err) {
@@ -164,6 +170,7 @@ ANTI-BOT SUBMIT CEILING — synthetic clicks on social/auth platforms (Reddit, X
         after_url?: string;
         navigated?: boolean;
         scope_missed?: boolean;
+        frame_error?: string;
         silently_rejected?: boolean;
         fiber_attempted?: boolean;
         recovered_via?: string;
