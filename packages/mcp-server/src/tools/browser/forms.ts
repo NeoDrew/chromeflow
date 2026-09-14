@@ -36,14 +36,16 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
         return { content: [{ type: "text", text: `${header}\n${lines.join("\n")}\n\nTo fill: fill_input("${r.fields[0].label}", "<value>")` }] };
       }
       // Inventory mode.
-      const response = await bridge.request({ type: "get_form_fields", only_empty });
+      const response = await bridge.request({ type: "get_form_fields", only_empty, frame });
       if (response.type !== "form_fields_response") throw new Error("Unexpected response");
       const r = response as {
         fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string; required?: boolean; empty?: boolean; duplicate_id?: boolean }>;
         warning?: string;
         captcha?: { kind: string; sitekey: string | null } | null;
         oauthIndicators?: string[];
+        frame_error?: string;
       };
+      if (r.frame_error) return { content: [{ type: "text", text: r.frame_error }] };
       const fields = r.fields;
       // TODO: WE NEED TO FIX THE LOGIC HERE TO FIX CAPTCHA
       const captchaLine = r.captcha

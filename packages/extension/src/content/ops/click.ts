@@ -56,6 +56,7 @@ export async function opPrepareClickTarget(msg: IncomingMessage): Promise<unknow
     msg.selector as string | undefined,
     msg.in_dialog as boolean | undefined,
     msg.dialog_query as string | undefined,
+    msg.frame as string | undefined,
   );
   return { type: "action_done", requestId: msg.requestId, ...result };
 }

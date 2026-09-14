@@ -1,7 +1,7 @@
 import { queryAllDeep } from "../shadow.js";
 import { markerIds } from "../../markers.js";
 import { type SetFileFromContentMessage } from "../../connections.js";
-import type { IncomingMessage } from "./frame-util.js";
+import { resolveFrameDocument, frameErrorHint, type IncomingMessage } from "./frame-util.js";
 
 // Common upload-widget phrasing, used only when the caller passed no hint (or
 // the hint didn't match anything) — deliberately just a vocabulary of the
@@ -25,11 +25,11 @@ const DROP_ZONE_SELECTOR = 'button, [role="button"], a, label, [class*="drop" i]
  * matches the hint (or, with no hint, common upload-widget phrasing), so a
  * match on a large ancestor wrapper doesn't win over the actual widget.
  */
-function findDropZoneCandidate(hint: string): HTMLElement | null {
+function findDropZoneCandidate(hint: string, doc: Document): HTMLElement | null {
   const hintLower = hint.toLowerCase();
   let best: HTMLElement | null = null;
   let bestArea = Infinity;
-  for (const el of queryAllDeep<HTMLElement>(document, DROP_ZONE_SELECTOR)) {
+  for (const el of queryAllDeep<HTMLElement>(doc, DROP_ZONE_SELECTOR)) {
     const ownText = (el.getAttribute("aria-label") ?? el.textContent ?? "").replace(/\s+/g, " ").trim();
     if (!ownText || ownText.length > 150) continue;
     const matches = hintLower ? ownText.toLowerCase().includes(hintLower) : DROP_ZONE_TEXT_RE.test(ownText);
@@ -43,6 +43,11 @@ function findDropZoneCandidate(hint: string): HTMLElement | null {
 }
 
 export function opTagFileInput(msg: IncomingMessage): unknown {
+  const frame = msg.frame as string | undefined;
+  const doc = resolveFrameDocument(frame);
+  if (doc === null) {
+    return { type: "action_done", requestId: msg.requestId, found: false, frame_error: frameErrorHint(frame) };
+  }
   const hint = ((msg.hint as string) ?? "").trim();
   const hintLower = hint.toLowerCase();
   let found: HTMLInputElement | null = null;
@@ -58,7 +63,7 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
   if (hintIsSelector) {
     let matches: Element[] = [];
     try {
-      matches = queryAllDeep<Element>(document, hint);
+      matches = queryAllDeep<Element>(doc, hint);
     } catch {
       return {
         type: "action_done",
@@ -96,8 +101,8 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
   // Try matching by ID directly (e.g. hint="import-problem-file" matches id="import-problem-file").
   // getElementById is light-DOM only; fall back to a piercing query for IDs inside shadow roots.
   if (!found && hint) {
-    const byId = (document.getElementById(hint) as HTMLInputElement | null)
-      ?? (queryAllDeep<HTMLInputElement>(document, `#${CSS.escape(hint)}`)[0] ?? null);
+    const byId = (doc.getElementById(hint) as HTMLInputElement | null)
+      ?? (queryAllDeep<HTMLInputElement>(doc, `#${CSS.escape(hint)}`)[0] ?? null);
     if (byId && byId.type === "file") found = byId;
   }
 
@@ -118,12 +123,12 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
   // matching is already handled separately above (getElementById), so
   // nothing is lost by leaving id out of the label heuristic itself.
   if (!found) {
-    for (const el of queryAllDeep<HTMLInputElement>(document, "input[type=file]")) {
+    for (const el of queryAllDeep<HTMLInputElement>(doc, "input[type=file]")) {
       let label = el.getAttribute("aria-label") || el.getAttribute("name") || "";
       if (!label && el.id) {
         // Labels are scoped to their containing root (Document or ShadowRoot);
         // queryAllDeep walks every root so we still find them.
-        const lbl = queryAllDeep<HTMLLabelElement>(document, `label[for="${CSS.escape(el.id)}"]`)[0];
+        const lbl = queryAllDeep<HTMLLabelElement>(doc, `label[for="${CSS.escape(el.id)}"]`)[0];
         if (lbl) label = (lbl.textContent ?? "").trim();
       }
       if (!label) {
@@ -139,7 +144,7 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
   }
 
   // Fallback: first file input anywhere on the page (including shadow roots).
-  const allFileInputs = queryAllDeep<HTMLInputElement>(document, "input[type=file]");
+  const allFileInputs = queryAllDeep<HTMLInputElement>(doc, "input[type=file]");
   // A non-empty hint that matched NOTHING above, on a page with 2+ file
   // inputs, is exactly the ambiguous case the CSS-selector path above
   // already refuses rather than silently guessing — apply the same refusal
@@ -168,7 +173,8 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
     // ISSUE-2026-08-16-google-careers-no-file-input.md. Surface this
     // structurally so the caller stops retrying hints and reports/hands off
     // instead of burning calls on a widget with no automatable surface.
-    const hasFileSystemAccessApi = typeof (window as unknown as { showOpenFilePicker?: unknown }).showOpenFilePicker === "function";
+    const win = doc.defaultView ?? window;
+    const hasFileSystemAccessApi = typeof (win as unknown as { showOpenFilePicker?: unknown }).showOpenFilePicker === "function";
     // These widgets almost always wire a standard HTML5 drag-and-drop listener
     // onto the same clickable surface as a redundant/accessible upload path
     // (react-dropzone, Uppy, FilePond, and hand-rolled equivalents all do this)
@@ -177,7 +183,7 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
     // candidate drop-zone element so background.ts can attempt a CDP-level
     // Input.dispatchDragEvent delivery (see ISSUE-2026-09-07-tradinghub-no-
     // file-input.md).
-    const dropZone = hasFileSystemAccessApi ? findDropZoneCandidate(hint) : null;
+    const dropZone = hasFileSystemAccessApi ? findDropZoneCandidate(hint, doc) : null;
     if (dropZone) {
       const dropAttr = markerIds.dropZoneAttr();
       dropZone.setAttribute(dropAttr, "true");
@@ -213,10 +219,19 @@ export function opUntagFileInput(msg: IncomingMessage): unknown {
   // Strips both marker attrs unconditionally — a given upload attempt only
   // ever sets one of the two (file input OR drop zone), so clearing both is
   // simpler than threading which path fired back into the untag call.
-  for (const attr of [markerIds.fileTargetAttr(), markerIds.dropZoneAttr()]) {
-    queryAllDeep(document, `[${attr}]`).forEach((el) => {
-      el.removeAttribute(attr);
-    });
+  // Clears both the top-level document and the frame doc (when one was used)
+  // since this is best-effort cleanup, not the primary targeting step — no
+  // harm in checking both regardless of which one the original tag call used.
+  const frame = msg.frame as string | undefined;
+  const docs = [document, ...(frame ? [resolveFrameDocument(frame)] : [])].filter(
+    (d): d is Document => d !== null
+  );
+  for (const doc of docs) {
+    for (const attr of [markerIds.fileTargetAttr(), markerIds.dropZoneAttr()]) {
+      queryAllDeep(doc, `[${attr}]`).forEach((el) => {
+        el.removeAttribute(attr);
+      });
+    }
   }
   return { type: "action_done", requestId: msg.requestId };
 }
@@ -229,7 +244,8 @@ export function opDispatchFileChangeEvents(msg: IncomingMessage): unknown {
   // null. queryAllDeep here (content-script ISOLATED world) pierces via
   // chrome.dom.openOrClosedShadowRoot.
   const attr = (msg.attr as string) ?? markerIds.fileTargetAttr();
-  const el = queryAllDeep<HTMLInputElement>(document, `[${attr}="true"]`)[0] ?? null;
+  const doc = resolveFrameDocument(msg.frame as string | undefined) ?? document;
+  const el = queryAllDeep<HTMLInputElement>(doc, `[${attr}="true"]`)[0] ?? null;
   if (el) {
     el.dispatchEvent(new Event("change", { bubbles: true }));
     // Plain Event, not InputEvent: per spec (and MDN's own input-event docs),
@@ -254,7 +270,8 @@ export function opSetFileFromContent(msg: IncomingMessage): unknown {
   // chrome.dom.openOrClosedShadowRoot) so inputs inside Stencil/Radix/Lit
   // web components resolve, matching dispatch_file_change_events above.
   const m = msg as unknown as SetFileFromContentMessage & { requestId: string };
-  const input = queryAllDeep<HTMLInputElement>(document, `[${m.attr}="true"]`)[0] ?? null;
+  const doc = resolveFrameDocument(m.frame) ?? document;
+  const input = queryAllDeep<HTMLInputElement>(doc, `[${m.attr}="true"]`)[0] ?? null;
   if (!input) {
     return { type: "action_done", requestId: msg.requestId, found: false };
   }
@@ -263,12 +280,18 @@ export function opSetFileFromContent(msg: IncomingMessage): unknown {
   // trip intact rather than being mangled by UTF-8 decoding.
   const binary = atob(m.fileContent);
   const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
-  const file = new File([bytes], m.fileName, {
+  // Construct File/DataTransfer from the target's OWN realm (doc.defaultView)
+  // when it lives in a same-origin iframe — assigning a FileList built in a
+  // different window's realm to input.files is the same cross-realm class of
+  // bug already fixed elsewhere in this codebase (see stealth.ts's
+  // Function.prototype.toString cross-realm fix).
+  const win = doc.defaultView ?? window;
+  const file = new win.File([bytes], m.fileName, {
     type: m.mimeType || "application/octet-stream",
   });
   // FileList is read-only and can't be constructed directly; DataTransfer is
   // the only standard way to synthesize one and assign input.files.
-  const dt = new DataTransfer();
+  const dt = new win.DataTransfer();
   dt.items.add(file);
   input.files = dt.files;
   // Same change+input dispatch the path-mode commit uses, so React/Vue form

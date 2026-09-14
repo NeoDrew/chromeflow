@@ -314,18 +314,35 @@ export async function freshTargetPoint(
      * input and the caller had no coordinate to drop onto.
      */
     visibleAncestorFallback?: boolean;
+    /**
+     * Same-origin iframe CSS selector the tagged element lives inside, if any
+     * (mirrors set_file_input's `frame` param). getBoundingClientRect() on an
+     * element resolved from an iframe's own document is relative to THAT
+     * iframe's viewport, not the top page — the returned point gets the
+     * iframe's own on-screen offset added so it lands correctly when CDP
+     * dispatches the drag-drop at top-level viewport coordinates. See
+     * ISSUE-2026-09-14-icims-hcaptcha-still-silent.md for the motivating case.
+     */
+    frame?: string;
   } = {},
 ): Promise<{ x: number; y: number; in_view: boolean } | null> {
   try {
     const r = await chrome.scripting.executeScript({
       target: { tabId },
-      func: async (attr: string, climbToVisibleAncestor: boolean) => {
+      func: async (attr: string, climbToVisibleAncestor: boolean, frame: string) => {
         const cd = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
         const getSR = (el: Element): ShadowRoot | null => {
           try { if (cd?.openOrClosedShadowRoot) { const sr = cd.openOrClosedShadowRoot(el); if (sr) return sr; } } catch { /* ignore */ }
           return (el as Element & { shadowRoot?: ShadowRoot | null }).shadowRoot ?? null;
         };
-        const stack: (Document | ShadowRoot)[] = [document];
+        // Same-origin iframes are reachable via plain contentDocument from this
+        // function's own (top-frame) execution context — see pierceFileCount's
+        // matching comment in cdp/misc.ts.
+        const searchDoc: Document = frame
+          ? ((document.querySelector(frame) as HTMLIFrameElement | null)?.contentDocument ?? document)
+          : document;
+        const view = searchDoc.defaultView ?? window;
+        const stack: (Document | ShadowRoot)[] = [searchDoc];
         let el: Element | null = null;
         while (stack.length) {
           const root = stack.pop()!;
@@ -348,8 +365,8 @@ export async function freshTargetPoint(
             if (crect.width > 0 || crect.height > 0) { target = climb as HTMLElement; rect = crect; break; }
           }
         }
-        const outside = rect.bottom < 0 || rect.top > innerHeight || rect.right < 0 || rect.left > innerWidth
-          || rect.top < 0 || rect.bottom > innerHeight;
+        const outside = rect.bottom < 0 || rect.top > view.innerHeight || rect.right < 0 || rect.left > view.innerWidth
+          || rect.top < 0 || rect.bottom > view.innerHeight;
         if (outside) {
           // behavior:"instant" forces a synchronous scroll, but prepareClickTarget
           // already started a SMOOTH scroll that keeps animating; if we read the
@@ -370,9 +387,26 @@ export async function freshTargetPoint(
           rect = target.getBoundingClientRect();
         }
         if (rect.width === 0 && rect.height === 0) return null;
-        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, in_view: rect.top >= 0 && rect.bottom <= innerHeight };
+        // rect is relative to searchDoc's own viewport — add the iframe's own
+        // on-screen position (re-read fresh, after any scrolling above) to
+        // convert to top-level viewport coordinates. Zero offset when frame
+        // wasn't given, since searchDoc === document in that case.
+        let offsetX = 0, offsetY = 0;
+        if (frame) {
+          const iframeEl = document.querySelector(frame);
+          if (iframeEl) {
+            const ir = iframeEl.getBoundingClientRect();
+            offsetX = ir.left;
+            offsetY = ir.top;
+          }
+        }
+        return {
+          x: offsetX + rect.left + rect.width / 2,
+          y: offsetY + rect.top + rect.height / 2,
+          in_view: rect.top >= 0 && rect.bottom <= view.innerHeight,
+        };
       },
-      args: [markerAttr, opts.visibleAncestorFallback ?? false],
+      args: [markerAttr, opts.visibleAncestorFallback ?? false, opts.frame ?? ""],
     });
     const v = r[0]?.result as { x: number; y: number; in_view: boolean } | null | undefined;
     return v ?? null;

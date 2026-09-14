@@ -25660,13 +25660,14 @@ ${lines2.join("\n")}
 
 To fill: fill_input("${r2.fields[0].label}", "<value>")` }] };
       }
-      const response = await bridge.request({ type: "get_form_fields", only_empty });
+      const response = await bridge.request({ type: "get_form_fields", only_empty, frame });
       if (response.type !== "form_fields_response") throw new Error("Unexpected response");
       const r = response;
+      if (r.frame_error) return { content: [{ type: "text", text: r.frame_error }] };
       const fields = r.fields;
       const captchaLine = r.captcha ? `
 
-\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. TDOD: CAPTCHA PASSING` : "";
+\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. TO DO: FIX CAPTCHA LOGIC TO PASS` : "";
       const oauthLine = r.oauthIndicators && r.oauthIndicators.length > 0 ? `
 
 \u2139 OAuth providers detected on this form: ${r.oauthIndicators.join(", ")}. If the user wants to sign in via one of these, click it instead of filling email/password.` : "";
@@ -25748,6 +25749,8 @@ Two ways to supply the file:
 - file_path (CDP mode): an absolute path on the machine running this server. Reaches both open AND closed shadow roots.
 - file_content + file_name (inline-content mode): base64 file bytes plus a filename, materialized into the input directly. Use this when the server has no local disk access (e.g. a remote endpoint that can't see your filesystem). Caveat: inline-content mode reaches OPEN shadow roots only \u2014 if the input lives in a closed shadow root, use file_path instead.
 
+Pass \`frame\` (a same-origin iframe CSS selector, same param as fill_input/find_text/click_element) to target a file input rendered inside that iframe instead of the top-level document \u2014 e.g. an application form rendered inside \`#content_iframe\`. Without it, a file input that only exists inside a same-origin iframe looks identical to a genuine window.showOpenFilePicker() widget with no automatable surface at all \u2014 it isn't, it just wasn't being searched for in the right place. Cross-origin iframes still aren't reachable this way.
+
 Provide file_path OR file_content, not both.`,
     {
       hint: external_exports.string().describe("Label text, name, or surrounding text of the file input. Use empty string to target the first file input on the page."),
@@ -25756,9 +25759,10 @@ Provide file_path OR file_content, not both.`,
       file_name: external_exports.string().optional().describe('Filename to present to the page in inline-content mode (e.g. "report.pdf"). Required when file_content is set.'),
       mime_type: external_exports.string().optional().describe('Optional MIME type for inline-content mode (e.g. "application/pdf"). Inferred from file_name when omitted.'),
       wait_ms: external_exports.number().int().min(0).optional().describe("How long to wait for an observable change after setting the file (default 3000). Increase for slow uploaders that take a moment to render thumbnails."),
-      verify_selector: external_exports.string().optional().describe('Optional CSS selector that should appear after a successful upload (e.g. ".photo-thumbnail", "[data-uploaded=true]"). When matched, set_file_input returns success immediately.')
+      verify_selector: external_exports.string().optional().describe('Optional CSS selector that should appear after a successful upload (e.g. ".photo-thumbnail", "[data-uploaded=true]"). When matched, set_file_input returns success immediately.'),
+      frame: external_exports.string().optional().describe("Same-origin iframe CSS selector to search inside for the file input. Cross-origin iframes are not supported.")
     },
-    async ({ hint, file_path, file_content, file_name, mime_type, wait_ms, verify_selector }) => {
+    async ({ hint, file_path, file_content, file_name, mime_type, wait_ms, verify_selector, frame }) => {
       if (!file_path && !file_content) {
         return {
           content: [{ type: "text", text: "Failed to set file: provide either file_path or file_content." }]
@@ -25785,7 +25789,8 @@ Provide file_path OR file_content, not both.`,
           fileName: file_name,
           mimeType: mime_type,
           waitMs: wait_ms,
-          verifySelector: verify_selector
+          verifySelector: verify_selector,
+          frame
         },
         wsTimeout
       );
@@ -26299,6 +26304,8 @@ Returns {success, message, before_url, after_url, navigated}. \`navigated\` is t
 
 Scope matching with \`within_selector\` or \`near_text\` restricts where matches are searched \u2014 useful for long forms with repeated labels per section (e.g. one "Approve" radio per row). \`within_selector\` is a CSS selector; \`near_text\` finds the nearest container whose heading starts with the given text.
 
+Pass \`frame\` (a same-origin iframe CSS selector, same param as fill_input/find_text) to search and click inside that iframe instead of the top-level document \u2014 e.g. an application form rendered inside \`#content_iframe\`. Reach for this instead of \`click_at_coordinates\` or \`execute_script\` whenever the target lives inside a same-origin iframe: those escape hatches bypass prepareClickTarget entirely, including its disabled-element refusal (target_disabled + disabled_state), which is exactly the check most likely to explain a click that "does nothing" \u2014 a required field elsewhere on the form left on its placeholder value can leave a submit button disabled with zero console output or DOM mutation. \`frame\` still dispatches the real CDP click at the iframe's on-screen position, so shadow-DOM piercing and until_* clauses run as usual; the activity probe watches the top-level document only, so it can under-report activity that happens purely inside the iframe (verify with find_text/execute_script instead of trusting a silently_rejected=true here). Cross-origin iframes still aren't reachable this way \u2014 use \`click_at_coordinates\` with coordinates from \`list_frames\` for those.
+
 Shadow DOM (open AND closed) is pierced by default via chrome.dom.openOrClosedShadowRoot \u2014 Reddit faceplate-* / r-post-form-submit-button / web-component-heavy SPAs no longer need manual deepFind recipes.
 
 ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit, X / Twitter, mcp.so) are silently rejected by isTrusted-aware form validators and CSRF/reCAPTCHA gates. Pass \`expect_submit: true\` to detect this case (returns success=false with "submit silently rejected" when no signal fires within 4s). For confirmed anti-bot sites, do NOT retry \u2014 pre-fill the form and retry once with \`try_fiber: true\`; if it's still rejected, most sessions run unattended, so report the rejection rather than reaching for highlight_region + wait_for_click. Only use that pairing when a human is actually present for this session.`,
@@ -26324,9 +26331,10 @@ ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit
       via: external_exports.enum(["auto", "cdp", "fiber"]).optional().describe(`Click dispatch mode. "auto" (default): CDP click, then fiber fallback when try_fiber=true and the activity probe failed. "cdp": CDP click only, no fiber fallback ever. "fiber": skip the CDP bezier + activity probe entirely and invoke the element's onClick/onMouseDown/onPointerDown fiber prop directly. Use "fiber" on React-heavy SPAs (fiber-only annotation dashboards) where you already know the site is fiber-only, and especially on listbox/combobox options (a real CDP click risks losing the race against the list closing before the option's own handler fires) \u2014 cuts ~3 seconds of ceremony off the round trip either way. The fiber path is undocumented React internal access, prefer "auto" until you've confirmed the site needs it.`),
       in_dialog: external_exports.boolean().optional().describe(`Scope candidate matches to the topmost open dialog (\`[role=dialog]\`, \`[role=alertdialog]\`, or \`<dialog open>\`), highest z-index wins. Use when Radix/Headless UI dialogs portal to document.body and a generic textHint like "Cancel" would otherwise match the wrong button. Returns scope_missed=true when no dialog is open.`),
       dialog_query: external_exports.string().optional().describe(`Scope candidate matches to a specific dialog by heading or aria-label substring. Use when multiple dialogs are open and in_dialog (topmost) would pick the wrong one \u2014 e.g. click_element("Confirm", dialog_query="Delete account"). Mutually exclusive with in_dialog; dialog_query wins when both are set.`),
-      wait_until_enabled_ms: external_exports.number().int().min(0).optional().describe(`When the matched target is currently disabled (native disabled OR aria-disabled=true), poll for up to this many ms waiting for it to become enabled before clicking. Default 0 (do not wait \u2014 return target_disabled immediately). Use 2000-5000 for Submit-style buttons that briefly disable while an async copilot/validator/save is in flight. On timeout the response carries target_disabled=true plus a structured disabled_state snapshot (disabled, aria_disabled, pointer_events, opacity, visible) so the caller can decide between "wait more" or "field is genuinely missing \u2014 run get_form_fields(only_empty:true)".`)
+      wait_until_enabled_ms: external_exports.number().int().min(0).optional().describe(`When the matched target is currently disabled (native disabled OR aria-disabled=true), poll for up to this many ms waiting for it to become enabled before clicking. Default 0 (do not wait \u2014 return target_disabled immediately). Use 2000-5000 for Submit-style buttons that briefly disable while an async copilot/validator/save is in flight. On timeout the response carries target_disabled=true plus a structured disabled_state snapshot (disabled, aria_disabled, pointer_events, opacity, visible) so the caller can decide between "wait more" or "field is genuinely missing \u2014 run get_form_fields(only_empty:true)".`),
+      frame: external_exports.string().optional().describe("Same-origin iframe CSS selector to search and click inside. Cross-origin iframes are not supported \u2014 use click_at_coordinates instead.")
     },
-    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms }) => {
+    async ({ textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms, frame }) => {
       if (!textHint && !selector || textHint && selector) {
         return {
           content: [{ type: "text", text: "click_element requires exactly one of textHint or selector" }]
@@ -26337,7 +26345,7 @@ ANTI-BOT SUBMIT CEILING \u2014 synthetic clicks on social/auth platforms (Reddit
       let response;
       try {
         response = await bridge.request(
-          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms },
+          { type: "click_element", textHint, selector, nth, until_selector, until_url_contains, until_text_contains, until_url_changes, until_timeout_ms, expect_submit, within_selector, near_text, try_fiber, activity_timeout_ms, skip_activity_probe, via, in_dialog, dialog_query, wait_until_enabled_ms, frame },
           wsTimeout
         );
       } catch (err) {
@@ -26765,7 +26773,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.13.10" : "dev";
+var PACKAGE_VERSION = true ? "0.13.11" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

@@ -49,6 +49,7 @@ export type ServerMessage =
       in_dialog?: boolean;
       dialog_query?: string;
       wait_until_enabled_ms?: number;
+      frame?: string;
     }
   | {
       type: "click_at_coordinates";
@@ -58,7 +59,7 @@ export type ServerMessage =
       button?: "left" | "right" | "middle";
       double?: boolean;
     }
-  | { type: "prepare_click_target"; requestId: string; textHint?: string; selector?: string; nth?: number; within_selector?: string; near_text?: string; in_dialog?: boolean; dialog_query?: string }
+  | { type: "prepare_click_target"; requestId: string; textHint?: string; selector?: string; nth?: number; within_selector?: string; near_text?: string; in_dialog?: boolean; dialog_query?: string; frame?: string }
   | { type: "post_click_inspect"; requestId: string }
   | { type: "scroll_page"; requestId: string; direction: "down" | "up"; amount: number }
   | { type: "get_page_text"; requestId: string; selector?: string; startIndex?: number }
@@ -67,7 +68,7 @@ export type ServerMessage =
   | { type: "wait_for_change"; requestId: string; selector: string; timeout: number; settle?: number }
   | { type: "execute_script"; requestId: string; code: string; tab_query?: string; pierce_shadow?: boolean; timeout_ms?: number }
   | { type: "get_elements"; requestId: string }
-  | { type: "get_form_fields"; requestId: string; only_empty?: boolean }
+  | { type: "get_form_fields"; requestId: string; only_empty?: boolean; frame?: string }
   | { type: "scroll_to_element"; requestId: string; query: string }
   | { type: "save_page_state"; requestId: string }
   | { type: "restore_page_state"; requestId: string; state: PageFieldState[] }
@@ -76,7 +77,7 @@ export type ServerMessage =
   | { type: "fill_form"; requestId: string; fields: Array<{ label: string; value: string }>; exact?: boolean }
   // filePath XOR fileContent: filePath drives the CDP file-input path (local disk),
   // fileContent carries base64 bytes inline for servers with no local disk access.
-  | { type: "set_file_input"; requestId: string; hint: string; filePath?: string; fileContent?: string; fileName?: string; mimeType?: string; waitMs?: number; verifySelector?: string }
+  | { type: "set_file_input"; requestId: string; hint: string; filePath?: string; fileContent?: string; fileName?: string; mimeType?: string; waitMs?: number; verifySelector?: string; frame?: string }
   | { type: "type_text"; requestId: string; text: string; frame?: string; into_selector?: string; clear_first?: boolean }
   | { type: "inspect_request_headers"; requestId: string; url: string; new_tab?: boolean }
   | { type: "react_set_input"; requestId: string; selector: string; value: string; frame?: string; nth?: number }
@@ -192,6 +193,7 @@ export type ClientMessage =
       after_url?: string;
       navigated?: boolean;
       scope_missed?: boolean;
+      frame_error?: string;
       silently_rejected?: boolean;
       fiber_attempted?: boolean;
       recovered_via?: string;
@@ -260,6 +262,7 @@ export type ClientMessage =
       warning?: string;
       captcha?: { kind: "recaptcha" | "turnstile" | "hcaptcha"; sitekey: string | null } | null;
       oauthIndicators?: string[];
+      frame_error?: string;
     }
   | { type: "save_state_response"; requestId: string; state: PageFieldState[] }
   | { type: "tabs_response"; requestId: string; tabs: Array<{ index: number; title: string; url: string; active: boolean }> }

@@ -2,7 +2,7 @@ import { readElementValue } from "../capture.js";
 import { countShadowHosts, extractTextDeep, queryAllDeep } from "../shadow.js";
 import { enumerateFormFields } from "../forms.js";
 import { redactSecrets } from "../redact.js";
-import type { IncomingMessage } from "./frame-util.js";
+import { resolveFrameDocument, frameErrorHint, type IncomingMessage } from "./frame-util.js";
 
 /**
  * Walks `orig` and `clone` in tandem (they share structure). For any empty
@@ -275,7 +275,17 @@ export function opGetElements(msg: IncomingMessage): unknown {
 }
 
 export function opGetFormFields(msg: IncomingMessage): unknown {
-  const { fields, hiddenFieldCount, captcha, oauthIndicators } = enumerateFormFields(document);
+  const frame = msg.frame as string | undefined;
+  const doc = resolveFrameDocument(frame);
+  if (!doc) {
+    return {
+      type: "form_fields_response",
+      requestId: msg.requestId,
+      fields: [],
+      frame_error: frameErrorHint(frame),
+    };
+  }
+  const { fields, hiddenFieldCount, captcha, oauthIndicators } = enumerateFormFields(doc);
   const onlyEmpty = msg.only_empty === true;
 
   let warning = "";

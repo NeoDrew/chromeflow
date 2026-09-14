@@ -292,7 +292,16 @@ export async function commitReactControlState(
  * shadow-piercing query here means file inputs nested inside Stencil/Lit/
  * Radix web components are counted, not invisible.
  */
-export function pierceFileCount(): { totalFiles: number; inputCount: number } {
+export function pierceFileCount(frame: string = ""): { totalFiles: number; inputCount: number } {
+  // Same-origin iframes are reachable via plain contentDocument from this
+  // function's own execution context (the top frame) — no chrome.scripting
+  // frameIds/chrome.webNavigation needed, same reasoning as ops/frame-util.ts's
+  // resolveFrameDocument. Falls back to the top document if frame doesn't
+  // resolve (e.g. it navigated away mid-poll) rather than throwing and losing
+  // the whole poll tick.
+  const root: Document = frame
+    ? ((document.querySelector(frame) as HTMLIFrameElement | null)?.contentDocument ?? document)
+    : document;
   function getShadowRoot(el: Element): ShadowRoot | null {
     const cdom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
     if (cdom?.openOrClosedShadowRoot) {
@@ -318,13 +327,16 @@ export function pierceFileCount(): { totalFiles: number; inputCount: number } {
     recurse(root);
     return out;
   }
-  const inputs = deepInputs(document);
+  const inputs = deepInputs(root);
   let total = 0;
   for (const el of inputs) total += el.files?.length ?? 0;
   return { totalFiles: total, inputCount: inputs.length };
 }
 
-export function pierceFilePoll(name: string, sel: string): { total: number; stillHasOurFile: boolean; verifyOk: boolean; filenameVisible: boolean; rejectionSignal: string | null } {
+export function pierceFilePoll(name: string, sel: string, frame: string = ""): { total: number; stillHasOurFile: boolean; verifyOk: boolean; filenameVisible: boolean; rejectionSignal: string | null } {
+  const root: Document = frame
+    ? ((document.querySelector(frame) as HTMLIFrameElement | null)?.contentDocument ?? document)
+    : document;
   function getShadowRoot(el: Element): ShadowRoot | null {
     const cdom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
     if (cdom?.openOrClosedShadowRoot) {
@@ -397,7 +409,7 @@ export function pierceFilePoll(name: string, sel: string): { total: number; stil
     }
     return null;
   }
-  const inputs = deepQuery<HTMLInputElement>(document, "input[type=file]");
+  const inputs = deepQuery<HTMLInputElement>(root, "input[type=file]");
   let total = 0;
   let stillHasOurFile = false;
   for (const el of inputs) {
@@ -408,8 +420,8 @@ export function pierceFilePoll(name: string, sel: string): { total: number; stil
       if (files[i].name === name) stillHasOurFile = true;
     }
   }
-  const verifyOk = sel ? deepQuery(document, sel).length > 0 : false;
-  const filenameVisible = name ? deepContainsText(document, name) : false;
-  const rejectionSignal = findRejectionSignal(document);
+  const verifyOk = sel ? deepQuery(root, sel).length > 0 : false;
+  const filenameVisible = name ? deepContainsText(root, name) : false;
+  const rejectionSignal = findRejectionSignal(root);
   return { total, stillHasOurFile, verifyOk, filenameVisible, rejectionSignal };
 }

@@ -7,16 +7,26 @@ import { SET_FILE_FROM_CONTENT } from "../../connections";
 
 export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unknown> {
       const tab = await getActiveTab(port);
+      const frame = msg.frame as string | undefined;
 
       // Ask content script to find and tag the file input. The content script
       // uses queryAllDeep, which pierces open AND closed shadow roots — file
       // inputs hidden behind Stencil/Lit/Radix drag-zones are reachable.
+      // frame (optional): same-origin iframe CSS selector, mirroring find_input/
+      // fill_input/get_form_fields/click_element's existing frame param — see
+      // ISSUE-2026-09-14-icims-hcaptcha-still-silent.md, where the resume-upload
+      // widget lived inside a same-origin iframe set_file_input had no way to
+      // reach at all.
       const tagResult = await forwardToContentScript(tab, {
         type: "tag_file_input",
         requestId: msg.requestId,
         hint: msg.hint,
-      }) as { found: boolean; message?: string; attr?: string; matched_desc?: string; matched_via?: string; zero_file_inputs_on_page?: boolean; drop_zone_tagged?: boolean; drop_zone_attr?: string };
+        frame,
+      }) as { found: boolean; message?: string; attr?: string; matched_desc?: string; matched_via?: string; zero_file_inputs_on_page?: boolean; drop_zone_tagged?: boolean; drop_zone_attr?: string; frame_error?: string };
 
+      if (tagResult.frame_error) {
+        return { type: "action_done", requestId: msg.requestId, success: false, message: tagResult.frame_error };
+      }
       if (!tagResult.found) {
         // No <input type=file> anywhere, but a drop-zone candidate was tagged
         // AND we have a real on-disk path — CDP drag delivery needs a path,
@@ -58,6 +68,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
       const pre = await chrome.scripting.executeScript({
         target: { tabId },
         func: pierceFileCount,
+        args: [frame ?? ""],
       });
       const preTotal = (pre[0]?.result as { totalFiles: number; inputCount: number } | undefined)?.totalFiles ?? 0;
 
@@ -91,7 +102,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
           const post = await chrome.scripting.executeScript({
             target: { tabId },
             func: pierceFilePoll,
-            args: [filename, verifySelector ?? ""],
+            args: [filename, verifySelector ?? "", frame ?? ""],
           });
           const result = post[0]?.result as { total: number; stillHasOurFile: boolean; verifyOk: boolean; filenameVisible: boolean; rejectionSignal: string | null } | undefined;
           if (!result) continue;
@@ -121,7 +132,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
               const grace = await chrome.scripting.executeScript({
                 target: { tabId },
                 func: pierceFilePoll,
-                args: [filename, verifySelector ?? ""],
+                args: [filename, verifySelector ?? "", frame ?? ""],
               });
               const graceResult = grace[0]?.result as { rejectionSignal: string | null } | undefined;
               if (graceResult?.rejectionSignal && graceResult.rejectionSignal !== baselineSignal) {
@@ -177,9 +188,15 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
             fileContent: msg.fileContent as string,
             fileName: filename,
             mimeType: msg.mimeType as string | undefined,
+            frame,
           }).catch(() => {});
         } else {
           await withDebugger(tabId, async () => {
+            // findShadowMarkedBackendNodeId already pierces same-origin iframes
+            // (via CDP DOM.getDocument({pierce:true})'s contentDocument walk),
+            // so no frame-specific handling is needed here — the marker
+            // attribute set by tag_file_input above is enough regardless of
+            // which document it landed in.
             const backendNodeId = await findShadowMarkedBackendNodeId(tabId, fileAttr);
             if (!backendNodeId) throw new Error("Could not locate tagged file input via CDP");
 
@@ -197,6 +214,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
             type: "dispatch_file_change_events",
             requestId: msg.requestId + "-dispatch",
             attr: fileAttr,
+            frame,
           }).catch(() => {});
         }
 
@@ -229,7 +247,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
           // response). Climbing to the nearest visible ancestor gives CDP's
           // drag-drop a real pixel to target, matching where a human's OS
           // drop would actually land.
-          const point = await freshTargetPoint(tabId, fileAttr, { visibleAncestorFallback: true });
+          const point = await freshTargetPoint(tabId, fileAttr, { visibleAncestorFallback: true, frame });
           if (point) {
             retriedViaDragDrop = true;
             await dispatchDragDropFile(tabId, point.x, point.y, msg.filePath as string);
@@ -248,6 +266,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
         await forwardToContentScript(tab, {
           type: "untag_file_input",
           requestId: msg.requestId,
+          frame,
         }).catch(() => {});
       }
 
@@ -316,9 +335,10 @@ async function handleDropZoneFileUpload(tab: chrome.tabs.Tab, msg: McpMsg, dropZ
   const filename = filePath.split("/").pop() ?? "";
   const waitMs = (msg.waitMs as number | undefined) ?? 3000;
   const verifySelector = msg.verifySelector as string | undefined;
+  const frame = msg.frame as string | undefined;
 
   try {
-    const point = await freshTargetPoint(tabId, dropZoneAttr);
+    const point = await freshTargetPoint(tabId, dropZoneAttr, { frame });
     if (!point) {
       return {
         type: "action_done",
@@ -329,7 +349,7 @@ async function handleDropZoneFileUpload(tab: chrome.tabs.Tab, msg: McpMsg, dropZ
     }
     await dispatchDragDropFile(tabId, point.x, point.y, filePath);
   } finally {
-    await forwardToContentScript(tab, { type: "untag_file_input", requestId: msg.requestId }).catch(() => {});
+    await forwardToContentScript(tab, { type: "untag_file_input", requestId: msg.requestId, frame }).catch(() => {});
   }
 
   // Deliberately NOT pierceFilePoll (the shadow-piercing helper the normal
