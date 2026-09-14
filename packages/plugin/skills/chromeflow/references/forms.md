@@ -19,11 +19,7 @@ shadow roots. Each field carries `type`, `label`, current `value`,
 
 Also reports:
 - **CAPTCHA presence** (`⚠ CAPTCHA detected: recaptcha/turnstile/hcaptcha`)
-  with the sitekey when available. Synthetic submits will be silently
-  rejected and there's no automated way through it that we've found so far — pre-fill everything
-  else, then report the CAPTCHA back rather than blocking on
-  `highlight_region` + `wait_for_click`, since most sessions run
-  unattended with no one to solve it.
+  with the sitekey when available. TODO: CAPTCHA PASSING
 - **OAuth provider buttons** (`Continue with Google`, `Sign in with
   GitHub`) detected on the page. If the user wants OAuth, click the
   provider button instead of filling email/password.

@@ -23,7 +23,7 @@ const PLATFORMS = [
     icon: '/validated-icons/reddit.svg',
     detail: 'type_text lands multi-paragraph text in Lexical with <p> structure preserved',
     competitors: {
-      Playwright: { status: 'partial', note: 'page.type() works for the typing path but submit needs a real human gesture' },
+      Playwright: { status: 'partial', note: 'page.type() works for the typing path' },
       Puppeteer: { status: 'partial', note: 'same as Playwright' },
       'browser-use': { status: 'partial', note: 'same as Playwright' },
       'crawl4ai': { status: 'fail', note: 'no interactive operations' },

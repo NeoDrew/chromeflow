@@ -61,9 +61,7 @@ type_text("...", into_selector="textarea[aria-label='Add a Comment…']")
 ## Submit handoff (untested by design)
 
 Instagram does not currently gate the Send button on isTrusted as
-strictly as Reddit/X, but the platform's wider fraud detection makes
-automated submits risky. Hand off to a real human gesture for any
-actual posting.
+strictly as Reddit/X.
 
 ## Known regressions
 

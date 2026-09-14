@@ -42,11 +42,6 @@ highlight_region("button.share-actions__primary-action", "Click to post")
 wait_for_click()
 ```
 
-LinkedIn's submit button is gated similarly to Reddit/X — the
-isTrusted check on the click event passes from chromeflow, but
-LinkedIn's anti-bot fraud scoring aggregates many signals across the
-session, so synthetic submits over time risk account flags. Always
-hand off the submit to a real human gesture.
 
 ## Notes
 

@@ -25666,7 +25666,7 @@ To fill: fill_input("${r2.fields[0].label}", "<value>")` }] };
       const fields = r.fields;
       const captchaLine = r.captcha ? `
 
-\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. Synthetic submits will be silently rejected and there is no automated way through it \u2014 pre-fill everything else, then report the CAPTCHA back rather than blocking on highlight_region + wait_for_click, since most sessions run unattended with no one to solve it.` : "";
+\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. TDOD: CAPTCHA PASSING` : "";
       const oauthLine = r.oauthIndicators && r.oauthIndicators.length > 0 ? `
 
 \u2139 OAuth providers detected on this form: ${r.oauthIndicators.join(", ")}. If the user wants to sign in via one of these, click it instead of filling email/password.` : "";

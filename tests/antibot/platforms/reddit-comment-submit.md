@@ -43,8 +43,6 @@ highlight_region("#comment-composer-submit-button", "Click to submit")
 wait_for_click()
 ```
 
-The submit handler requires a real human gesture.
-
 ## Shadow-ban caveat
 
 Per memory `feedback_x_shadowban_threshold.md` (cross-applies to
