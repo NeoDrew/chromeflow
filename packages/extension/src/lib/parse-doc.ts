@@ -1,4 +1,6 @@
-// Format-aware text extraction for read_attachment.
+// Format-aware text extraction for fetch_url's `parse` mode (formerly a
+// separate read_attachment tool, folded in during the 2026-09-14 tool-surface
+// cleanup; same extraction logic, called from handleFetchUrl now).
 //
 // Goal: turn an ArrayBuffer (the raw response body of a fetched attachment)
 // into a plain-text representation, without depending on local CLI tools.

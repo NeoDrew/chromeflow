@@ -25423,11 +25423,26 @@ ${lines.join("\n")}${recall}` }]
   );
   server.tool(
     "close_tab",
-    `Close a tab by number, URL substring, or title substring. Mirrors switch_to_tab's matcher. Defaults to closing the ACTIVE tab when no query is given. Use this to clean up the tab pile after a multi-step workflow.`,
+    `Close tab(s) in the current window. Two mutually exclusive modes, matching switch_to_tab's matcher:
+- \`query\` set (or both omitted): close ONE tab, the match (or the active tab if query is omitted). Use this to clean up after a single step.
+- \`keep_query\` set: close EVERY OTHER tab, keeping only the match (or the active tab if keep_query is empty). Use this at the end of a session to tidy up the whole pile; do NOT use it mid-flow if you may need to return to one of the closed tabs.`,
     {
-      query: external_exports.union([external_exports.string(), external_exports.number()]).optional().describe("Tab number (1-based), URL substring, or title substring. Omit to close the active tab.")
+      query: external_exports.union([external_exports.string(), external_exports.number()]).optional().describe("Tab number (1-based), URL substring, or title substring to CLOSE. Omit (with keep_query also omitted) to close the active tab. Mutually exclusive with keep_query."),
+      keep_query: external_exports.string().optional().describe('URL substring or title substring. Switches to "close every OTHER tab" mode: tabs matching this are KEPT, all others are closed. Empty/omitted keeps just the active tab. Mutually exclusive with query.')
     },
-    async ({ query }) => {
+    async ({ query, keep_query }) => {
+      if (keep_query !== void 0) {
+        const response2 = await bridge.request({ type: "close_other_tabs", keep_query });
+        const r2 = response2;
+        if (r2.message) return { content: [{ type: "text", text: r2.message }] };
+        const closedCount = (r2.closed ?? []).length;
+        const keptCount = (r2.kept ?? []).length;
+        const keptList = (r2.kept ?? []).map((t) => `  ${t.index}. ${t.title} \u2014 ${t.url}`).join("\n");
+        return {
+          content: [{ type: "text", text: `Closed ${closedCount} tab(s), kept ${keptCount}:
+${keptList}` }]
+        };
+      }
       const raw = query === void 0 || query === null || query === "" ? void 0 : String(query);
       const response = await bridge.request({ type: "close_tab", query: raw });
       const r = response;
@@ -25436,25 +25451,6 @@ ${lines.join("\n")}${recall}` }]
       return {
         content: [{ type: "text", text: `Closed ${(r.closed ?? []).length} tab(s):
 ${closedList}` }]
-      };
-    }
-  );
-  server.tool(
-    "close_other_tabs",
-    `Close every tab in the current window EXCEPT the active one (or any tab matching keep_query). Use at the end of a session to tidy up; do NOT use mid-flow if you may need to return to one of the closed tabs.`,
-    {
-      keep_query: external_exports.string().optional().describe("URL substring or title substring. Tabs matching this are KEPT; all others are closed. When omitted, only the active tab is kept.")
-    },
-    async ({ keep_query }) => {
-      const response = await bridge.request({ type: "close_other_tabs", keep_query });
-      const r = response;
-      if (r.message) return { content: [{ type: "text", text: r.message }] };
-      const closedCount = (r.closed ?? []).length;
-      const keptCount = (r.kept ?? []).length;
-      const keptList = (r.kept ?? []).map((t) => `  ${t.index}. ${t.title} \u2014 ${t.url}`).join("\n");
-      return {
-        content: [{ type: "text", text: `Closed ${closedCount} tab(s), kept ${keptCount}:
-${keptList}` }]
       };
     }
   );
@@ -26137,38 +26133,12 @@ function registerFileTools(server, bridge) {
     }
   );
   server.tool(
-    "read_attachment",
-    `Fetch a URL via Chrome's privileged context (uses cookie jar, bypasses page CSP) and return parsed text. Supports docx (in-extension ZIP+XML extraction), txt/md/csv/json (UTF-8), html/xml (tag-stripped). For PDF, the response is a structured error pointing at download_file + local pdftotext. Truncates to max_chars (default 20000); reports total_chars + truncated for pagination.`,
-    {
-      url: external_exports.string().describe("The full URL of the attachment. Uses Chrome's cookie jar \u2014 works on authenticated URLs."),
-      format: external_exports.enum(["txt", "md", "csv", "json", "xml", "html", "docx", "pdf"]).optional().describe("Override format auto-detection."),
-      max_chars: external_exports.number().int().min(1).optional().describe("Maximum characters to return (default 20000).")
-    },
-    async ({ url, format, max_chars }) => {
-      const block = isBlockedUrl(url);
-      if (block.blocked) {
-        return { content: [{ type: "text", text: `read_attachment refused: ${block.reason}` }] };
-      }
-      const effective_max = max_chars ?? 2e4;
-      const response = await bridge.request({ type: "read_attachment", url, format, max_chars: effective_max });
-      if (response.type !== "read_attachment_response") throw new Error(`Unexpected response: ${response.type}`);
-      const r = response;
-      const header = `${url}
-format: ${r.format} | mime: ${r.mime || "unknown"} | total_chars: ${r.total_chars}${r.truncated ? ` (truncated to ${effective_max})` : ""}
-${"\u2500".repeat(40)}
-`;
-      return {
-        content: [{ type: "text", text: header + r.text }]
-      };
-    }
-  );
-  server.tool(
     "download_file",
     `Download a file from a URL to the user's local disk using Chrome's authenticated download flow.
 
 Uses the user's existing Chrome session, so this works on authenticated URLs (Canvas attachments, Stripe document downloads, GitHub release tarballs behind SSO) without any auth setup on chromeflow's side. Returns the absolute path where the file landed, plus MIME type and byte size.
 
-Use this when you need the BYTES of a file (binary parsing, large content, anything you'll process with another tool). For "I just need the text content of this attachment" use read_attachment instead \u2014 it downloads + parses in one call.
+Use this when you need the BYTES of a file (binary parsing, large content, anything you'll process with another tool). For "I just need the text content of this attachment" use fetch_url with parse: "auto" instead, which downloads and parses in one call.
 
 The file is saved to the user's default downloads directory (usually ~/Downloads). Pass filename to suggest a name; Chrome will add a numeric suffix if a file with that name already exists.`,
     {
@@ -26215,18 +26185,22 @@ Use this when:
 
 Returns: { status, status_text, headers, content_type, body_text or body_base64 (when binary), truncated, total_bytes }.
 Cookies and Origin headers are set by Chrome \u2014 pass any extra request headers via the headers param.
-Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is returned base64-encoded.`,
+Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is returned base64-encoded.
+
+Pass \`parse\` for format-aware TEXT EXTRACTION instead of raw bytes/text (this absorbs what used to be a separate read_attachment tool): docx (in-extension ZIP+XML extraction), txt/md/csv/json (UTF-8), html/xml (tag-stripped). Runs on the full, untruncated response before max_bytes ever applies (a docx is a ZIP; truncating one mid-byte-stream would corrupt it), then truncates the resulting TEXT to max_chars. For PDF, the response is a structured error pointing at download_file + local pdftotext. \`parse: "auto"\` detects the format from content-type/URL.`,
     {
       url: external_exports.string().describe("The full URL to fetch (https://...). Same-origin or cross-origin, both work."),
       method: external_exports.enum(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"]).optional().describe("HTTP method (default GET)"),
       headers: external_exports.record(external_exports.string()).optional().describe("Extra request headers (e.g. {'X-CSRF-Token': '...', 'Accept': 'application/json'}). Cookies are added automatically; do not set them here."),
       body: external_exports.string().optional().describe("Request body for POST/PUT/PATCH/DELETE (ignored for GET/HEAD). Pass JSON as a string."),
-      binary: external_exports.boolean().optional().describe("If true, return body as base64 (body_base64). Use for PDFs, images, zips. Default false (UTF-8 text in body_text)."),
+      binary: external_exports.boolean().optional().describe("If true, return body as base64 (body_base64). Use for PDFs, images, zips. Default false (UTF-8 text in body_text). Ignored when parse is set."),
+      parse: external_exports.enum(["auto", "txt", "md", "csv", "json", "xml", "html", "docx", "pdf"]).optional().describe('Extract text instead of returning raw bytes/text, for document attachments (Canvas/Drive/email-style URLs). "auto" detects format from content-type/URL; otherwise pass the format explicitly. Response carries {text, format, total_chars, truncated} instead of body_text/body_base64.'),
+      max_chars: external_exports.number().int().min(1).optional().describe("Maximum characters to return when parse is set (default 50000). Ignored without parse."),
       timeout_ms: external_exports.number().int().min(1e3).optional().describe("Abort the request after this many ms (default 30000)."),
-      max_bytes: external_exports.number().int().min(1).optional().describe("Truncate body at this many bytes (default 100000 \u2248 25K tokens, the MCP transport ceiling). Bumped down from 2MB in 0.9.4 because larger responses overflow the agent's context. For larger payloads, set `to_file` to write to disk instead."),
-      to_file: external_exports.string().optional().describe("Absolute path on disk under the agent's working directory. When set, the FULL response body is written to this path (no max_bytes truncation) and the response carries only {path, size, content_type, status, headers}. Parent directories are created if missing. Use this for anything you'd otherwise have to paginate through max_bytes.")
+      max_bytes: external_exports.number().int().min(1).optional().describe("Truncate body at this many bytes (default 100000 \u2248 25K tokens, the MCP transport ceiling). Bumped down from 2MB in 0.9.4 because larger responses overflow the agent's context. For larger payloads, set `to_file` to write to disk instead. Ignored when parse is set (see max_chars)."),
+      to_file: external_exports.string().optional().describe("Absolute path on disk under the agent's working directory. When set, the FULL response body is written to this path (no max_bytes truncation) and the response carries only {path, size, content_type, status, headers}. Parent directories are created if missing. Use this for anything you'd otherwise have to paginate through max_bytes. Ignored when parse is set.")
     },
-    async ({ url, method, headers, body, binary, timeout_ms, max_bytes, to_file }) => {
+    async ({ url, method, headers, body, binary, parse: parse3, max_chars, timeout_ms, max_bytes, to_file }) => {
       const block = isBlockedUrl(url);
       if (block.blocked) {
         return { content: [{ type: "text", text: `fetch_url refused: ${block.reason}` }] };
@@ -26241,11 +26215,20 @@ Set binary=true for non-text responses (PDFs, images, zips) \u2014 the body is r
         headers,
         body,
         binary: effectiveBinary,
+        parse: parse3,
+        max_chars,
         timeout_ms,
         max_bytes: effectiveMaxBytes
       }, wsTimeout);
       if (response.type !== "fetch_url_response") throw new Error(`Unexpected response: ${response.type}`);
       const r = response;
+      if (parse3) {
+        const header2 = `${url}
+format: ${r.format} | content-type: ${r.content_type || "unknown"} | total_chars: ${r.total_chars}${r.truncated ? ` (truncated to ${max_chars ?? 5e4})` : ""}
+${"\u2500".repeat(40)}
+`;
+        return { content: [{ type: "text", text: header2 + (r.text ?? "") }] };
+      }
       const antiBotLine = r.anti_bot_detected ? `
 \u26A0 anti_bot_detected: "${r.anti_bot_detected}" \u2014 response body matches a known block / challenge page. Don't parse as the expected JSON/HTML; the user's IP may be challenged or the endpoint may require a real browser context.` : "";
       if (to_file) {
@@ -26682,7 +26665,7 @@ ${lines.join("\n")}` }]
     "list_frames",
     `List every top-level iframe/frame on the active page, with its origin, whether its contentDocument is accessible (same-origin), and its on-screen position. Also reports shadow-host inventory so you can spot pages whose visible content is rendered inside closed shadow roots (Radix portals, Stencil/Lit, custom web components).
 
-Use this BEFORE calling find_text({frame: "..."}) or other frame-targeted tools \u2014 it shows you which frames exist and which are reachable. Knowing a frame is cross-origin up front means you can route to read_attachment (for the frame's src URL) or take_screenshot instead of getting a "frame not accessible" error from another tool.
+Use this BEFORE calling find_text({frame: "..."}) or other frame-targeted tools \u2014 it shows you which frames exist and which are reachable. Knowing a frame is cross-origin up front means you can route to fetch_url with parse: "auto" (for the frame's src URL) or take_screenshot instead of getting a "frame not accessible" error from another tool.
 
 Also use this as a quick diagnostic when execute_script returns an empty document on a page you can clearly see \u2014 non-zero \`shadow_hosts\` (especially closed roots) means switch to find_text / get_page_text / click_element / fill_input, which pierce shadow DOM via the extension's privileged API.
 
@@ -26782,7 +26765,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.12.10" : "dev";
+var PACKAGE_VERSION = true ? "0.13.0" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

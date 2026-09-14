@@ -158,9 +158,9 @@ Use the absolute path for `envPath` (Claude Code working dir + `/.env`).
 | Wait | `wait_for(selector=… OR text=… OR change_in=…)` |
 | Scroll | `scroll_to_element("label or selector")` |
 | Iframes / shadow DOM | `list_frames`, plus all main tools pierce shadow |
-| Files | `set_file_input(hint, file_path)`, `download_file`, `read_attachment` |
+| Files | `set_file_input(hint, file_path)`, `download_file`, `fetch_url(parse: "auto")` |
 | Network | `fetch_url(url, ...)` — privileged context, real cookies, no page CSP |
-| Tabs | `list_tabs`, `switch_to_tab`, `close_tab`, `close_other_tabs` |
+| Tabs | `list_tabs`, `switch_to_tab`, `close_tab` |
 | Visual handoff | `highlight_region(selector, msg)`, `wait_for_click()` |
 | Coordinate clicks (cross-origin iframes) | `click_at_coordinates(x, y)` |
 | Run JS | `execute_script("...")` — gets `$deep` / `$deepAll` / `shadowDocument` in scope, auto-stringifies objects |

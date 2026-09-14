@@ -11,7 +11,7 @@
     "build": "npm run build --workspaces",
     "dev:mcp": "npm run dev -w packages/mcp-server",
     "dev:ext": "npm run dev -w packages/extension",
-    "dev:web": "node app/website/server.mjs",
+    "dev:web": "npm run dev --prefix apps/website",
     "test": "vitest run"
   },
   "devDependencies": {

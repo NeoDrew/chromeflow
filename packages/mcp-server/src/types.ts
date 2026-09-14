@@ -131,6 +131,8 @@ export type ServerMessage =
       headers?: Record<string, string>;
       body?: string;
       binary?: boolean;
+      parse?: string;
+      max_chars?: number;
       timeout_ms?: number;
       max_bytes?: number;
     }
@@ -140,13 +142,6 @@ export type ServerMessage =
       url: string;
       filename?: string;
       timeout_ms?: number;
-    }
-  | {
-      type: "read_attachment";
-      requestId: string;
-      url: string;
-      format?: string;
-      max_chars?: number;
     }
   | { type: "list_frames"; requestId: string };
 
@@ -327,8 +322,13 @@ export type ClientMessage =
       content_type: string;
       body_text?: string;
       body_base64?: string;
+      // Present instead of body_text/body_base64 when the request set `parse`
+      // (absorbed from the old, now-removed read_attachment tool).
+      text?: string;
+      format?: string;
+      total_chars?: number;
       truncated: boolean;
-      total_bytes: number;
+      total_bytes?: number;
       anti_bot_detected?: string | null;
     }
   | {
@@ -337,15 +337,6 @@ export type ClientMessage =
       path: string;
       mime: string;
       size: number;
-    }
-  | {
-      type: "read_attachment_response";
-      requestId: string;
-      text: string;
-      format: string;
-      total_chars: number;
-      truncated: boolean;
-      mime: string;
     }
   | {
       type: "list_frames_response";

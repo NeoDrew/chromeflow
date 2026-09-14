@@ -101,7 +101,7 @@ export function opRestorePageState(msg: IncomingMessage): unknown {
         )?.set;
         if (nativeSetter) nativeSetter.call(el, item.value);
         else (el as HTMLInputElement).value = item.value;
-        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, data: item.value, inputType: "insertText" }));
         el.dispatchEvent(new Event("change", { bubbles: true }));
       }
       restored++;
@@ -139,8 +139,10 @@ export async function opFillForm(msg: IncomingMessage): Promise<unknown> {
       resolvedSelector: result.resolvedSelector,
       value: field.value,
     });
-    // Brief pause between fills so React can process each change event
-    await new Promise((r) => setTimeout(r, 80));
+    // Brief pause between fills so React can process each change event.
+    // Jittered (not a fixed 80ms) so a session-level timing trace doesn't show
+    // a perfectly uniform inter-field gap no human input produces.
+    await new Promise((r) => setTimeout(r, 60 + Math.random() * 50));
   }
   const succeeded = results.filter((r) => r.success).length;
   return { type: "fill_form_response", requestId: msg.requestId, results, succeeded, total: formFields.length };

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Live earn-in test suite: spawns fresh headless claude instances (each its own
-# chromeflow MCP server v0.12.0) sequentially against different sites, exercising
+# chromeflow MCP server, version at time of writing) sequentially against different sites, exercising
 # every mechanic, then deterministically checks failure-prune + TTL.
 set -uo pipefail
 LOG=/tmp/cf-suite.log

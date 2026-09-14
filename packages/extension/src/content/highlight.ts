@@ -37,7 +37,7 @@ function ensureStyles() {
       from { opacity: 0; transform: translateY(-4px); }
       to   { opacity: 1; transform: translateY(0); }
     }
-    @keyframes chromeflow-indeterminate {
+    @keyframes ${markerIds.animationProgress()} {
       0%   { left: -40%; width: 40%; }
       50%  { left: 30%;  width: 50%; }
       100% { left: 110%; width: 40%; }
@@ -322,15 +322,13 @@ export function highlightElement(el: Element, message: string, color = "#f97316"
 // is driving this window. Hidden during take_screenshot so it doesn't pollute
 // captured images.
 
-const INFO_BOX_ID = "chromeflow-instance-info";
-
 export function showInstanceInfo(info: { label?: string; port?: number; host?: string }) {
   hideInstanceInfo();
   ensureStyles();
   if (!info.label && !info.port) return;
 
   const el = document.createElement("div");
-  el.id = INFO_BOX_ID;
+  el.id = markerIds.instanceInfoBox();
   el.style.cssText = `
     position: fixed;
     top: 12px;
@@ -363,7 +361,7 @@ export function showInstanceInfo(info: { label?: string; port?: number; host?: s
     color: #f97316;
     margin-bottom: 4px;
   `;
-  title.textContent = "Chromeflow";
+  title.textContent = "Agent";
 
   const details = document.createElement("div");
   details.style.cssText = `
@@ -394,7 +392,7 @@ export function showInstanceInfo(info: { label?: string; port?: number; host?: s
     height: 100%;
     background: linear-gradient(90deg, #fb923c, #f97316, #ea580c);
     border-radius: 2px;
-    animation: chromeflow-indeterminate 1.4s ease-in-out infinite;
+    animation: ${markerIds.animationProgress()} 1.4s ease-in-out infinite;
   `;
 
   barTrack.appendChild(barFill);
@@ -405,10 +403,10 @@ export function showInstanceInfo(info: { label?: string; port?: number; host?: s
 }
 
 export function hideInstanceInfo() {
-  document.getElementById(INFO_BOX_ID)?.remove();
+  document.getElementById(markerIds.instanceInfoBox())?.remove();
 }
 
 export function setInstanceInfoVisible(visible: boolean) {
-  const el = document.getElementById(INFO_BOX_ID);
+  const el = document.getElementById(markerIds.instanceInfoBox());
   if (el) el.style.display = visible ? "" : "none";
 }

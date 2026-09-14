@@ -4,6 +4,97 @@ import type { McpMsg } from "./types";
 import { getActiveTab, forwardToContentScript } from "../state";
 import { withDebugger } from "../cdp";
 
+// US-QWERTY physical-key lookup for printable characters. Chromium only
+// derives KeyboardEvent.code/keyCode from what the CDP caller supplies
+// ("code"/"windowsVirtualKeyCode"/"nativeVirtualKeyCode" in
+// content/browser/devtools/protocol/input_handler.cc); a keydown that omits
+// them is a combination no physical keystroke can ever produce (correct
+// ".key", empty ".code", zero ".keyCode"/".which"). This table is
+// deliberately US-layout-only, not layout-exhaustive for every locale -
+// that's an accepted, documented trade-off: it's strictly better than never
+// sending code/keyCode at all, which was a 100%-reproducible mismatch on
+// literally every character.
+const PUNCT_KEY_MAP: Record<string, { code: string; keyCode: number; shift: boolean }> = {
+  " ": { code: "Space", keyCode: 32, shift: false },
+  "`": { code: "Backquote", keyCode: 192, shift: false },
+  "~": { code: "Backquote", keyCode: 192, shift: true },
+  "-": { code: "Minus", keyCode: 189, shift: false },
+  "_": { code: "Minus", keyCode: 189, shift: true },
+  "=": { code: "Equal", keyCode: 187, shift: false },
+  "+": { code: "Equal", keyCode: 187, shift: true },
+  "[": { code: "BracketLeft", keyCode: 219, shift: false },
+  "{": { code: "BracketLeft", keyCode: 219, shift: true },
+  "]": { code: "BracketRight", keyCode: 221, shift: false },
+  "}": { code: "BracketRight", keyCode: 221, shift: true },
+  "\\": { code: "Backslash", keyCode: 220, shift: false },
+  "|": { code: "Backslash", keyCode: 220, shift: true },
+  ";": { code: "Semicolon", keyCode: 186, shift: false },
+  ":": { code: "Semicolon", keyCode: 186, shift: true },
+  "'": { code: "Quote", keyCode: 222, shift: false },
+  "\"": { code: "Quote", keyCode: 222, shift: true },
+  ",": { code: "Comma", keyCode: 188, shift: false },
+  "<": { code: "Comma", keyCode: 188, shift: true },
+  ".": { code: "Period", keyCode: 190, shift: false },
+  ">": { code: "Period", keyCode: 190, shift: true },
+  "/": { code: "Slash", keyCode: 191, shift: false },
+  "?": { code: "Slash", keyCode: 191, shift: true },
+};
+const DIGIT_SHIFTED: Record<string, string> = { "0": ")", "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(" };
+
+// Returns the physical US-layout key that would produce `char`, or null when
+// no single key on a US keyboard can (accented Latin, CJK, emoji, most
+// symbols on non-US layouts, etc). Callers fall back to Input.insertText for
+// the null case - CDP's own documented mechanism for "text that doesn't come
+// from a key press, e.g. an IME or emoji keyboard".
+function keyInfoFor(char: string): { code: string; keyCode: number; shift: boolean } | null {
+  if (PUNCT_KEY_MAP[char]) return PUNCT_KEY_MAP[char];
+  if (/^[a-z]$/.test(char)) return { code: `Key${char.toUpperCase()}`, keyCode: char.toUpperCase().charCodeAt(0), shift: false };
+  if (/^[A-Z]$/.test(char)) return { code: `Key${char}`, keyCode: char.charCodeAt(0), shift: true };
+  if (/^[0-9]$/.test(char)) return { code: `Digit${char}`, keyCode: 48 + Number(char), shift: false };
+  for (const [digit, sym] of Object.entries(DIGIT_SHIFTED)) {
+    if (char === sym) return { code: `Digit${digit}`, keyCode: 48 + Number(digit), shift: true };
+  }
+  return null; // not reachable via a single US-layout physical key
+}
+
+// Adjacency table for a plausible "fat-finger" wrong key, used only for the
+// transient typo-then-correct simulation below. Partial coverage is fine -
+// typoFor() just skips the simulation for characters it doesn't cover.
+const QWERTY_NEIGHBORS: Record<string, string> = { q: "w", w: "q", e: "w", r: "e", t: "r", y: "t", u: "y", i: "u", o: "i", p: "o", a: "s", s: "a", d: "s", f: "d", g: "f", h: "g", j: "h", k: "j", l: "k", z: "x", x: "z", c: "x", v: "c", b: "v", n: "b", m: "n" };
+
+// Plausible wrong character for a single a-z/A-Z real character, preserving
+// case, or null when not covered / not a letter (digits and punctuation
+// never get the typo treatment - the adjacency table only models letter keys).
+function typoFor(char: string): string | null {
+  if (!/^[a-zA-Z]$/.test(char)) return null;
+  const neighbor = QWERTY_NEIGHBORS[char.toLowerCase()];
+  if (!neighbor) return null;
+  return char === char.toLowerCase() ? neighbor : neighbor.toUpperCase();
+}
+
+// Shared keyDown+keyUp dispatch for one physical key, used for real
+// characters, transient typo characters, and the typo-correcting Backspace.
+// `text` is omitted for Backspace, which real keyboards never pair with a
+// text-insertion payload.
+async function dispatchKeyPair(
+  tabId: number,
+  key: string,
+  info: { code: string; keyCode: number; shift: boolean } | null,
+  text?: string,
+): Promise<void> {
+  const modifiers = info?.shift ? 8 : 0;
+  const codeFields = info
+    ? { code: info.code, windowsVirtualKeyCode: info.keyCode, nativeVirtualKeyCode: info.keyCode }
+    : {};
+  const downPayload: Record<string, unknown> = { type: "keyDown", key, modifiers, ...codeFields };
+  if (text !== undefined) {
+    downPayload.text = text;
+    downPayload.unmodifiedText = text;
+  }
+  await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", downPayload);
+  await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", { type: "keyUp", key, modifiers, ...codeFields });
+}
+
 /**
  * fill_input (textHint mode) has no dedicated background handler by default
  * — an unrecognised message type just forwards to the content script and
@@ -320,9 +411,17 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
       // request timer resets and we don't trip the timeout while still typing.
       await withDebugger(tabId, async () => {
         const PROGRESS_INTERVAL = 200;
-        for (let i = 0; i < text.length; i++) {
-          const char = text[i];
-
+        // Iterate by Unicode CODE POINT, not UTF-16 code unit: a plain
+        // `for (let i = 0; i < text.length; i++)` walks code units, so any
+        // astral-plane character (most emoji, code point > U+FFFF) gets
+        // split into two iterations, each dispatching a lone, unpaired
+        // surrogate half as ".key" - impossible for any real input source to
+        // produce standalone. `for...of` over a string yields whole code
+        // points, handling surrogate pairs as one unit. `i` is tracked
+        // separately (not derived from the iteration) so the existing
+        // progress-heartbeat cadence is unchanged.
+        let i = 0;
+        for (const char of text) {
           if (char === "\n") {
             await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
               type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13,
@@ -338,12 +437,44 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
               type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, nativeVirtualKeyCode: 9,
             });
           } else {
-            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
-              type: "keyDown", key: char, text: char, unmodifiedText: char,
-            });
-            await (chrome.debugger as any).sendCommand({ tabId }, "Input.dispatchKeyEvent", {
-              type: "keyUp", key: char,
-            });
+            const info = keyInfoFor(char);
+            if (info === null) {
+              // No single US-layout physical key produces this character
+              // (accented Latin, CJK, emoji, most non-US symbols). Dispatch
+              // via Input.insertText instead of a synthetic keyDown/keyUp -
+              // CDP's own documented mechanism for "text that doesn't come
+              // from a key press, e.g. an IME or emoji keyboard", which also
+              // sidesteps the surrogate-splitting bug entirely since it
+              // takes the whole code point as one string argument.
+              await (chrome.debugger as any).sendCommand({ tabId }, "Input.insertText", { text: char });
+            } else {
+              // Typo-then-correct: a real typist has a measurable non-zero
+              // error rate (BeCAPTCHA-Type, GeeTest bot-detection material);
+              // a perfectly error-free keystroke stream across an entire
+              // corpus is itself a discriminator. Skip at i===0 (no context
+              // yet to "correct"). Never changes the final landed value -
+              // only inserts a transient wrong keystroke, self-corrected via
+              // Backspace, immediately before the real one.
+              if (i > 0 && Math.random() < 0.025) {
+                const typoChar = typoFor(char);
+                if (typoChar) {
+                  const typoInfo = keyInfoFor(typoChar);
+                  await dispatchKeyPair(tabId, typoChar, typoInfo, typoChar);
+                  await new Promise((r) => setTimeout(r, 40 + Math.random() * 60));
+                  await dispatchKeyPair(tabId, "Backspace", { code: "Backspace", keyCode: 8, shift: false });
+                  await new Promise((r) => setTimeout(r, 30 + Math.random() * 40));
+                }
+              }
+              // A real keyboard can't emit an uppercase letter or a shifted
+              // symbol without Shift actually held, so
+              // KeyboardEvent.shiftKey/getModifierState must agree with what
+              // the character itself implies (CDP modifiers bit 8) - and
+              // code/windowsVirtualKeyCode/nativeVirtualKeyCode must be
+              // populated too, or Chromium leaves event.code empty and
+              // event.keyCode/which at 0 for every typed character, a
+              // combination no physical keystroke can produce.
+              await dispatchKeyPair(tabId, char, info, char);
+            }
           }
 
           // Slow-pause cap tightened from 500ms to 250ms. Empirically the
@@ -372,6 +503,8 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
               }).catch(() => {});
             } catch { /* best-effort */ }
           }
+
+          i++;
         }
 
         // After typing, dispatch an input event on the focused element to nudge

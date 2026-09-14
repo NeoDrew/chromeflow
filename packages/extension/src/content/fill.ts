@@ -73,7 +73,7 @@ export function fillInput(
     selection?.addRange(range);
     // insertText is the most React-compatible way to set value in contenteditable
     document.execCommand("insertText", false, value);
-    editable.dispatchEvent(new Event("input", { bubbles: true }));
+    editable.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
     editable.dispatchEvent(new Event("change", { bubbles: true }));
     editable.scrollIntoView({ behavior: "smooth", block: "center" });
     const matched = describeElement(editable);
@@ -94,7 +94,7 @@ export function fillInput(
         selection?.removeAllRanges();
         selection?.addRange(range);
         document.execCommand("insertText", false, value);
-        active.dispatchEvent(new Event("input", { bubbles: true }));
+        active.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
         active.dispatchEvent(new Event("change", { bubbles: true }));
         const matched = describeElement(active);
         return { success: true, message: `Filled "${textHint}" → ${matched} (currently-focused contenteditable)`, matched };
@@ -113,7 +113,7 @@ export function fillInput(
           )?.set;
           if (nativeSetter) nativeSetter.call(active, value);
           else active.value = value;
-          active.dispatchEvent(new Event("input", { bubbles: true }));
+          active.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
           active.dispatchEvent(new Event("change", { bubbles: true }));
           const matched = describeElement(active);
           if (active.value !== value) {
@@ -185,7 +185,7 @@ export function fillInput(
     (input as HTMLInputElement).value = value;
   }
 
-  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true }));
 
@@ -539,7 +539,7 @@ function fillCodeMirror(lower: string, value: string): { success: boolean; messa
   document.execCommand("insertText", false, value);
 
   // Dispatch events so any listeners pick up the change
-  cmContent.dispatchEvent(new Event("input", { bubbles: true }));
+  cmContent.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
   cmContent.dispatchEvent(new Event("change", { bubbles: true }));
   targetEditor.scrollIntoView({ behavior: "smooth", block: "center" });
 
@@ -597,7 +597,7 @@ function fillProseMirror(lower: string, value: string): { success: boolean; mess
   editable.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
   editable.dispatchEvent(new Event("change", { bubbles: true }));
   if (editable !== target) {
-    target.dispatchEvent(new Event("input", { bubbles: true }));
+    target.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
     target.dispatchEvent(new Event("change", { bubbles: true }));
   }
   editable.scrollIntoView({ behavior: "smooth", block: "center" });

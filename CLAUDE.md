@@ -84,10 +84,15 @@ not tsc). New errors should still be fixed.
 
 ## Release process
 
-1. Bump version in three files:
+1. Bump version in five files (the last two are marketplace listings — found
+   stale at 0.9.5/0.9.8 during the 2026-09-13 repo cleanup while the other
+   three had drifted to 0.12.10; nothing enforces these staying in sync, so
+   don't skip them):
    - `packages/mcp-server/package.json`
    - `packages/plugin/.claude-plugin/plugin.json`
    - `packages/extension/manifest.json`
+   - `.claude-plugin/marketplace.json`
+   - `.agents/plugins/marketplace.json`
 2. Rebuild extension and bundle: `node packages/extension/build.mjs &&
    bash packages/plugin/scripts/build-server.sh && node
    packages/extension/pack.mjs`.
@@ -135,7 +140,11 @@ The GitLab CI pipeline definition is in `.gitlab-ci.yml`.
 - **Keep the concrete site in the comment, not the condition.** Cite the
   reporting site and the ISSUE-*.md file as the motivating example and
   evidence, but the code path itself should read as "sites that do X",
-  never "if site is Y".
+  never "if site is Y". These files are gitignored local notes (see
+  `issues/README.md`), so citing one is a pointer for whoever has this repo
+  checked out locally, not a link into version control — new ones can be
+  created at `issues/open/ISSUE-YYYY-MM-DD-slug.md` directly; don't leave
+  them loose at repo root.
 
 ## Code conventions
 

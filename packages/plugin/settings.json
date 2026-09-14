@@ -18,7 +18,6 @@
       "mcp__chromeflow__list_frames",
       "mcp__chromeflow__list_tabs",
       "mcp__chromeflow__open_page",
-      "mcp__chromeflow__read_attachment",
       "mcp__chromeflow__scroll_to_element",
       "mcp__chromeflow__set_file_input",
       "mcp__chromeflow__switch_to_tab",
