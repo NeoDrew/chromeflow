@@ -259,7 +259,7 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
                 // Native input/textarea clear: works in ISOLATED.
                 if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
                   target.value = "";
-                  target.dispatchEvent(new Event("input", { bubbles: true }));
+                  target.dispatchEvent(new InputEvent("input", { bubbles: true, data: null, inputType: "deleteContentBackward" }));
                   target.dispatchEvent(new Event("change", { bubbles: true }));
                   target.removeAttribute("data-chromeflow-clear-target");
                 }
@@ -516,7 +516,7 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
             var el = document.activeElement;
             if (el && el.shadowRoot) el = el.shadowRoot.activeElement || el;
             if (el) {
-              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText' }));
               el.dispatchEvent(new Event('change', { bubbles: true }));
             }
           })()`,
@@ -663,7 +663,7 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
                   )?.set;
                 if (setter) setter.call(target, expectedText);
                 else (target as HTMLInputElement).value = expectedText;
-                target.dispatchEvent(new Event("input", { bubbles: true }));
+                target.dispatchEvent(new InputEvent("input", { bubbles: true, data: expectedText, inputType: "insertText" }));
                 target.dispatchEvent(new Event("change", { bubbles: true }));
               } else {
                 // Generic contenteditable that isn't a recognised rich-text
@@ -734,7 +734,7 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
               if (!doc) return { ok: false };
               const active = doc.activeElement;
               if (!(active instanceof HTMLElement)) return { ok: false };
-              active.dispatchEvent(new Event("input", { bubbles: true }));
+              active.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
               active.dispatchEvent(new Event("change", { bubbles: true }));
               const txt = active.isContentEditable
                 ? (active.textContent ?? "")

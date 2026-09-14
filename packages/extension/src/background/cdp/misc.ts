@@ -267,7 +267,7 @@ export async function commitReactControlState(
             const setter = Object.getOwnPropertyDescriptor(proto, "checked")?.set;
             try { input.focus(); } catch { /* focus may be denied */ }
             if (setter) setter.call(input, input.checked);
-            input.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
+            input.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true }));
             input.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
             return { committed: true, kind: input.type + " (native)" };
           }
