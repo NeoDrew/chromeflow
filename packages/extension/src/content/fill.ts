@@ -151,18 +151,50 @@ export function fillInput(
   input.focus();
 
   if (input instanceof HTMLSelectElement) {
+    const matched = describeElement(input);
     // For <select>, find matching option
     const option = Array.from(input.options).find(
       (o) =>
         o.text.toLowerCase().includes(lower) ||
         o.value.toLowerCase().includes(lower)
     );
-    if (option) {
-      input.value = option.value;
-      input.dispatchEvent(new Event("change", { bubbles: true }));
+    if (!option) {
+      // Previously this fell through to an unconditional `success: true`
+      // even when no option matched — a false-positive success on a
+      // state-changing call, the worst class of bug for an unattended
+      // agent (see ISSUE-2026-09-14-fill-input-select-reports-success-but-
+      // value-doesnt-persist.md). Report the real outcome instead.
+      const optionList = Array.from(input.options).map((o) => `"${o.text}"`).join(", ");
+      return {
+        success: false,
+        message: `No option on ${matched} matched "${value}". Available options: ${optionList || "(none)"}`,
+        matched,
+      };
     }
-    const matched = describeElement(input);
-    return { success: true, message: `Selected "${option?.text ?? value}" → ${matched} (matched via ${kind})`, matched };
+    // Use the native value setter (same reasoning as the text-input path
+    // below): a plain `input.value = ...` assignment on a React-controlled
+    // <select> goes through React's OWN patched setter, which tracks writes
+    // via its synthetic event system and silently reverts anything that
+    // didn't flow through it on the next render — exactly the bug reported
+    // live against a Phenom-powered (React) career site, where the option
+    // WAS found and matched but the write never stuck.
+    const selectProto = Object.getPrototypeOf(input);
+    const selectNativeSetter =
+      Object.getOwnPropertyDescriptor(selectProto, "value")?.set ??
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")?.set;
+    if (selectNativeSetter) selectNativeSetter.call(input, option.value);
+    else input.value = option.value;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    // Verify before declaring success — the whole point of the fix above.
+    if (input.value !== option.value) {
+      return {
+        success: false,
+        message: `Selected "${option.text}" on ${matched} but the value didn't persist after dispatching change/input (read back "${input.value}", expected "${option.value}") — likely a controlled component reverting the write. Try clicking the select open and clicking the option directly instead.`,
+        matched,
+      };
+    }
+    return { success: true, message: `Selected "${option.text}" → ${matched} (matched via ${kind})`, matched };
   }
 
   // For React-controlled inputs, bypass the synthetic event system by using
