@@ -61,6 +61,7 @@ packages/
 ## Development commands
 
 **Build:**
+
 ```
 cd packages/extension && node build.mjs    # extension → dist/
 cd packages/extension && node pack.mjs     # dist/ → chromeflow-<version>.zip
@@ -68,15 +69,18 @@ bash packages/plugin/scripts/build-server.sh  # MCP server → packages/plugin/s
 ```
 
 **Type-check:**
+
 ```
 cd packages/extension && npx tsc --noEmit
 cd packages/mcp-server && npx tsc --noEmit
 ```
+
 Extension has some pre-existing TS errors in `stealth.ts` and
 `content/find.ts` that are not load-bearing (the build uses esbuild,
 not tsc). New errors should still be fixed.
 
 **Test:**
+
 ```
 # No unit tests today. Validation is manual + the anti-bot harness in
 # tests/antibot/ (run locally; not in CI).
@@ -145,6 +149,14 @@ The GitLab CI pipeline definition is in `.gitlab-ci.yml`.
   checked out locally, not a link into version control — new ones can be
   created at `issues/open/ISSUE-YYYY-MM-DD-slug.md` directly; don't leave
   them loose at repo root.
+
+## Anti botting
+
+- Case 1 (NOT IMPLEMENTED) -  solving the challenge itself: classifying which image tiles contain traffic lights, transcribing distorted audio, resolving a puzzle-slider. This is the literal, unambiguous definition of "CAPTCHA solving," and it's a fundamentally different thing from chromeflow's existing click/keystroke fidelity work. Won't be implemented as it is specifically designed for anti-automation.
+
+- Case 2 (IMPLMENTED) — visible/checkbox CAPTCHAs (trust-signal based) This is the "I'm not a robot" checkbox style (classic reCAPTCHA v2 checkbox mode, older hCaptcha checkbox mode). Under the hood, these don't grade your behavior in a sophisticated way most of the time — they check simpler trust signals: does this look like a real browser (correct navigator fingerprint, no automation flags like navigator.webdriver), is the click event a real PointerEvent/MouseEvent with isTrusted: true, is there a plausible mouse trajectory leading up to it, that kind of thing. If those signals look right, the checkbox just ticks and no image/audio challenge ever appears. This is genuinely just "chromeflow clicks like a human, on the user's real logged-in Chrome" — the exact same click pipeline (bezier path, pointerType: mouse, isPrimary, settle-hover jitter) that already exists for Reddit/X/etc. There's no separate "CAPTCHA-solving" logic; the checkbox just doesn't escalate because nothing about the interaction looks synthetic.
+
+- Case 3 (NEEDS IMPLEMENTATION) — invisible risk-scoring CAPTCHAs This is reCAPTCHA v3, hCaptcha Enterprise's invisible mode, and similar. There's no checkbox or challenge shown at all by default. Instead the site continuously scores the whole session, mouse movement patterns over time, timing between actions, scroll behavior, device/browser fingerprint entropy, historical reputation of the IP, and produces a risk score (like reCAPTCHA v3's 0.0-1.0). If the score is too low, the site can silently block the action, show a fallback challenge, or flag the account for review, without ever telling the automation why. This is still in implementation.
 
 ## Code conventions
 
