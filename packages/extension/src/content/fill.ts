@@ -152,11 +152,19 @@ export function fillInput(
 
   if (input instanceof HTMLSelectElement) {
     const matched = describeElement(input);
-    // For <select>, find matching option
+    // For <select>, find the option matching the desired VALUE — NOT `lower`,
+    // which is the field's own label/textHint (used above to locate the
+    // select element itself, a completely different string). Comparing
+    // options against `lower` here meant matching "does this option's text
+    // contain the field's label," which is almost never true — a plain
+    // variable mix-up that made fill_input reject every genuinely valid
+    // option (confirmed live: "Yes"/"No"/"Mobile" all failed against their
+    // own field's listed-available options).
+    const valueLower = value.toLowerCase().trim();
     const option = Array.from(input.options).find(
       (o) =>
-        o.text.toLowerCase().includes(lower) ||
-        o.value.toLowerCase().includes(lower)
+        o.text.toLowerCase().includes(valueLower) ||
+        o.value.toLowerCase().includes(valueLower)
     );
     if (!option) {
       // Previously this fell through to an unconditional `success: true`

@@ -260,7 +260,7 @@ export type ClientMessage =
       requestId: string;
       fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; required?: boolean; empty?: boolean }>;
       warning?: string;
-      captcha?: { kind: "recaptcha" | "turnstile" | "hcaptcha"; sitekey: string | null } | null;
+      captcha?: { kind: "recaptcha" | "turnstile" | "hcaptcha"; sitekey: string | null; responseTokenPopulated: boolean | null } | null;
       oauthIndicators?: string[];
       frame_error?: string;
     }

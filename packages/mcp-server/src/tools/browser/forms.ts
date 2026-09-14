@@ -41,15 +41,26 @@ Pass \`only_empty: true\` to filter the inventory to required-but-empty fields. 
       const r = response as {
         fields: Array<{ index: number; type: string; label: string; value: string; y: number; selector: string; context?: string; required?: boolean; empty?: boolean; duplicate_id?: boolean }>;
         warning?: string;
-        captcha?: { kind: string; sitekey: string | null } | null;
+        captcha?: { kind: string; sitekey: string | null; responseTokenPopulated: boolean | null } | null;
         oauthIndicators?: string[];
         frame_error?: string;
       };
       if (r.frame_error) return { content: [{ type: "text", text: r.frame_error }] };
       const fields = r.fields;
-      // TODO: WE NEED TO FIX THE LOGIC HERE TO FIX CAPTCHA
+      // responseTokenPopulated distinguishes "a captcha widget exists" from
+      // "its passive/invisible check has actually resolved" — the former says
+      // nothing about the latter. A false/null reading here after a submit
+      // attempt means the vendor's own behavioral risk-scoring is silently
+      // withholding a token; this is often PROBABILISTIC (confirmed live:
+      // identical setup passed, failed, failed, passed across four attempts
+      // on the same hCaptcha-protected form), not a deterministic page bug.
+      // See CLAUDE.md's "Case 3: invisible risk-scoring CAPTCHAs" — there is
+      // no click_element fix for this; retrying (ideally after a fresh page
+      // load, not just re-clicking) is the only current mitigation.
       const captchaLine = r.captcha
-        ? `\n\n⚠ CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. TO DO: FIX CAPTCHA LOGIC TO PASS`
+        ? r.captcha.responseTokenPopulated === false
+          ? `\n\n⚠ CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""} — response token is EMPTY. If you already attempted a submit, the vendor's invisible/passive check has not resolved; this can be probabilistic (may pass on a retry with a fresh page load) rather than a fixed block. Do not keep re-clicking the same page state — reload and retry a bounded number of times, then report back if it never clears.`
+          : `\n\n⚠ CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}${r.captcha.responseTokenPopulated === true ? " — response token is already populated, should not block submit." : " (response token state unknown — widget may not have rendered yet)."}`
         : "";
       const oauthLine = r.oauthIndicators && r.oauthIndicators.length > 0
         ? `\n\nℹ OAuth providers detected on this form: ${r.oauthIndicators.join(", ")}. If the user wants to sign in via one of these, click it instead of filling email/password.`

@@ -59,6 +59,21 @@ export interface EnumerateResult {
 export interface CaptchaInfo {
   kind: "recaptcha" | "turnstile" | "hcaptcha";
   sitekey: string | null;
+  /**
+   * Whether the vendor's hidden response-token field currently holds a
+   * non-empty value. Presence of the widget only means a captcha EXISTS on
+   * the page — it says nothing about whether the underlying passive/invisible
+   * check has actually resolved. A form can look completely normal (no
+   * visible challenge, click "succeeds" with no error) while this stays
+   * false forever, because the vendor's own behavioral risk-scoring is
+   * silently withholding a token — see ISSUE-2026-09-14-icims-hcaptcha-
+   * still-silent.md, where this was confirmed to vary run-to-run against
+   * identical input (worked once, failed twice, worked again), i.e. a real
+   * probabilistic signal from the vendor, not a deterministic page bug.
+   * null when the response field itself can't be found yet (widget not
+   * rendered/loaded).
+   */
+  responseTokenPopulated: boolean | null;
 }
 
 /**
@@ -600,6 +615,14 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
 function detectCaptcha(doc: Document): CaptchaInfo | null {
   const getSitekey = (el: Element | null): string | null =>
     el?.getAttribute("data-sitekey") ?? null;
+  // Response-token fields are always <input>/<textarea> — read .value, not
+  // textContent, and treat "field not found yet" as null (unknown) rather
+  // than false (confirmed empty), since a not-yet-rendered widget isn't the
+  // same signal as one that rendered and stayed empty.
+  const tokenPopulated = (selector: string): boolean | null => {
+    const el = queryAllDeep<HTMLInputElement | HTMLTextAreaElement>(doc, selector)[0];
+    return el ? el.value.trim().length > 0 : null;
+  };
 
   // hCaptcha and Turnstile are checked BEFORE reCAPTCHA, using each vendor's
   // own widget class as the primary signal rather than a response-field
@@ -619,7 +642,11 @@ function detectCaptcha(doc: Document): CaptchaInfo | null {
     '.h-captcha, [name="h-captcha-response"], iframe[src*="hcaptcha.com/captcha"]'
   )[0];
   if (hcaptchaEl) {
-    return { kind: "hcaptcha", sitekey: getSitekey(queryAllDeep(doc, ".h-captcha")[0] ?? null) };
+    return {
+      kind: "hcaptcha",
+      sitekey: getSitekey(queryAllDeep(doc, ".h-captcha")[0] ?? null),
+      responseTokenPopulated: tokenPopulated('[name="h-captcha-response"]'),
+    };
   }
   // Cloudflare Turnstile
   const turnstileEl = queryAllDeep(
@@ -627,7 +654,11 @@ function detectCaptcha(doc: Document): CaptchaInfo | null {
     '.cf-turnstile, [name="cf-turnstile-response"], iframe[src*="challenges.cloudflare.com/turnstile"]'
   )[0];
   if (turnstileEl) {
-    return { kind: "turnstile", sitekey: getSitekey(queryAllDeep(doc, ".cf-turnstile")[0] ?? null) };
+    return {
+      kind: "turnstile",
+      sitekey: getSitekey(queryAllDeep(doc, ".cf-turnstile")[0] ?? null),
+      responseTokenPopulated: tokenPopulated('[name="cf-turnstile-response"]'),
+    };
   }
   // Google reCAPTCHA — covers v2 (visible/invisible), v3 (token-only), Enterprise.
   const recaptchaEl = queryAllDeep(
@@ -635,7 +666,11 @@ function detectCaptcha(doc: Document): CaptchaInfo | null {
     '.g-recaptcha, [name="g-recaptcha-response"], iframe[src*="recaptcha/api2"], iframe[src*="recaptcha/enterprise"]'
   )[0];
   if (recaptchaEl) {
-    return { kind: "recaptcha", sitekey: getSitekey(queryAllDeep(doc, ".g-recaptcha")[0] ?? null) };
+    return {
+      kind: "recaptcha",
+      sitekey: getSitekey(queryAllDeep(doc, ".g-recaptcha")[0] ?? null),
+      responseTokenPopulated: tokenPopulated('[name="g-recaptcha-response"]'),
+    };
   }
   return null;
 }
