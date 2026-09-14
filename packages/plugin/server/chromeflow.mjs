@@ -6793,12 +6793,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs, exportName) {
+    function addFormats(ajv, list, fs2, exportName) {
       var _a;
       var _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 ? _a : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs[f]);
+        ajv.addFormat(f, fs2[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -25665,9 +25665,11 @@ To fill: fill_input("${r2.fields[0].label}", "<value>")` }] };
       const r = response;
       if (r.frame_error) return { content: [{ type: "text", text: r.frame_error }] };
       const fields = r.fields;
-      const captchaLine = r.captcha ? `
+      const captchaLine = r.captcha ? r.captcha.responseTokenPopulated === false ? `
 
-\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}. TO DO: FIX CAPTCHA LOGIC TO PASS` : "";
+\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""} \u2014 response token is EMPTY. If you already attempted a submit, the vendor's invisible/passive check has not resolved; this can be probabilistic (may pass on a retry with a fresh page load) rather than a fixed block. Do not keep re-clicking the same page state \u2014 reload and retry a bounded number of times, then report back if it never clears.` : `
+
+\u26A0 CAPTCHA detected: ${r.captcha.kind}${r.captcha.sitekey ? ` (sitekey: ${r.captcha.sitekey})` : ""}${r.captcha.responseTokenPopulated === true ? " \u2014 response token is already populated, should not block submit." : " (response token state unknown \u2014 widget may not have rendered yet)."}` : "";
       const oauthLine = r.oauthIndicators && r.oauthIndicators.length > 0 ? `
 
 \u2139 OAuth providers detected on this form: ${r.oauthIndicators.join(", ")}. If the user wants to sign in via one of these, click it instead of filling email/password.` : "";
@@ -25740,6 +25742,7 @@ function registerTypingTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/tools/browser/files.ts
+import { promises as fs } from "node:fs";
 function registerFileInputTools(server, bridge) {
   server.tool(
     "set_file_input",
@@ -25777,6 +25780,26 @@ Provide file_path OR file_content, not both.`,
         return {
           content: [{ type: "text", text: "Failed to set file: file_content requires file_name." }]
         };
+      }
+      if (file_path) {
+        let stat;
+        try {
+          stat = await fs.stat(file_path);
+        } catch {
+          return {
+            content: [{ type: "text", text: `Failed to set file: "${file_path}" does not exist or is not readable on the machine running this MCP server. Refusing to attempt delivery \u2014 a page's own upload widget may not validate file readability itself, so a bad path here would otherwise silently pass as a successful upload with no file actually delivered.` }]
+          };
+        }
+        if (!stat.isFile()) {
+          return {
+            content: [{ type: "text", text: `Failed to set file: "${file_path}" exists but is not a regular file (directory or special file). Refusing to attempt delivery.` }]
+          };
+        }
+        if (stat.size === 0) {
+          return {
+            content: [{ type: "text", text: `Failed to set file: "${file_path}" exists but is empty (0 bytes). Refusing to attempt delivery \u2014 an empty file would deliver successfully at the DOM level while being useless content (e.g. a resume upload with nothing in it).` }]
+          };
+        }
       }
       const wsTimeout = Math.max(3e4, (wait_ms ?? 3e3) + 1e4);
       const response = await bridge.request(
@@ -26773,7 +26796,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.13.11" : "dev";
+var PACKAGE_VERSION = true ? "0.13.12" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

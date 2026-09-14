@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { promises as fs } from "node:fs";
 import type { WsBridge } from "../../ws-bridge.js";
 
 export function registerFileInputTools(server: McpServer, bridge: WsBridge) {
@@ -63,6 +64,39 @@ Provide file_path OR file_content, not both.`,
         return {
           content: [{ type: "text", text: "Failed to set file: file_content requires file_name." }],
         };
+      }
+      // file_path mode hands a bare path string to the extension, which has
+      // no filesystem access of its own — it can only see whatever CDP's
+      // DOM.setFileInputFiles / Input.dispatchDragEvent report back, and a
+      // page's own upload widget may not validate the delivered file's
+      // readability before showing a "file selected" UI state (some read the
+      // File object's metadata only at final submit time, possibly well
+      // after this session ends). A nonexistent or empty path can therefore
+      // read as a genuine success with no signal anything was ever wrong —
+      // confirmed as a live concern when a job-search automation pointed at
+      // a resume path that had never existed for an entire session. Fail
+      // fast, deterministically, and BEFORE any CDP call, using the one
+      // thing only this Node-side server can actually check: the real
+      // filesystem.
+      if (file_path) {
+        let stat;
+        try {
+          stat = await fs.stat(file_path);
+        } catch {
+          return {
+            content: [{ type: "text", text: `Failed to set file: "${file_path}" does not exist or is not readable on the machine running this MCP server. Refusing to attempt delivery — a page's own upload widget may not validate file readability itself, so a bad path here would otherwise silently pass as a successful upload with no file actually delivered.` }],
+          };
+        }
+        if (!stat.isFile()) {
+          return {
+            content: [{ type: "text", text: `Failed to set file: "${file_path}" exists but is not a regular file (directory or special file). Refusing to attempt delivery.` }],
+          };
+        }
+        if (stat.size === 0) {
+          return {
+            content: [{ type: "text", text: `Failed to set file: "${file_path}" exists but is empty (0 bytes). Refusing to attempt delivery — an empty file would deliver successfully at the DOM level while being useless content (e.g. a resume upload with nothing in it).` }],
+          };
+        }
       }
       // The WS request must outlive the upload-poll, with margin for CDP attach.
       const wsTimeout = Math.max(30_000, (wait_ms ?? 3000) + 10_000);
