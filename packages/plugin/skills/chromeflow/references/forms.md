@@ -20,7 +20,7 @@ shadow roots. Each field carries `type`, `label`, current `value`,
 Also reports:
 - **CAPTCHA presence** (`⚠ CAPTCHA detected: recaptcha/turnstile/hcaptcha`)
   with the sitekey when available. Synthetic submits will be silently
-  rejected and there's no automated way through it — pre-fill everything
+  rejected and there's no automated way through it that we've found so far — pre-fill everything
   else, then report the CAPTCHA back rather than blocking on
   `highlight_region` + `wait_for_click`, since most sessions run
   unattended with no one to solve it.

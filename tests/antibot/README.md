@@ -29,20 +29,16 @@ the implementation has stayed correct.
 | Closed shadow-root pierce | `find_text(frame=iframe)` reads inside Stencil closed shadow | `platforms/closed-shadow-input.md` |
 | TipTap silent-drop recovery | Post-type verify + execCommand fallback on TipTap editors | `platforms/tiptap-silent-drop.md` |
 
-## What we do NOT claim
+## What do not we claim
 
-These are explicitly out of scope. Do not add tests for them.
 
-- reCAPTCHA / hCaptcha / Cloudflare Turnstile solving. Chromeflow
-  reports captcha presence and hands off to a human gesture.
 - IP-based fingerprinting / rate limits. Network-layer; chromeflow
   cannot influence.
 - Server-side fraud scoring (account age, payment history, device
   telemetry). Behavioural-signal portion is maximised but server can
   still down-rank.
-- "Reddit submit click fires without user gesture." It does not. The
-  submit needs a real human gesture; what we validate is the pre-fill
-  and highlight pipeline.
+
+- We do claim to be able to solve *some* Captcha's, reddit, X and other platform submits. 
 
 ## Running locally
 
