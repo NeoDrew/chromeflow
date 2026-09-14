@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chromeflow",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Guided web assistance for Claude Code and Codex CLI",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http: https: ws: wss: data: blob:"
@@ -54,8 +54,7 @@
   "web_accessible_resources": [
     {
       "resources": ["offscreen.html"],
-      "matches": ["<all_urls>"],
-      "use_dynamic_url": true
+      "matches": ["<all_urls>"]
     }
   ]
 }
