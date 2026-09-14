@@ -257,7 +257,7 @@ export async function handleReactSetInput(msg: McpMsg, port: number): Promise<un
 
           (el as HTMLElement).focus();
           desc.set.call(el, val);
-          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new InputEvent("input", { bubbles: true, data: val, inputType: "insertText" }));
           el.dispatchEvent(new Event("change", { bubbles: true }));
 
           // Deliberately NOT cleaning up the chromeflow tag here anymore — if
