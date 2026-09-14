@@ -66,9 +66,9 @@ seamless handoff.
 3. **Use `wait_for(selector=…)` / `wait_for(text=…)` for async page
    changes.** Never poll with repeated `take_screenshot`.
 
-4. **Form submits on anti-bot platforms can still gate on a real human
+4. **Form submits on anti-bot platforms can somtimes still gate on a real human
    gesture.** Reddit, X / Twitter, mcp.so all silently reject synthetic
-   submit clicks. For these platforms: pre-fill the form with
+   submit clicks at times. For these platforms: pre-fill the form with
    `fill_form` / `fill_input`, retry with `try_fiber: true`, and pass
    `expect_submit: true` to detect the silent rejection. Most sessions
    run unattended, so treat a confirmed rejection as a hard stop and

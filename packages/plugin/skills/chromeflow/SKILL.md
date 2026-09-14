@@ -82,8 +82,8 @@ product, adding an env var), continue immediately with chromeflow.
 4. **Use `wait_for(selector=…)` / `wait_for(text=…)` for async page
    changes.** Never poll with repeated `take_screenshot`.
 
-5. **Form submits on anti-bot platforms can still gate on a real human
-   gesture.** Reddit, X / Twitter, mcp.so all silently reject synthetic
+5. **Form submits on anti-bot platforms may still gate on a real human
+   gesture.** Reddit, X / Twitter, mcp.so sometimes silently reject synthetic
    submit clicks even when chromeflow's CDP click passes isTrusted. For
    these platforms: pre-fill the form with `fill_form` / `fill_input`,
    retry the submit with `try_fiber: true`, and pass `expect_submit: true`

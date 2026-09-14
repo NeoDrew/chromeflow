@@ -39,8 +39,7 @@ wait_for_click()
 ```
 
 Facebook's Post submit button does not appear to gate on isTrusted
-the way Reddit/X do, but the platform's broader fraud detection
-makes automated submits risky. Hand off to a real human gesture.
+the way Reddit/X do.
 
 ## Notes
 
