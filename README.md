@@ -61,7 +61,7 @@ Tested end-to-end against the live platform before every release. Procedures liv
 | <img src="apps/website/public/validated-icons/webcomponentsdotorg.svg" width="14" /> Closed shadow DOM | `find_text` pierces Stencil closed shadow roots via `chrome.dom` API | 🟢 Working (2026-05-25) |
 | <img src="apps/website/public/validated-icons/prosemirror.svg" width="14" /> TipTap / ProseMirror | `type_text` lands in contenteditable; auto-recovery on silent-drop | 🟢 Working (2026-05-25) |
 
-**Submit handoff (by design).** Reddit, X, LinkedIn, Facebook, Instagram all gate their submit buttons on a real isTrusted human gesture as part of their anti-bot stack. Chromeflow lands the **typing** path (which is what an agent actually needs) and then uses `highlight_region` + `wait_for_click` so the user clicks Submit themselves. We do not claim to bypass captcha-solving, IP-based fingerprinting, or server-side fraud scoring.
+**Submit handoff (by design).** Reddit, X, LinkedIn, Facebook, Instagram all gate their submit buttons on a real isTrusted human gesture as part of their anti-bot stack. Chromeflow lands the **typing** path (which is what an agent actually needs) and then uses `highlight_region` + `wait_for_click` so the user clicks Submit themselves.
 
 **Why this is the moat.** Playwright, Puppeteer, browser-use, crawl4ai all launch a fresh logged-out browser. They can't see your sessions, and the isTrusted-strict checks on these platforms reject their vanilla CDP clicks. Chromeflow runs in your real logged-in Chrome with a humanlike bezier + PointerEvent isPrimary=true click sequence; the validated-against table above shows what that gets you in practice. See [`/validated`](https://chromeflow.run/validated) for the side-by-side comparison.
 

@@ -21,16 +21,16 @@ validated against the following platforms (as of 0.10.0):
 | Forms whose Submit button is behind a `[role=dialog]` portal | `click_element("Submit", in_dialog=true)` scopes correctly |
 | Closed-shadow-root inputs (Stencil/Lit/Radix portals) | `fill_input(selector=...)` reaches them via content-script tagging |
 
-## What we explicitly do NOT claim
+## What we claim
 
 This list is shorter than the one above for a reason. Don't oversell:
 
-- **We do NOT bypass reCAPTCHA / hCaptcha / Cloudflare Turnstile solving.**
+- **We do try bypass reCAPTCHA / hCaptcha / Cloudflare Turnstile solving.**
   `get_form_fields()` reports captcha presence as a `⚠ CAPTCHA detected`
   line in the response. The submit will be silently rejected and there is
   no automated recovery — most chromeflow sessions run unattended, so
   `highlight_region` + `wait_for_click()` just blocks with no one to click.
-  Report the CAPTCHA back rather than waiting on it.
+  Report the CAPTCHA back rather than waiting on it. We intend to fix this as best as possible. 
 - **We do NOT defeat IP-based fingerprinting / rate limits.** Those are
   network-layer signals chromeflow cannot influence. If a site refuses
   the user's IP, chromeflow cannot help.
@@ -38,9 +38,9 @@ This list is shorter than the one above for a reason. Don't oversell:
   signals** (account age, payment history, device telemetry). We
   maximise the behavioural-signal portion, but the server can still
   down-rank or block.
-- **We do NOT claim Reddit / X submit clicks fire without user gesture.**
+- **We do try to claim Reddit / X submit clicks fire without user gesture.**
   These platforms gate submit on isTrusted that survives a real human
-  click ceremony only. Pre-fill everything, retry with `try_fiber: true`,
+  click ceremony most of the time. Pre-fill everything, retry with `try_fiber: true`,
   then report the rejection — don't stall a run waiting for a human who
   typically isn't there.
 
