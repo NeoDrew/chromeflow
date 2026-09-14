@@ -5,6 +5,19 @@
 import { withDebugger } from "./debugger";
 
 /**
+ * Last known synthesized cursor position per tab, seeded by the trailing
+ * jitter move at the end of dispatchHumanMouseClick. Coordinates are viewport
+ * CSS pixels, which are only meaningful per-tab (there's no cross-tab
+ * physical cursor to model), hence keyed by tabId rather than a single
+ * module-level point. Read back at the top of the next call so consecutive
+ * clicks on the same tab produce one continuous traversal instead of the
+ * cursor "teleporting" between targets with zero intervening samples — a
+ * page recording the full mousemove/pointermove stream over a session can
+ * otherwise tell every click was independently synthesized.
+ */
+const lastPointerPos = new Map<number, { x: number; y: number }>();
+
+/**
  * Run the full human-like CDP mouse-click sequence at (x, y): bezier
  * approach path, settle-hover micro-tremor, press, release, post-click
  * micro-move. Reused by click_element (where coordinates come from the
@@ -145,8 +158,15 @@ export async function dispatchHumanMouseClick(
     // terminal/IDE.)
     const button = options.button ?? "left";
     const ptr = { pointerType: "mouse" as const, force: 0.5 };
-    const sx = cx + Math.round((Math.random() - 0.5) * 60);
-    const sy = cy + Math.round((Math.random() - 0.5) * 60);
+    const prev = lastPointerPos.get(tabId);
+    const dist = prev ? Math.hypot(prev.x - cx, prev.y - cy) : 0;
+    // Only bother resuming from the previous cursor position when the two
+    // targets are far enough apart to matter; nearby clicks keep the
+    // existing tight random-offset start so the common single-click case is
+    // unaffected.
+    const useTravel = !!prev && dist > 120;
+    const sx = useTravel ? prev!.x : cx + Math.round((Math.random() - 0.5) * 60);
+    const sy = useTravel ? prev!.y : cy + Math.round((Math.random() - 0.5) * 60);
     const midX = (sx + cx) / 2;
     const midY = (sy + cy) / 2;
     const perpDx = -(cy - sy);
@@ -155,7 +175,12 @@ export async function dispatchHumanMouseClick(
     const bowPx = (Math.random() * 0.4 - 0.2) * Math.min(80, perpLen);
     const ctlX = midX + (perpDx / perpLen) * bowPx;
     const ctlY = midY + (perpDy / perpLen) * bowPx;
-    const steps = 6 + Math.floor(Math.random() * 4);
+    // A long real traversal needs enough intermediate samples to look
+    // continuous; a short/no-previous-position hop keeps the original fixed
+    // low step count.
+    const steps = useTravel
+      ? Math.min(40, Math.max(10, Math.round(dist / 30)))
+      : 6 + Math.floor(Math.random() * 4);
     for (let i = 1; i <= steps; i++) {
       const t = i / steps;
       const bx = Math.round((1 - t) * (1 - t) * sx + 2 * (1 - t) * t * ctlX + t * t * cx);
@@ -200,6 +225,7 @@ export async function dispatchHumanMouseClick(
     await dbg.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
       type: "mouseMoved", x: px, y: py, button: "none", clickCount: 0, ...ptr,
     });
+    lastPointerPos.set(tabId, { x: px, y: py });
     // Short tail so an immediately-firing beforeunload dialog is dismissed by
     // the outer click_element handler's listener before this function returns.
     await new Promise((r) => setTimeout(r, 200));
@@ -235,8 +261,17 @@ export async function dispatchDragDropFile(
     const data = { items: [], files: [filePath], dragOperationsMask: 1 };
     await dbg.sendCommand({ tabId }, "Input.dispatchDragEvent", { type: "dragEnter", x: cx, y: cy, data });
     await new Promise((r) => setTimeout(r, 60 + Math.random() * 40));
-    await dbg.sendCommand({ tabId }, "Input.dispatchDragEvent", { type: "dragOver", x: cx, y: cy, data });
-    await new Promise((r) => setTimeout(r, 60 + Math.random() * 40));
+    // A real held pointer is never perfectly still: emit several jittered
+    // dragOver samples (a held drag produces a stream of coordinates, not
+    // one) before the precise drop, so the event sequence looks like a
+    // continuous hover rather than a single synthesized sample.
+    const overSamples = 3 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < overSamples; i++) {
+      const jx = cx + Math.round((Math.random() - 0.5) * 2 * (3 + Math.random() * 5));
+      const jy = cy + Math.round((Math.random() - 0.5) * 2 * (3 + Math.random() * 5));
+      await dbg.sendCommand({ tabId }, "Input.dispatchDragEvent", { type: "dragOver", x: jx, y: jy, data });
+      await new Promise((r) => setTimeout(r, 50 + Math.random() * 80));
+    }
     await dbg.sendCommand({ tabId }, "Input.dispatchDragEvent", { type: "drop", x: cx, y: cy, data });
     // Short tail, matching dispatchHumanMouseClick's convention, so an
     // immediately-firing beforeunload dialog is still caught by the outer

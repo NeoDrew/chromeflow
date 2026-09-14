@@ -601,29 +601,41 @@ function detectCaptcha(doc: Document): CaptchaInfo | null {
   const getSitekey = (el: Element | null): string | null =>
     el?.getAttribute("data-sitekey") ?? null;
 
-  // Google reCAPTCHA — covers v2 (visible/invisible), v3 (token-only), Enterprise.
-  const recaptchaEl = queryAllDeep(
+  // hCaptcha and Turnstile are checked BEFORE reCAPTCHA, using each vendor's
+  // own widget class as the primary signal rather than a response-field
+  // name. hCaptcha's own widget script deliberately ALSO injects a hidden
+  // <textarea name="g-recaptcha-response"> for drop-in reCAPTCHA
+  // compatibility (a documented hCaptcha feature, so a site migrating from
+  // reCAPTCHA needs no server-side changes) — confirmed empirically against
+  // hCaptcha's own official test widget, which produced exactly that field
+  // with no .g-recaptcha class anywhere on the page. Checking the generic
+  // response-field name first would misidentify every real hCaptcha widget
+  // as reCAPTCHA, with no sitekey (since there's no .g-recaptcha element to
+  // read one from). reCAPTCHA's response-field name isn't a reliably
+  // exclusive signal, so it's the last, most permissive check, not the
+  // first.
+  const hcaptchaEl = queryAllDeep(
     doc,
-    '[name="g-recaptcha-response"], .g-recaptcha, iframe[src*="recaptcha/api2"], iframe[src*="recaptcha/enterprise"]'
+    '.h-captcha, [name="h-captcha-response"], iframe[src*="hcaptcha.com/captcha"]'
   )[0];
-  if (recaptchaEl) {
-    return { kind: "recaptcha", sitekey: getSitekey(queryAllDeep(doc, ".g-recaptcha")[0] ?? null) };
+  if (hcaptchaEl) {
+    return { kind: "hcaptcha", sitekey: getSitekey(queryAllDeep(doc, ".h-captcha")[0] ?? null) };
   }
   // Cloudflare Turnstile
   const turnstileEl = queryAllDeep(
     doc,
-    '[name="cf-turnstile-response"], .cf-turnstile, iframe[src*="challenges.cloudflare.com/turnstile"]'
+    '.cf-turnstile, [name="cf-turnstile-response"], iframe[src*="challenges.cloudflare.com/turnstile"]'
   )[0];
   if (turnstileEl) {
     return { kind: "turnstile", sitekey: getSitekey(queryAllDeep(doc, ".cf-turnstile")[0] ?? null) };
   }
-  // hCaptcha
-  const hcaptchaEl = queryAllDeep(
+  // Google reCAPTCHA — covers v2 (visible/invisible), v3 (token-only), Enterprise.
+  const recaptchaEl = queryAllDeep(
     doc,
-    '[name="h-captcha-response"], .h-captcha, iframe[src*="hcaptcha.com/captcha"]'
+    '.g-recaptcha, [name="g-recaptcha-response"], iframe[src*="recaptcha/api2"], iframe[src*="recaptcha/enterprise"]'
   )[0];
-  if (hcaptchaEl) {
-    return { kind: "hcaptcha", sitekey: getSitekey(queryAllDeep(doc, ".h-captcha")[0] ?? null) };
+  if (recaptchaEl) {
+    return { kind: "recaptcha", sitekey: getSitekey(queryAllDeep(doc, ".g-recaptcha")[0] ?? null) };
   }
   return null;
 }

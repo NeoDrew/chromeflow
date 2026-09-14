@@ -9,12 +9,33 @@
  *   - navigator.plugins:                    ensures non-empty (empty = headless tell)
  *   - navigator.languages:                  ensures non-empty
  *   - window.chrome.runtime:                ensures present (extension contexts can leak this)
+ *   - document.hasFocus / hidden / visibilityState: always report foreground+visible, so
+ *     strict Web Components don't reject CDP clicks when the OS-level window isn't focused
+ *   - navigator.userActivation:             isActive/hasBeenActive forced true
+ *   - WebGL vendor/renderer:                headless-tell strings (SwiftShader, "Google Inc.")
+ *     replaced with a plausible real-GPU string; leaves genuine values alone
+ *   - WebRTC ICE candidates:                strips host/mDNS candidates (local IP leak)
+ *   - MouseEvent/PointerEvent screenX/screenY: CDP's Input.dispatchMouseEvent sets these
+ *     equal to clientX/clientY (a known Chromium bug, chromium:40280325) — patched to
+ *     derive from a consistent per-page-load window-position offset instead, so screenX/Y
+ *     correlate with clientX/Y across different clicks the way a real mouse's would, rather
+ *     than either matching client coords exactly (the bug) or staying constant regardless of
+ *     click position (the naive-random-value fix real bypass tools use for this same bug)
+ *   - MouseEvent/PointerEvent movementX/movementY: CDP-dispatched pointer events always
+ *     report these as 0 (a real mouse's don't) — patched to track inter-event deltas
  *   - Function.prototype.toString:          patches above are wrapped to look native
  *
  * What this does NOT fix:
  *   - TLS / JA3 fingerprint
- *   - Canvas / WebGL / audio fingerprints
- *   - Behavioral signals (mouse, keyboard timing)
+ *   - Canvas fingerprint
+ *   - getCoalescedEvents() sub-frame sample density (real high-poll-rate mice produce
+ *     multiple raw samples between frames; CDP dispatch produces one flat event — faking
+ *     this would need literally synthesizing sub-frame samples, not just patching a getter)
+ *   - Behavioral timing (keystroke/mouse inter-event cadence, frame-alignment histograms)
+ *   - The CDP `chrome.debugger.attach()` infobar Chrome itself shows while attached — not a
+ *     JS-visible signal directly, but in principle inferable via viewport-height changes the
+ *     same way the classic automation infobar is detected; withDebugger's per-operation
+ *     attach/detach (not session-long) already minimises this window
  *
  * Pages can still detect chromeflow via behavioral analysis or canvas
  * fingerprinting. This is the JS-API layer of defense only.
@@ -45,6 +66,74 @@
     patchedSources.set(newToString, nativeCode("toString"));
     try { Function.prototype.toString = newToString; } catch { /* may be frozen */ }
 
+    // Cross-realm toString "lie detector" hardening (a documented CreepJS-
+    // style technique): a page can synchronously create a fresh iframe and
+    // grab ITS pristine, unpatched Function.prototype.toString before this
+    // content script's own document_start injection has had a chance to run
+    // inside that new frame's realm — then call that pristine toString
+    // against one of THIS realm's patched functions (e.g. navigator.
+    // webdriver's getter) to read its real source, since native toString
+    // reads a function's own [[SourceText]] regardless of which realm's
+    // copy of the built-in performs the read; the WeakMap-based disguise
+    // above only intercepts calls through THIS realm's own (overridden)
+    // toString. Confirmed empirically: a fresh same-tick iframe's toString
+    // revealed the actual minified patch source where this realm's own
+    // toString correctly showed "[native code]".
+    //
+    // Fix: intercept contentWindow/contentDocument access on iframes so
+    // that, the moment a page reaches into a new iframe's realm, THAT
+    // realm's own Function.prototype.toString gets wrapped too — checked
+    // against the SAME patchedSources WeakMap (captured by closure, so it
+    // recognizes every function THIS outer realm has faked), not a fresh
+    // one scoped to the iframe. Also marks the iframe with the SAME
+    // __cfStealthApplied flag this file checks at the very top, so if this
+    // iframe later runs its own natural document_start injection (via
+    // all_frames), it sees the marker and skips — a fresh, independent
+    // patchedSources WeakMap there would have no knowledge of THIS realm's
+    // faked functions and could otherwise clobber this wrap with one that
+    // doesn't protect them. Trade-off: an iframe handled this way doesn't
+    // get its OWN navigator.webdriver/plugins/etc. patched — an accepted,
+    // narrower scope than the specific, proven leak this closes.
+    const patchToStringForRealm = (win: unknown): void => {
+      try {
+        const w = win as { Function?: { prototype?: object }; __cfStealthApplied?: boolean } | null | undefined;
+        if (!w || w.__cfStealthApplied || !w.Function?.prototype) return;
+        const realmProto = w.Function.prototype as { toString?: (this: Function) => string };
+        const realmNativeToString = realmProto.toString;
+        if (!realmNativeToString) return;
+        const realmNewToString = function (this: Function) {
+          const cached = patchedSources.get(this);
+          if (cached) return cached;
+          return realmNativeToString.call(this);
+        };
+        patchedSources.set(realmNewToString, nativeCode("toString"));
+        (realmProto as Record<string, unknown>).toString = realmNewToString;
+        Object.defineProperty(w, "__cfStealthApplied", { value: true, configurable: false, enumerable: false, writable: false });
+      } catch { /* cross-origin realm, or otherwise inaccessible — ignore */ }
+    };
+    try {
+      const patchFrameCtor = (ctor: { prototype: object } | undefined) => {
+        if (!ctor) return;
+        for (const prop of ["contentWindow", "contentDocument"] as const) {
+          const desc = Object.getOwnPropertyDescriptor(ctor.prototype, prop);
+          if (!desc?.get) continue;
+          const origGetter = desc.get;
+          Object.defineProperty(ctor.prototype, prop, {
+            ...desc,
+            get: fakeNative(function (this: HTMLIFrameElement) {
+              const result = origGetter.call(this);
+              if (result) {
+                patchToStringForRealm(prop === "contentWindow" ? result : (result as Document).defaultView);
+              }
+              return result;
+            }, `get ${prop}`),
+          });
+        }
+      };
+      patchFrameCtor((window as unknown as { HTMLIFrameElement?: { prototype: object } }).HTMLIFrameElement);
+      patchFrameCtor((window as unknown as { HTMLFrameElement?: { prototype: object } }).HTMLFrameElement);
+    } catch { /* ignore */ }
+
     // navigator.webdriver — should be false. Some test contexts/extensions flip it.
     try {
       Object.defineProperty(Navigator.prototype, "webdriver", {
@@ -61,8 +150,14 @@
         const origQuery = perms.query.bind(perms);
         perms.query = fakeNative(function (parameters: PermissionDescriptor) {
           if (parameters && parameters.name === "notifications") {
+            // Mirror Notification.permission rather than hardcoding "default": on a
+            // real (non-headless) profile with prior history for this origin, the
+            // static reader can already be "granted"/"denied", and forcing this API
+            // to say "default" regardless would manufacture the exact cross-API
+            // contradiction this patch exists to prevent, just in the other direction.
+            const real = typeof Notification !== "undefined" ? Notification.permission : "default";
             return Promise.resolve({
-              state: "default",
+              state: real,
               name: "notifications",
               onchange: null,
               addEventListener() {},
@@ -157,6 +252,69 @@
           enumerable: true,
         });
       }
+    } catch { /* ignore */ }
+
+    // MouseEvent/PointerEvent screenX/screenY — CDP's Input.dispatchMouseEvent
+    // has no screenX/screenY parameters at all (only viewport-relative x/y),
+    // and Chromium's fallback sets screenX/screenY equal to clientX/clientY —
+    // a real mouse's screen coordinates only equal its client coordinates if
+    // the browser window happens to sit at (0,0) with zero chrome, which is
+    // never true in practice. This is a known, currently-exploited signal
+    // (chromium:40280325; a public tool exists specifically to spoof this
+    // against Cloudflare Turnstile). That tool's fix sets one random constant
+    // for the whole page load — same value on every click regardless of
+    // where it landed, which is its own tell once more than one click is
+    // correlated. This derives screenX/screenY from clientX/clientY plus a
+    // window-position offset chosen once per page load (mirroring how a
+    // real, stationary browser window behaves for its whole session), so
+    // different clicks at different positions produce correspondingly
+    // different, internally-consistent screen coordinates.
+    try {
+      const screenOffsetX = Math.floor(Math.random() * 400) + 40; // plausible window left-edge position
+      const screenOffsetY = Math.floor(Math.random() * 120) + 80; // plausible top chrome + window position
+      Object.defineProperty(MouseEvent.prototype, "screenX", {
+        get: fakeNative(function (this: MouseEvent) { return this.clientX + screenOffsetX; }, "get screenX"),
+        configurable: true,
+        enumerable: true,
+      });
+      Object.defineProperty(MouseEvent.prototype, "screenY", {
+        get: fakeNative(function (this: MouseEvent) { return this.clientY + screenOffsetY; }, "get screenY"),
+        configurable: true,
+        enumerable: true,
+      });
+    } catch { /* ignore */ }
+
+    // MouseEvent/PointerEvent movementX/movementY — CDP-dispatched pointer
+    // events always report these as 0 (a long-standing, documented Chrome/
+    // Edge quirk, W3C pointerevents#131); a real mouse's movementX/Y track
+    // the delta since the previous move event, so a position that visibly
+    // changes across events while movementX/Y stay 0 the whole time is a
+    // contradiction no real pointer produces. Tracks the last seen
+    // clientX/clientY in closure state and computes the delta on read,
+    // covering both real and CDP-dispatched events uniformly (a real
+    // pointermove's own native movementX/Y is simply overwritten with an
+    // equivalent freshly-computed value, so nothing regresses for it).
+    try {
+      let lastX: number | null = null;
+      let lastY: number | null = null;
+      Object.defineProperty(MouseEvent.prototype, "movementX", {
+        get: fakeNative(function (this: MouseEvent) {
+          const dx = lastX === null ? 0 : this.clientX - lastX;
+          lastX = this.clientX;
+          return dx;
+        }, "get movementX"),
+        configurable: true,
+        enumerable: true,
+      });
+      Object.defineProperty(MouseEvent.prototype, "movementY", {
+        get: fakeNative(function (this: MouseEvent) {
+          const dy = lastY === null ? 0 : this.clientY - lastY;
+          lastY = this.clientY;
+          return dy;
+        }, "get movementY"),
+        configurable: true,
+        enumerable: true,
+      });
     } catch { /* ignore */ }
 
     // window.chrome.runtime — extensions sometimes hide this from page context,

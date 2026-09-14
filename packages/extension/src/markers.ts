@@ -72,4 +72,6 @@ export const markerIds = {
   clickTargetAttr: () => `data-${prefix()}-click`,
   preCheckedAttr: () => `data-${prefix()}-prech`,
   preDimensionsAttr: () => `data-${prefix()}-predim`,
+  instanceInfoBox: () => `__${prefix()}_info__`,
+  animationProgress: () => `${prefix()}-progress`,
 };

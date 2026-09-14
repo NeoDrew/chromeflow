@@ -21,7 +21,9 @@ Use this when:
 
 Returns: { status, status_text, headers, content_type, body_text or body_base64 (when binary), truncated, total_bytes }.
 Cookies and Origin headers are set by Chrome — pass any extra request headers via the headers param.
-Set binary=true for non-text responses (PDFs, images, zips) — the body is returned base64-encoded.`,
+Set binary=true for non-text responses (PDFs, images, zips) — the body is returned base64-encoded.
+
+Pass \`parse\` for format-aware TEXT EXTRACTION instead of raw bytes/text (this absorbs what used to be a separate read_attachment tool): docx (in-extension ZIP+XML extraction), txt/md/csv/json (UTF-8), html/xml (tag-stripped). Runs on the full, untruncated response before max_bytes ever applies (a docx is a ZIP; truncating one mid-byte-stream would corrupt it), then truncates the resulting TEXT to max_chars. For PDF, the response is a structured error pointing at download_file + local pdftotext. \`parse: "auto"\` detects the format from content-type/URL.`,
     {
       url: z.string().describe("The full URL to fetch (https://...). Same-origin or cross-origin, both work."),
       method: z
@@ -39,7 +41,17 @@ Set binary=true for non-text responses (PDFs, images, zips) — the body is retu
       binary: z
         .boolean()
         .optional()
-        .describe("If true, return body as base64 (body_base64). Use for PDFs, images, zips. Default false (UTF-8 text in body_text)."),
+        .describe("If true, return body as base64 (body_base64). Use for PDFs, images, zips. Default false (UTF-8 text in body_text). Ignored when parse is set."),
+      parse: z
+        .enum(["auto", "txt", "md", "csv", "json", "xml", "html", "docx", "pdf"])
+        .optional()
+        .describe('Extract text instead of returning raw bytes/text, for document attachments (Canvas/Drive/email-style URLs). "auto" detects format from content-type/URL; otherwise pass the format explicitly. Response carries {text, format, total_chars, truncated} instead of body_text/body_base64.'),
+      max_chars: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe("Maximum characters to return when parse is set (default 50000). Ignored without parse."),
       timeout_ms: z
         .number()
         .int()
@@ -51,13 +63,13 @@ Set binary=true for non-text responses (PDFs, images, zips) — the body is retu
         .int()
         .min(1)
         .optional()
-        .describe("Truncate body at this many bytes (default 100000 ≈ 25K tokens, the MCP transport ceiling). Bumped down from 2MB in 0.9.4 because larger responses overflow the agent's context. For larger payloads, set `to_file` to write to disk instead."),
+        .describe("Truncate body at this many bytes (default 100000 ≈ 25K tokens, the MCP transport ceiling). Bumped down from 2MB in 0.9.4 because larger responses overflow the agent's context. For larger payloads, set `to_file` to write to disk instead. Ignored when parse is set (see max_chars)."),
       to_file: z
         .string()
         .optional()
-        .describe("Absolute path on disk under the agent's working directory. When set, the FULL response body is written to this path (no max_bytes truncation) and the response carries only {path, size, content_type, status, headers}. Parent directories are created if missing. Use this for anything you'd otherwise have to paginate through max_bytes."),
+        .describe("Absolute path on disk under the agent's working directory. When set, the FULL response body is written to this path (no max_bytes truncation) and the response carries only {path, size, content_type, status, headers}. Parent directories are created if missing. Use this for anything you'd otherwise have to paginate through max_bytes. Ignored when parse is set."),
     },
-    async ({ url, method, headers, body, binary, timeout_ms, max_bytes, to_file }) => {
+    async ({ url, method, headers, body, binary, parse, max_chars, timeout_ms, max_bytes, to_file }) => {
       const block = isBlockedUrl(url);
       if (block.blocked) {
         return { content: [{ type: "text", text: `fetch_url refused: ${block.reason}` }] };
@@ -78,6 +90,8 @@ Set binary=true for non-text responses (PDFs, images, zips) — the body is retu
         headers,
         body,
         binary: effectiveBinary,
+        parse,
+        max_chars,
         timeout_ms,
         max_bytes: effectiveMaxBytes,
       }, wsTimeout);
@@ -89,10 +103,21 @@ Set binary=true for non-text responses (PDFs, images, zips) — the body is retu
         content_type: string;
         body_text?: string;
         body_base64?: string;
+        text?: string;
+        format?: string;
+        total_chars?: number;
         truncated: boolean;
-        total_bytes: number;
+        total_bytes?: number;
         anti_bot_detected?: string | null;
       };
+
+      // parse mode: extracted-text response, distinct shape from the raw-fetch
+      // path below (no total_bytes/body_text/body_base64; see handleFetchUrl).
+      if (parse) {
+        const header = `${url}\nformat: ${r.format} | content-type: ${r.content_type || "unknown"} | total_chars: ${r.total_chars}${r.truncated ? ` (truncated to ${max_chars ?? 50_000})` : ""}\n${"─".repeat(40)}\n`;
+        return { content: [{ type: "text", text: header + (r.text ?? "") }] };
+      }
+
       const antiBotLine = r.anti_bot_detected
         ? `\n⚠ anti_bot_detected: "${r.anti_bot_detected}" — response body matches a known block / challenge page. Don't parse as the expected JSON/HTML; the user's IP may be challenged or the endpoint may require a real browser context.`
         : "";

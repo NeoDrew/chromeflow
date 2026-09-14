@@ -67,6 +67,38 @@ export function resolveCheckableInput(el: Element): HTMLInputElement | null {
 }
 
 /**
+ * Resolve a clicked <label> to the actual form control it activates, for
+ * TEXT-LIKE labelable controls — anything other than radio/checkbox, which
+ * resolveCheckableInput above already handles separately (a label's whole
+ * area unambiguously activates exactly one checkbox/radio, so there's
+ * nothing to redirect there). A label's OWN bounding box can visually span
+ * more than just its own control — a shared caption sitting above a multi-
+ * field row (e.g. one "Phone number" label captioning BOTH a country-code
+ * select and the number input together) is a real, reproduced case — so a
+ * coordinate-based click anywhere within the label's rect can land on a
+ * completely different sibling field even though the label's for= /
+ * wrapping correctly points at the right control. Redirecting to the
+ * control's own (necessarily single-field) rect avoids that ambiguity
+ * entirely. See ISSUE-2026-09-12-smartrecruiters-spl-dropzone-file-
+ * rejection.md §3.5.
+ */
+export function resolveLabelledControl(el: Element): HTMLElement | null {
+  if (!(el instanceof HTMLLabelElement)) return null;
+  let control: Element | null = null;
+  if (el.htmlFor) {
+    control = el.ownerDocument.getElementById(el.htmlFor);
+  }
+  if (!control) {
+    control = el.querySelector("input, select, textarea");
+  }
+  if (!control) return null;
+  if (control instanceof HTMLInputElement && (control.type === "radio" || control.type === "checkbox")) {
+    return null; // resolveCheckableInput's job, not this one
+  }
+  return control instanceof HTMLElement ? control : null;
+}
+
+/**
  * Collect every candidate matching `lower`, then split into visible and
  * hidden buckets. The caller prefers visible — a hidden element (display:none,
  * [hidden] attr, 0×0 dimensions, aria-hidden) only wins if no visible peer

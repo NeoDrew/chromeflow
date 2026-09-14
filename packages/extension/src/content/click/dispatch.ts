@@ -7,6 +7,7 @@ import {
   findSectionByHeading,
   readDisabledState,
   resolveCheckableInput,
+  resolveLabelledControl,
 } from "./resolve.js";
 import { dispatchHumanClickEvents, firePointerChain, scrollSmartIntoView } from "./pointer.js";
 
@@ -182,6 +183,14 @@ export async function prepareClickTarget(
       descriptor;
     return { success: true, skipClick: true, message: `"${label}" — radio already checked, click skipped`, label };
   }
+
+  // A bare <label> resolved as the winning candidate risks computing the
+  // click coordinate from ITS bounding box below, which can span more than
+  // just its own control (see resolveLabelledControl's comment). Redirect
+  // to the actual text-like control now, before scrolling/tagging/coordinate
+  // computation, so all of those operate on the real target instead.
+  const labelledControl = resolveLabelledControl(el);
+  if (labelledControl) el = labelledControl;
 
   await scrollSmartIntoView(el);
   el.setAttribute(markerIds.clickTargetAttr(), "true");

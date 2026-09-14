@@ -77,10 +77,14 @@ import {
 } from "./background/handlers/files";
 import {
   handleInspectRequestHeaders,
-  handleReadAttachment,
   handleDownloadFile,
   handleFetchUrl,
 } from "./background/handlers/fetch";
+import { suppressNativeSavePrompts } from "./background/privacy-settings";
+
+// Runs on every service-worker start (MV3 workers restart often; this is
+// idempotent and cheap, so there's no need to gate it behind onInstalled).
+suppressNativeSavePrompts();
 
 // ─── Inbound messages ──────────────────────────────────────────────────────
 
@@ -141,6 +145,33 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     // real multi-minute wait_for_click doesn't trip the safety net meant for
     // genuinely-hung calls.
     const payload = msg.payload as { type?: string; timeout?: number };
+    // list_tabs is a pure read once a window is already assigned to this port
+    // (chrome.tabs.query + local state lookups, no chrome.debugger, no DOM/page
+    // interaction) - it can safely skip the serialized queue in that case,
+    // unlike close_tab/switch_to_tab/etc., which mutate tab state and stay
+    // queued for the reason in the comment below. Bypassing matters in
+    // practice: production usage data (2026-09-13 usage-stats analysis) showed
+    // list_tabs timing out at an 11% rate purely from queuing behind a slow or
+    // stuck CDP call on the same port - 30s+ waits for a query that itself
+    // completes in single-digit milliseconds once it actually runs.
+    //
+    // The "already assigned" guard matters: getActiveTab (called by
+    // handleListTabs) does a check-then-act window-creation sequence when a
+    // port has NO window yet (read getWindowId, await chrome.windows.create,
+    // await setWindowId) - genuinely non-reentrant, so a list_tabs racing a
+    // port's first-ever operation could create a second, orphaned Chrome
+    // window. getWindowId() is a synchronous in-memory read, so checking it
+    // here first is race-free: once a window IS assigned, the remaining path
+    // (resolving/repinning the active tab within that window) is idempotent
+    // even if it runs concurrently with another handler, since it converges on
+    // whatever tab Chrome currently reports as active rather than creating
+    // anything new.
+    if (payload?.type === "list_tabs" && getWindowId(port) !== null) {
+      handleMcpMessage(msg.payload, port)
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((err) => sendResponse({ ok: false, error: String(err) }));
+      return true;
+    }
     const isLongPoll = payload?.type === "start_click_watch" || payload?.type === "wait_for_selector";
     const watchdogMs = isLongPoll
       ? (typeof payload.timeout === "number" ? payload.timeout : 120_000) + 15_000
@@ -289,8 +320,6 @@ async function handleMcpMessage(msg: {
       return handleReactCallProp(msg, port);
     case "inspect_request_headers":
       return handleInspectRequestHeaders(msg, port);
-    case "read_attachment":
-      return handleReadAttachment(msg, port);
     case "download_file":
       return handleDownloadFile(msg, port);
     case "fetch_url":

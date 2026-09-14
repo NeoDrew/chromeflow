@@ -79,36 +79,12 @@ export function registerFileTools(server: McpServer, bridge: WsBridge) {
   );
 
   server.tool(
-    "read_attachment",
-    `Fetch a URL via Chrome's privileged context (uses cookie jar, bypasses page CSP) and return parsed text. Supports docx (in-extension ZIP+XML extraction), txt/md/csv/json (UTF-8), html/xml (tag-stripped). For PDF, the response is a structured error pointing at download_file + local pdftotext. Truncates to max_chars (default 20000); reports total_chars + truncated for pagination.`,
-    {
-      url: z.string().describe("The full URL of the attachment. Uses Chrome's cookie jar — works on authenticated URLs."),
-      format: z.enum(["txt", "md", "csv", "json", "xml", "html", "docx", "pdf"]).optional().describe("Override format auto-detection."),
-      max_chars: z.number().int().min(1).optional().describe("Maximum characters to return (default 20000)."),
-    },
-    async ({ url, format, max_chars }) => {
-      const block = isBlockedUrl(url);
-      if (block.blocked) {
-        return { content: [{ type: "text", text: `read_attachment refused: ${block.reason}` }] };
-      }
-      const effective_max = max_chars ?? 20_000;
-      const response = await bridge.request({ type: "read_attachment", url, format, max_chars: effective_max });
-      if (response.type !== "read_attachment_response") throw new Error(`Unexpected response: ${response.type}`);
-      const r = response as { text: string; format: string; total_chars: number; truncated: boolean; mime: string };
-      const header = `${url}\nformat: ${r.format} | mime: ${r.mime || "unknown"} | total_chars: ${r.total_chars}${r.truncated ? ` (truncated to ${effective_max})` : ""}\n${"─".repeat(40)}\n`;
-      return {
-        content: [{ type: "text", text: header + r.text }],
-      };
-    }
-  );
-
-  server.tool(
     "download_file",
     `Download a file from a URL to the user's local disk using Chrome's authenticated download flow.
 
 Uses the user's existing Chrome session, so this works on authenticated URLs (Canvas attachments, Stripe document downloads, GitHub release tarballs behind SSO) without any auth setup on chromeflow's side. Returns the absolute path where the file landed, plus MIME type and byte size.
 
-Use this when you need the BYTES of a file (binary parsing, large content, anything you'll process with another tool). For "I just need the text content of this attachment" use read_attachment instead — it downloads + parses in one call.
+Use this when you need the BYTES of a file (binary parsing, large content, anything you'll process with another tool). For "I just need the text content of this attachment" use fetch_url with parse: "auto" instead, which downloads and parses in one call.
 
 The file is saved to the user's default downloads directory (usually ~/Downloads). Pass filename to suggest a name; Chrome will add a numeric suffix if a file with that name already exists.`,
     {

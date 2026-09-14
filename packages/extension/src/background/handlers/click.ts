@@ -1374,6 +1374,28 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
         } catch { /* non-scriptable or unloaded tab — ignore */ }
       }
 
+      // A native alert/confirm/prompt firing as a side effect of this click
+      // takes priority over an until_*/expect_submit success verdict, not
+      // just a secondary note appended to one. A synchronous blocking dialog
+      // means (from a real user's perspective) the page was frozen on it —
+      // the page's own JS validation almost certainly didn't reach whatever
+      // state the check was trying to confirm. This matters most for
+      // until_text_contains against a multi-step wizard's stepper/breadcrumb,
+      // which commonly lists every step name as permanently-present text
+      // regardless of which step is actually active, so a match there is NOT
+      // evidence the click actually advanced anything — confirmed on both
+      // Workday (ISSUE-2026-09-10-workday-duplicate-id-colliding-create-
+      // account-form.md §10-11) and a Phenom career site (ISSUE-2026-09-13-
+      // native-alert-dialogs-not-checked-by-until-checks.md) within 24 hours
+      // of each other. Downgrade rather than let the alert ride along as an
+      // easy-to-miss secondary note on an apparent success.
+      if (alertMessage && untilResult && untilResult.ok) {
+        untilResult = {
+          ok: false,
+          reason: `matched (${untilResult.reason}), but a native dialog also fired as a side effect of this click. That takes priority over the match: a synchronous blocking dialog is strong evidence the page's own JS didn't reach the state being checked for, and the matched text/URL/selector may be stale or permanently-present content (e.g. a wizard's stepper/breadcrumb) rather than a real post-click change. See the PAGE ALERT below — read it and act on it (e.g. fill a missing field) before retrying.`,
+        };
+      }
+
       // Snapshot the post-click URL so callers can spot silent redirects.
       // A click "Assessment" link on Canvas that bounces to the course home
       // returns success today with no indication anything went wrong — the

@@ -491,7 +491,24 @@ export function sendToContentScript(tabId: number, msg: object): Promise<unknown
 
 export const tabsWithInfoBox = new Set<number>();
 
+// The multi-instance indicator badge is opt-in, off by default: it's a
+// visible DOM element with human-readable text on every driven page, which
+// is both a screen-share/monitoring giveaway and (regardless of wording)
+// fully readable by that page's own JS — no amount of relabeling closes
+// either exposure. Users who run multiple concurrent instances and want the
+// disambiguation back can flip this on via
+// chrome.storage.local.set({cfShowInstanceInfo: true}).
+async function instanceInfoEnabled(): Promise<boolean> {
+  try {
+    const { cfShowInstanceInfo } = await chrome.storage.local.get("cfShowInstanceInfo");
+    return cfShowInstanceInfo === true;
+  } catch {
+    return false;
+  }
+}
+
 export async function pushInstanceInfoIfNeeded(portOrTab: number | chrome.tabs.Tab, port: number) {
+  if (!(await instanceInfoEnabled())) return;
   let tab: chrome.tabs.Tab;
   if (typeof portOrTab === "number") {
     const wid = getWindowId(port);
@@ -519,8 +536,8 @@ export async function pushInstanceInfoIfNeeded(portOrTab: number | chrome.tabs.T
 // Extract the hostname of an http(s) URL, or null for anything else. Non-http(s)
 // schemes (about:blank, chrome://, file://, data:) are treated as unscoped, so a
 // scoped connection can still operate on internal pages.
-// Gate the privileged-fetch tools (read_attachment, download_file, fetch_url,
-// inspect_request_headers). These act with the EXTENSION's authority and the
+// Gate the privileged-fetch tools (download_file, fetch_url including its
+// parse mode, inspect_request_headers). These act with the EXTENSION's authority and the
 // user's full cookie jar, and never open a tab, so the owned-window sandbox does
 // not constrain them. A REMOTE connection must therefore be confined to its
 // configured scope; an UNSCOPED remote is denied outright (fail closed) so a
@@ -535,7 +552,7 @@ export function guardPrivilegedFetch(port: number, url: string): void {
   if (isRemote && !connScope.has(port)) {
     throw new Error(
       "chromeflow: this remote connection has no domain scope, so privileged fetch " +
-        "(read_attachment / download_file / fetch_url / inspect_request_headers) is " +
+        "(download_file / fetch_url / inspect_request_headers) is " +
         "denied. Configure an allow-scope on the connection to enable it.",
     );
   }

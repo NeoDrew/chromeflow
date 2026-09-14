@@ -122,42 +122,6 @@ export async function handleInspectRequestHeaders(msg: McpMsg, port: number): Pr
       }
 }
 
-export async function handleReadAttachment(msg: McpMsg, port: number): Promise<unknown> {
-      const url = msg.url as string;
-      guardPrivilegedFetch(port, url);
-      const formatHint = msg.format as string | undefined;
-      const maxChars = (msg.max_chars as number | undefined) ?? 50_000;
-
-      // Use the same privileged-fetch path as fetch_url — extension authority,
-      // full cookie jar, page CSP doesn't apply.
-      const resp = await fetch(url, { credentials: "include" });
-      if (!resp.ok) {
-        throw new Error(`fetch failed: HTTP ${resp.status} ${resp.statusText}`);
-      }
-      const contentType = resp.headers.get("content-type") ?? "";
-      const buf = await resp.arrayBuffer();
-
-      const format = (formatHint as SupportedFormat | undefined) ?? detectFormat(contentType, url);
-      if (!format) {
-        throw new Error(
-          `Could not detect format for ${url} (content-type: "${contentType}"). Pass format: "txt" | "md" | "csv" | "json" | "xml" | "html" | "docx" | "pdf" explicitly.`
-        );
-      }
-
-      const fullText = await parseDoc(buf, format);
-      const truncated = fullText.length > maxChars;
-      const text = truncated ? fullText.slice(0, maxChars) : fullText;
-      return {
-        type: "read_attachment_response",
-        requestId: msg.requestId,
-        text,
-        format,
-        total_chars: fullText.length,
-        truncated,
-        mime: contentType,
-      };
-}
-
 export async function handleDownloadFile(msg: McpMsg, port: number): Promise<unknown> {
       const url = msg.url as string;
       guardPrivilegedFetch(port, url);
@@ -255,6 +219,38 @@ export async function handleFetchUrl(msg: McpMsg, port: number): Promise<unknown
       const contentType = resp.headers.get("content-type") ?? "";
 
       const buf = await resp.arrayBuffer();
+
+      // parse (formerly the standalone read_attachment tool): format-aware text
+      // extraction instead of raw bytes/text. Runs on the FULL buffer, before
+      // any max_bytes clipping below — a docx is a ZIP file, and truncating one
+      // mid-byte-stream would corrupt it before parseDoc ever sees it. Only the
+      // resulting extracted TEXT is truncated, by character count.
+      const parseParam = msg.parse as string | undefined;
+      if (parseParam) {
+        const format = (parseParam === "auto" ? undefined : (parseParam as SupportedFormat)) ?? detectFormat(contentType, url);
+        if (!format) {
+          throw new Error(
+            `Could not detect format for ${url} (content-type: "${contentType}"). Pass parse: "txt" | "md" | "csv" | "json" | "xml" | "html" | "docx" | "pdf" explicitly instead of "auto".`
+          );
+        }
+        const fullText = await parseDoc(buf, format);
+        const maxChars = (msg.max_chars as number | undefined) ?? 50_000;
+        const textTruncated = fullText.length > maxChars;
+        const text = textTruncated ? fullText.slice(0, maxChars) : fullText;
+        return {
+          type: "fetch_url_response",
+          requestId: msg.requestId,
+          status: resp.status,
+          status_text: resp.statusText,
+          headers,
+          content_type: contentType,
+          format,
+          text,
+          total_chars: fullText.length,
+          truncated: textTruncated,
+        };
+      }
+
       const totalBytes = buf.byteLength;
       const truncated = totalBytes > maxBytes;
       const clipped = truncated ? buf.slice(0, maxBytes) : buf;

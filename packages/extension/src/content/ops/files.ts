@@ -103,9 +103,23 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
 
   // Label/text matching — pierce shadow roots so file inputs inside Stencil/
   // Radix/Lit web components are reachable.
+  //
+  // Deliberately does NOT fold el.id into the initial label candidate (a
+  // prior version did `aria-label || name || id`): an id is an
+  // implementation detail, not human-readable label text, and since almost
+  // every real input has SOME id, that OR-chain made `label` truthy before
+  // the label[for=]/ancestor-text fallbacks below ever ran — silently
+  // defeating them on any page where the file input's id doesn't happen to
+  // contain the hint text (e.g. two sibling <spl-dropzone> inputs both
+  // sharing id="file-input": every hint fails to match "file-input", so the
+  // loop below never fires and this always fell through to "whichever file
+  // input is first in the page", regardless of hint — see ISSUE-2026-09-12-
+  // smartrecruiters-spl-dropzone-file-rejection.md). Exact id-as-hint
+  // matching is already handled separately above (getElementById), so
+  // nothing is lost by leaving id out of the label heuristic itself.
   if (!found) {
     for (const el of queryAllDeep<HTMLInputElement>(document, "input[type=file]")) {
-      let label = el.getAttribute("aria-label") || el.getAttribute("name") || el.id || "";
+      let label = el.getAttribute("aria-label") || el.getAttribute("name") || "";
       if (!label && el.id) {
         // Labels are scoped to their containing root (Document or ShadowRoot);
         // queryAllDeep walks every root so we still find them.
@@ -126,6 +140,22 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
 
   // Fallback: first file input anywhere on the page (including shadow roots).
   const allFileInputs = queryAllDeep<HTMLInputElement>(document, "input[type=file]");
+  // A non-empty hint that matched NOTHING above, on a page with 2+ file
+  // inputs, is exactly the ambiguous case the CSS-selector path above
+  // already refuses rather than silently guessing — apply the same refusal
+  // here instead of falling through to "whichever input is first in the
+  // page" (the SmartRecruiters bug: a resume-upload hint silently landed on
+  // an unrelated avatar-photo input purely because it came first in
+  // document order).
+  if (!found && hintLower && allFileInputs.length > 1) {
+    const describe = (el: HTMLInputElement) => el.id ? `#${el.id}` : (el.getAttribute("name") ?? el.getAttribute("aria-label") ?? "input[type=file]");
+    return {
+      type: "action_done",
+      requestId: msg.requestId,
+      found: false,
+      message: `No file input's label matched "${msg.hint}", and this page has ${allFileInputs.length} file inputs — refusing to guess which one you meant rather than silently picking the first in document order. Candidates: ${allFileInputs.map(describe).join(", ")}. Retarget with an exact selector (e.g. hint="${describe(allFileInputs[0])}") once you've confirmed which one is the resume field via get_form_fields or interactive_snapshot.`,
+    };
+  }
   if (!found) found = allFileInputs[0] ?? null;
 
   if (!found) {
@@ -202,6 +232,12 @@ export function opDispatchFileChangeEvents(msg: IncomingMessage): unknown {
   const el = queryAllDeep<HTMLInputElement>(document, `[${attr}="true"]`)[0] ?? null;
   if (el) {
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    // Plain Event, not InputEvent: per spec (and MDN's own input-event docs),
+    // only elements that "accept text input" get InputEvent/inputType on
+    // their input event. <input type=file> doesn't, so a real user's file
+    // selection dispatches a plain Event here, not an InputEvent — using
+    // InputEvent would itself be the detectable-synthetic-event signature
+    // this hardening pass exists to remove.
     el.dispatchEvent(new Event("input", { bubbles: true }));
     return { type: "action_done", requestId: msg.requestId, found: true };
   }
@@ -238,6 +274,8 @@ export function opSetFileFromContent(msg: IncomingMessage): unknown {
   // Same change+input dispatch the path-mode commit uses, so React/Vue form
   // bindings notice the upload identically across both upload paths.
   input.dispatchEvent(new Event("change", { bubbles: true }));
+  // Plain Event here too — see opDispatchFileChangeEvents above for why
+  // <input type=file> never gets a real InputEvent for its input event.
   input.dispatchEvent(new Event("input", { bubbles: true }));
   return { type: "action_done", requestId: msg.requestId, found: true, name: m.fileName };
 }

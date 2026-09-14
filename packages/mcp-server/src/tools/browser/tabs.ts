@@ -68,14 +68,31 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
 
   server.tool(
     "close_tab",
-    `Close a tab by number, URL substring, or title substring. Mirrors switch_to_tab's matcher. Defaults to closing the ACTIVE tab when no query is given. Use this to clean up the tab pile after a multi-step workflow.`,
+    `Close tab(s) in the current window. Two mutually exclusive modes, matching switch_to_tab's matcher:
+- \`query\` set (or both omitted): close ONE tab, the match (or the active tab if query is omitted). Use this to clean up after a single step.
+- \`keep_query\` set: close EVERY OTHER tab, keeping only the match (or the active tab if keep_query is empty). Use this at the end of a session to tidy up the whole pile; do NOT use it mid-flow if you may need to return to one of the closed tabs.`,
     {
       query: z
         .union([z.string(), z.number()])
         .optional()
-        .describe("Tab number (1-based), URL substring, or title substring. Omit to close the active tab."),
+        .describe("Tab number (1-based), URL substring, or title substring to CLOSE. Omit (with keep_query also omitted) to close the active tab. Mutually exclusive with keep_query."),
+      keep_query: z
+        .string()
+        .optional()
+        .describe("URL substring or title substring. Switches to \"close every OTHER tab\" mode: tabs matching this are KEPT, all others are closed. Empty/omitted keeps just the active tab. Mutually exclusive with query."),
     },
-    async ({ query }) => {
+    async ({ query, keep_query }) => {
+      if (keep_query !== undefined) {
+        const response = await bridge.request({ type: "close_other_tabs", keep_query });
+        const r = response as { closed?: Array<{ index: number; title: string; url: string }>; kept?: Array<{ index: number; title: string; url: string }>; message?: string };
+        if (r.message) return { content: [{ type: "text", text: r.message }] };
+        const closedCount = (r.closed ?? []).length;
+        const keptCount = (r.kept ?? []).length;
+        const keptList = (r.kept ?? []).map(t => `  ${t.index}. ${t.title} — ${t.url}`).join("\n");
+        return {
+          content: [{ type: "text", text: `Closed ${closedCount} tab(s), kept ${keptCount}:\n${keptList}` }],
+        };
+      }
       const raw = query === undefined || query === null || query === "" ? undefined : String(query);
       const response = await bridge.request({ type: "close_tab", query: raw });
       const r = response as { closed?: Array<{ index: number; title: string; url: string }>; message?: string };
@@ -83,28 +100,6 @@ Examples: switch_to_tab({tab: 1}) for the first tab, switch_to_tab({tab: "form"}
       const closedList = (r.closed ?? []).map(t => `${t.index}. ${t.title} — ${t.url}`).join("\n");
       return {
         content: [{ type: "text", text: `Closed ${(r.closed ?? []).length} tab(s):\n${closedList}` }],
-      };
-    }
-  );
-
-  server.tool(
-    "close_other_tabs",
-    `Close every tab in the current window EXCEPT the active one (or any tab matching keep_query). Use at the end of a session to tidy up; do NOT use mid-flow if you may need to return to one of the closed tabs.`,
-    {
-      keep_query: z
-        .string()
-        .optional()
-        .describe("URL substring or title substring. Tabs matching this are KEPT; all others are closed. When omitted, only the active tab is kept."),
-    },
-    async ({ keep_query }) => {
-      const response = await bridge.request({ type: "close_other_tabs", keep_query });
-      const r = response as { closed?: Array<{ index: number; title: string; url: string }>; kept?: Array<{ index: number; title: string; url: string }>; message?: string };
-      if (r.message) return { content: [{ type: "text", text: r.message }] };
-      const closedCount = (r.closed ?? []).length;
-      const keptCount = (r.kept ?? []).length;
-      const keptList = (r.kept ?? []).map(t => `  ${t.index}. ${t.title} — ${t.url}`).join("\n");
-      return {
-        content: [{ type: "text", text: `Closed ${closedCount} tab(s), kept ${keptCount}:\n${keptList}` }],
       };
     }
   );

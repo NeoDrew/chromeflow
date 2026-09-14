@@ -45,8 +45,8 @@ the page is considered settled. The response carries
 ```
 close_tab()                         # closes active tab
 close_tab(query="github")           # by URL/title
-close_other_tabs()                  # closes all except active
-close_other_tabs(keep_query="github") # keeps tabs matching the query
+close_tab(keep_query="")            # closes all except active (mutually exclusive with query)
+close_tab(keep_query="github")      # keeps tabs matching the query, closes the rest
 ```
 
 Don't use mid-flow if you might still need a tab. Reserve for end-of-

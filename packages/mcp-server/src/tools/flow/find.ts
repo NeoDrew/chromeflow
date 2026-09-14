@@ -96,7 +96,7 @@ Scope helpers: \`in_dialog: true\` restricts the search to the topmost open dial
     "list_frames",
     `List every top-level iframe/frame on the active page, with its origin, whether its contentDocument is accessible (same-origin), and its on-screen position. Also reports shadow-host inventory so you can spot pages whose visible content is rendered inside closed shadow roots (Radix portals, Stencil/Lit, custom web components).
 
-Use this BEFORE calling find_text({frame: "..."}) or other frame-targeted tools — it shows you which frames exist and which are reachable. Knowing a frame is cross-origin up front means you can route to read_attachment (for the frame's src URL) or take_screenshot instead of getting a "frame not accessible" error from another tool.
+Use this BEFORE calling find_text({frame: "..."}) or other frame-targeted tools — it shows you which frames exist and which are reachable. Knowing a frame is cross-origin up front means you can route to fetch_url with parse: "auto" (for the frame's src URL) or take_screenshot instead of getting a "frame not accessible" error from another tool.
 
 Also use this as a quick diagnostic when execute_script returns an empty document on a page you can clearly see — non-zero \`shadow_hosts\` (especially closed roots) means switch to find_text / get_page_text / click_element / fill_input, which pierce shadow DOM via the extension's privileged API.
 
