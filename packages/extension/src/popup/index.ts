@@ -935,10 +935,24 @@ async function restoreUiState(): Promise<void> {
 // add/edit connection form is open, skip these re-renders. They rebuild the
 // form's markup and would wipe the URL/token the user is mid-typing or pasting,
 // which is the "the box keeps clearing" bug.
+//
+// Debounced (trailing, 300ms): a "status" broadcast fires on every socket
+// open/close/identity-receipt/reconcile in offscreen.ts, which in a
+// reconnect-loop or multi-instance-churn scenario can arrive many times a
+// second. render() rebuilds the ENTIRE popup DOM (innerHTML-level), so
+// without debouncing, a burst of these mid-interaction destroys and
+// recreates the exact elements the user's cursor/click is on — the reported
+// "clicks intermittently don't register" and "spammy hover" symptoms.
+// Coalescing rapid bursts into one render at the end fixes both regardless
+// of why the broadcasts are frequent upstream.
+let statusRerenderTimer: ReturnType<typeof setTimeout> | undefined;
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.source === "chromeflow-offscreen" && msg.type === "status") {
     if (formIsOpen()) return;
-    loadState().then((s) => { render(s); resizePopup(); });
+    clearTimeout(statusRerenderTimer);
+    statusRerenderTimer = setTimeout(() => {
+      loadState().then((s) => { render(s); resizePopup(); });
+    }, 300);
   }
 });
 chrome.storage.onChanged.addListener((changes, area) => {
