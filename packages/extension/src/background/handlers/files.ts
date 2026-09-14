@@ -67,9 +67,14 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
       // caller can decide whether to escalate. Used for both the initial
       // attempt and, if needed, the trusted-drop retry below — extracted so
       // neither copy can drift from the other.
+      // Grace window watched AFTER a count-increase "commit" for a delayed
+      // rejection signal (see below) — not applied to a verifySelector match,
+      // which is caller-supplied and already trustworthy.
+      const REJECTION_GRACE_MS = 2000;
+
       const pollForCommit = async (): Promise<{
         committed: boolean; consumed: boolean; consumedUnconfirmed: boolean;
-        postTotal: number; verifyMatched: boolean;
+        postTotal: number; verifyMatched: boolean; commitRejectedMessage: string | null;
       }> => {
         const pollStart = Date.now();
         let committed = false;
@@ -78,6 +83,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
         let postTotal = preTotal;
         let verifyMatched = false;
         let filenameEverVisible = false;
+        let commitRejectedMessage: string | null = null;
 
         while (Date.now() - pollStart < waitMs) {
           await new Promise((r) => setTimeout(r, 200));
@@ -87,7 +93,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
             func: pierceFilePoll,
             args: [filename, verifySelector ?? ""],
           });
-          const result = post[0]?.result as { total: number; stillHasOurFile: boolean; verifyOk: boolean; filenameVisible: boolean } | undefined;
+          const result = post[0]?.result as { total: number; stillHasOurFile: boolean; verifyOk: boolean; filenameVisible: boolean; rejectionSignal: string | null } | undefined;
           if (!result) continue;
 
           postTotal = result.total;
@@ -95,7 +101,36 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
           if (result.filenameVisible) filenameEverVisible = true;
 
           if (verifyMatched) { committed = true; break; }
-          if (postTotal > preTotal) { committed = true; break; }
+          if (postTotal > preTotal) {
+            committed = true;
+            // A count increase alone isn't proof the page actually accepted
+            // the file: some ATS widgets (Phenom, confirmed live 2026-09-14
+            // on careers.qbe.com — see
+            // ISSUE-2026-09-14-phenom-cv-upload-still-rejected.md) accept it
+            // immediately, then reject it moments later via async
+            // validation, rendering a role=alert/aria-live error near the
+            // input. Ignore whatever rejection text was ALREADY on the page
+            // at commit time (unrelated pre-existing content) and watch only
+            // for one that's new/changed since — a short bounded window, not
+            // the full waitMs budget, since the report's own evidence is
+            // that the error renders quickly once it does appear.
+            const baselineSignal = result.rejectionSignal;
+            const graceStart = Date.now();
+            while (Date.now() - graceStart < REJECTION_GRACE_MS) {
+              await new Promise((r) => setTimeout(r, 300));
+              const grace = await chrome.scripting.executeScript({
+                target: { tabId },
+                func: pierceFilePoll,
+                args: [filename, verifySelector ?? ""],
+              });
+              const graceResult = grace[0]?.result as { rejectionSignal: string | null } | undefined;
+              if (graceResult?.rejectionSignal && graceResult.rejectionSignal !== baselineSignal) {
+                commitRejectedMessage = graceResult.rejectionSignal;
+                break;
+              }
+            }
+            break;
+          }
           // Some uploaders consume the file: read it from .files and reset the
           // input (a File object moved into the framework's own state — a
           // common, legitimate pattern). But that alone is NOT proof the file
@@ -112,7 +147,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
             consumedUnconfirmed = true; // keep polling — a late confirmation, or verifySelector/total, may still land
           }
         }
-        return { committed, consumed, consumedUnconfirmed, postTotal, verifyMatched };
+        return { committed, consumed, consumedUnconfirmed, postTotal, verifyMatched, commitRejectedMessage };
       };
 
       // Use Chrome DevTools Protocol to set the file — the only way to bypass
@@ -126,8 +161,8 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
       // back as a silent accept-then-clear rejection.
       let escalatedNote = "";
       let retriedViaDragDrop = false;
-      let pollResult: { committed: boolean; consumed: boolean; consumedUnconfirmed: boolean; postTotal: number; verifyMatched: boolean } = {
-        committed: false, consumed: false, consumedUnconfirmed: false, postTotal: preTotal, verifyMatched: false,
+      let pollResult: { committed: boolean; consumed: boolean; consumedUnconfirmed: boolean; postTotal: number; verifyMatched: boolean; commitRejectedMessage: string | null } = {
+        committed: false, consumed: false, consumedUnconfirmed: false, postTotal: preTotal, verifyMatched: false, commitRejectedMessage: null,
       };
       try {
         if (inlineContent) {
@@ -216,7 +251,7 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
         }).catch(() => {});
       }
 
-      const { committed, consumed, consumedUnconfirmed, postTotal, verifyMatched } = pollResult;
+      const { committed, consumed, consumedUnconfirmed, postTotal, verifyMatched, commitRejectedMessage } = pollResult;
 
       const noteParts: string[] = [];
       if (tagResult.matched_desc) {
@@ -227,6 +262,24 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
       if (consumed) noteParts.push("file was consumed by the page (input was reset) and the filename appeared on the page, confirming it landed");
       const note = noteParts.join("; ");
 
+      if (committed && commitRejectedMessage) {
+        // The file count increased (or verifySelector matched) — normally
+        // enough to call this a success — but a role=alert/aria-live
+        // rejection appeared shortly after that wasn't there at commit time.
+        // A real accept doesn't get retroactively un-accepted, so this beats
+        // the earlier positive signal rather than being appended as a
+        // secondary note (same "a later negative signal overrides a stale
+        // positive one" principle already applied to click_element's
+        // native-dialog-vs-until_* fix this session — see
+        // ISSUE-2026-09-14-phenom-cv-upload-still-rejected.md).
+        return {
+          type: "action_done",
+          requestId: msg.requestId,
+          success: false,
+          commit_then_rejected: true,
+          message: `File "${filename}" was initially accepted (${note}) but the page then showed a rejection: "${commitRejectedMessage}". Do NOT trust the initial file-count increase as success — treat this as a failed upload. If this looks like a size/type/format issue, verify the file meets the page's stated requirements before retrying.`,
+        };
+      }
       if (committed) {
         return {
           type: "action_done",

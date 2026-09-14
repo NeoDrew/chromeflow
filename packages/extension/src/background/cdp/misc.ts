@@ -324,7 +324,7 @@ export function pierceFileCount(): { totalFiles: number; inputCount: number } {
   return { totalFiles: total, inputCount: inputs.length };
 }
 
-export function pierceFilePoll(name: string, sel: string): { total: number; stillHasOurFile: boolean; verifyOk: boolean; filenameVisible: boolean } {
+export function pierceFilePoll(name: string, sel: string): { total: number; stillHasOurFile: boolean; verifyOk: boolean; filenameVisible: boolean; rejectionSignal: string | null } {
   function getShadowRoot(el: Element): ShadowRoot | null {
     const cdom = (chrome as unknown as { dom?: { openOrClosedShadowRoot?: (e: Element) => ShadowRoot | null } }).dom;
     if (cdom?.openOrClosedShadowRoot) {
@@ -371,6 +371,32 @@ export function pierceFilePoll(name: string, sel: string): { total: number; stil
     }
     return false;
   }
+  // A file-count increase alone isn't proof the page actually accepted the
+  // upload: some ATS widgets (Phenom, confirmed live 2026-09-14 on
+  // careers.qbe.com) accept the file immediately (count goes up and stays
+  // up) then reject it moments later via async validation, rendering a
+  // visible error near the input — a structurally different failure shape
+  // than the "accepted then cleared" signature filenameVisible/
+  // stillHasOurFile already catches. role="alert" and aria-live are the
+  // ARIA convention for exactly this kind of time-sensitive announcement,
+  // so check those structurally rather than matching any vendor's specific
+  // wording ("Unable to upload the resume" is Phenom's text, "The file
+  // could not be uploaded" is Personio's — matching either literally
+  // wouldn't generalize). Only counts a non-empty, visible one, so a
+  // pre-existing empty live region (common — many frameworks render one by
+  // default, ready to be filled later) doesn't false-positive.
+  function findRejectionSignal(root: ParentNode): string | null {
+    for (const el of deepQuery<HTMLElement>(root, '[role="alert"], [aria-live="polite"], [aria-live="assertive"]')) {
+      const text = (el.textContent ?? "").trim();
+      if (!text) continue;
+      try {
+        const style = getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden") continue;
+      } catch { /* detached or otherwise unreadable — skip */ }
+      return text.slice(0, 200);
+    }
+    return null;
+  }
   const inputs = deepQuery<HTMLInputElement>(document, "input[type=file]");
   let total = 0;
   let stillHasOurFile = false;
@@ -384,5 +410,6 @@ export function pierceFilePoll(name: string, sel: string): { total: number; stil
   }
   const verifyOk = sel ? deepQuery(document, sel).length > 0 : false;
   const filenameVisible = name ? deepContainsText(document, name) : false;
-  return { total, stillHasOurFile, verifyOk, filenameVisible };
+  const rejectionSignal = findRejectionSignal(document);
+  return { total, stillHasOurFile, verifyOk, filenameVisible, rejectionSignal };
 }
