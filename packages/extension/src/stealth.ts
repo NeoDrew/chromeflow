@@ -4,7 +4,9 @@
  * anti-automation systems (LinkedIn, Cloudflare, Datadome, etc.).
  *
  * What this fixes:
- *   - navigator.webdriver:                  forced to false (some env flips to true)
+ *   - navigator.webdriver:                  only patched if some other context already
+ *     flipped it true; left untouched (and native) when already false, since an
+ *     unconditional override is itself a detectable tell — see CreepJS note below
  *   - navigator.permissions notifications:  returns "default" instead of headless "denied"
  *   - navigator.plugins:                    ensures non-empty (empty = headless tell)
  *   - navigator.languages:                  ensures non-empty
@@ -165,13 +167,29 @@
       patchFrameCtor((window as unknown as { HTMLFrameElement?: { prototype: object } }).HTMLFrameElement);
     } catch { /* ignore */ }
 
-    // navigator.webdriver — should be false. Some test contexts/extensions flip it.
+    // navigator.webdriver — only patch if it's ALREADY true. Chromeflow never
+    // launches Chrome with --enable-automation (the flag that actually sets
+    // this to true), so on chromeflow's real architecture this already reads
+    // false natively, same as an unmodified browser. Confirmed live
+    // 2026-09-14: with an unconditional override here, CreepJS's "headless"
+    // bucket read 33% (webDriverIsOn true, via its lie-detector flagging the
+    // replaced-but-value-identical getter); with the extension fully
+    // disabled (so nothing touches navigator.webdriver at all), the same
+    // bucket read a clean 0%. Overriding an already-correct native getter
+    // was net negative — CreepJS's lie-detector doesn't care that the
+    // returned VALUE matches, only that the getter isn't the original. Keep
+    // the override only for the genuine tell this was meant to guard
+    // against (some other extension, or a test harness, having already
+    // flipped it to true) rather than always replacing a getter that's
+    // usually already fine.
     try {
-      Object.defineProperty(Navigator.prototype, "webdriver", {
-        get: fakeNative(function get() { return false; }, "get webdriver"),
-        configurable: true,
-        enumerable: true,
-      });
+      if (navigator.webdriver === true) {
+        Object.defineProperty(Navigator.prototype, "webdriver", {
+          get: fakeNative(function get() { return false; }, "get webdriver"),
+          configurable: true,
+          enumerable: true,
+        });
+      }
     } catch { /* already locked */ }
 
     // navigator.permissions.query — patch the famous notifications/denied tell.
