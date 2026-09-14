@@ -51,19 +51,51 @@
     const nativeCode = (name: string) => `function ${name}() { [native code] }`;
     const patchedSources = new WeakMap<Function, string>();
 
+    // Wraps `fn` in an object-literal method-shorthand definition (computed
+    // key so `name` can be an arbitrary string like "get webdriver") rather
+    // than returning `fn` as-is. This matters because `fn` itself, as an
+    // ordinary `function` expression, carries two shape tells a real native
+    // getter/method never has: an empty/mismatched `.name` (fixed elsewhere
+    // via the patchedSources toString map, but that only fakes the STRING
+    // output, not the function object's own shape), and a non-configurable
+    // own `.prototype` property (`delete fn.prototype` throws — it's not
+    // configurable on a plain function expression, so it can't be removed
+    // after the fact). A method-shorthand function has neither: per spec,
+    // MethodDefinition-created functions are non-constructible and never get
+    // an own `.prototype`, and a computed key automatically becomes the
+    // function's real `.name`. Confirmed live against CreepJS
+    // (creepjs's `hasToStringProxy` check) 2026-09-14: it was flagging
+    // exactly this shape mismatch on every patched property, independent of
+    // (and in addition to) the toString-string spoofing already in place.
+    // `fn.apply(this, args)` forwards the real dynamic receiver through, so
+    // getters/methods that rely on their actual `this` (screenX/screenY,
+    // WebGL getParameter, the RTCPeerConnection overrides below) keep
+    // working exactly as before — unlike `.bind()`, which would freeze
+    // `this` to a fixed value and break all of those.
     const fakeNative = <T extends Function>(fn: T, name: string): T => {
-      patchedSources.set(fn, nativeCode(name));
-      return fn;
+      const holder: Record<string, unknown> = {
+        [name](this: unknown, ...args: unknown[]) {
+          return fn.apply(this, args);
+        },
+      };
+      const wrapped = holder[name] as unknown as T;
+      try {
+        Object.defineProperty(wrapped, "length", { value: fn.length, configurable: true });
+      } catch { /* ignore */ }
+      patchedSources.set(wrapped, nativeCode(name));
+      return wrapped;
     };
 
     // Wrap Function.prototype.toString so anyone who inspects our patched
     // functions sees "[native code]" instead of our actual implementation.
-    const newToString = function (this: Function) {
+    // Routed through fakeNative too (not just a raw function assignment) so
+    // toString ITSELF gets the same real-native-name/no-own-prototype shape
+    // fix as every other patched property, not just its own string output.
+    const newToString = fakeNative(function (this: Function) {
       const cached = patchedSources.get(this);
       if (cached) return cached;
       return nativeToString.call(this);
-    };
-    patchedSources.set(newToString, nativeCode("toString"));
+    }, "toString");
     try { Function.prototype.toString = newToString; } catch { /* may be frozen */ }
 
     // Cross-realm toString "lie detector" hardening (a documented CreepJS-
@@ -101,12 +133,11 @@
         const realmProto = w.Function.prototype as { toString?: (this: Function) => string };
         const realmNativeToString = realmProto.toString;
         if (!realmNativeToString) return;
-        const realmNewToString = function (this: Function) {
+        const realmNewToString = fakeNative(function (this: Function) {
           const cached = patchedSources.get(this);
           if (cached) return cached;
           return realmNativeToString.call(this);
-        };
-        patchedSources.set(realmNewToString, nativeCode("toString"));
+        }, "toString");
         (realmProto as Record<string, unknown>).toString = realmNewToString;
         Object.defineProperty(w, "__cfStealthApplied", { value: true, configurable: false, enumerable: false, writable: false });
       } catch { /* cross-origin realm, or otherwise inaccessible — ignore */ }
