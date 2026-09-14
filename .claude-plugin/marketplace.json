@@ -9,7 +9,7 @@
       "name": "chromeflow",
       "source": "./packages/plugin",
       "description": "Let Claude Code drive your real browser — clicks, fills forms, grabs API keys, writes them to .env.",
-      "version": "0.13.2",
+      "version": "0.13.3",
       "homepage": "https://chromeflow.run",
       "repository": "https://gitlab.com/NeoDrew/chromeflow",
       "license": "MIT",
