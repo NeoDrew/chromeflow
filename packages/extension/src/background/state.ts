@@ -236,9 +236,27 @@ export const pendingClicks = new Map<
 // clicks a link and the page loads before wait_for_click is processed).
 export const recentNavigations = new Map<number, { url: string; time: number }>();
 
-export async function ensureOffscreen() {
+// `force: true` closes and recreates any existing offscreen document instead
+// of trusting hasDocument() alone. Matters specifically on onInstalled (an
+// extension reload while Chrome itself stays running): an offscreen document
+// created by the PREVIOUS version of the extension can survive the reload —
+// hasDocument() still reports true — while its chrome.* API bindings get
+// silently invalidated underneath it. Live-confirmed 2026-09-14: a reloaded
+// extension's offscreen console showed "Uncaught TypeError:
+// chrome.runtime.getManifest is not a function" inside the WebSocket
+// onopen handler, meaning every reconnect attempt from that zombie document
+// threw before ever sending the "ready" handshake — explaining both why
+// connections never got labeled (identity never requested) and the flood of
+// failed reconnects across many ports in the console (each retry hit the
+// same dead binding). onStartup (a real browser relaunch) doesn't need
+// force — a full quit tears down every extension context, so no stale
+// document can exist to begin with; only reuse the lazy check there.
+export async function ensureOffscreen(force = false): Promise<void> {
   const existing = await chrome.offscreen.hasDocument?.();
-  if (!existing) {
+  if (existing && force) {
+    try { await chrome.offscreen.closeDocument(); } catch { /* best-effort */ }
+  }
+  if (!existing || force) {
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_URL,
       reasons: [chrome.offscreen.Reason.WORKERS],
@@ -266,7 +284,7 @@ chrome.runtime.onStartup.addListener(ensureMarkerPrefix);
 // Also kick once on service-worker boot, in case neither event fires soon.
 ensureMarkerPrefix();
 
-chrome.runtime.onInstalled.addListener(async () => { await ensureOffscreen(); });
+chrome.runtime.onInstalled.addListener(async () => { await ensureOffscreen(true); });
 chrome.runtime.onStartup.addListener(async () => { await ensureOffscreen(); });
 
 export async function getActiveTab(port: number): Promise<chrome.tabs.Tab> {

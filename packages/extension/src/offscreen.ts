@@ -142,14 +142,30 @@ function connect(conn: Conn) {
     // chromeflow-labeled extensions were installed in the same profile (one
     // disabled) and it was impossible to tell which one a given WS connection
     // actually came from — there was no such signal in this protocol at all.
-    const manifest = chrome.runtime.getManifest();
-    const ready: { type: "ready"; token?: string; extId: string; extVersion: string } = {
-      type: "ready",
-      extId: chrome.runtime.id,
-      extVersion: manifest.version,
-    };
-    if (conn.token) ready.token = conn.token;
-    socket.send(JSON.stringify(ready));
+    //
+    // Wrapped in try/catch as a safety net: a stale/zombie offscreen document
+    // surviving an extension reload can have an invalidated chrome.runtime
+    // binding (live-confirmed 2026-09-14: "chrome.runtime.getManifest is not
+    // a function" thrown right here, uncaught, on every reconnect from a
+    // zombie instance — silently killing the ready handshake for good since
+    // nothing downstream of the throw ever ran). The real fix is
+    // ensureOffscreen(force) closing and recreating the document on every
+    // extension reload (see background/state.ts) so this shouldn't happen
+    // going forward, but connect() still sends the still-connected socket
+    // with no identity rather than throwing into the void if it ever does.
+    try {
+      const manifest = chrome.runtime.getManifest();
+      const ready: { type: "ready"; token?: string; extId: string; extVersion: string } = {
+        type: "ready",
+        extId: chrome.runtime.id,
+        extVersion: manifest.version,
+      };
+      if (conn.token) ready.token = conn.token;
+      socket.send(JSON.stringify(ready));
+    } catch (err) {
+      console.warn("chromeflow: failed to send ready handshake (extension context may be stale — try reloading the extension):", err);
+      try { socket.send(JSON.stringify({ type: "ready" })); } catch { /* socket itself may be the problem */ }
+    }
     publishLivePorts();
   };
 
