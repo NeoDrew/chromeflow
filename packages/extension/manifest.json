@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Chromeflow",
-  "version": "0.13.13",
+  "version": "0.13.14",
   "description": "Guided web assistance for Claude Code and Codex CLI",
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' http: https: ws: wss: data: blob:"

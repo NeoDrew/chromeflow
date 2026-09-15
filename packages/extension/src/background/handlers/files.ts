@@ -82,6 +82,20 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
       // rejection signal (see below) — not applied to a verifySelector match,
       // which is caller-supplied and already trustworthy.
       const REJECTION_GRACE_MS = 2000;
+      // Symmetric grace window for the OPPOSITE timing failure: some ATS
+      // widgets (Workday's resume-parsing "Autofill with Resume" step,
+      // confirmed live 2026-09-15 on ntrs.wd1 -- the page didn't render
+      // "Successfully Uploaded!" until ~4-6s after delivery) take longer
+      // than the default waitMs to confirm a consumed-but-unconfirmed file.
+      // Reporting failure at that point is a false negative that tells the
+      // caller "do NOT trust this, verify before retrying" -- if the caller
+      // (a real agent session) retries on seeing that, the retry delivers a
+      // second, genuinely duplicate file on top of the first upload that
+      // was silently fine all along. Extend patience specifically for this
+      // ambiguous case rather than raising the base waitMs for every upload
+      // (most sites confirm well within the default; this grace only fires
+      // for the slow, already-ambiguous tail).
+      const CONFIRM_GRACE_MS = 4000;
 
       const pollForCommit = async (): Promise<{
         committed: boolean; consumed: boolean; consumedUnconfirmed: boolean;
@@ -157,6 +171,33 @@ export async function handleSetFileInput(msg: McpMsg, port: number): Promise<unk
             }
             consumedUnconfirmed = true; // keep polling — a late confirmation, or verifySelector/total, may still land
           }
+        }
+
+        // The main loop timed out still ambiguous — give it one more bounded
+        // window before finalizing as a failure. Only fires for the already-
+        // ambiguous case (consumed, never confirmed), so fast/normal uploads
+        // are unaffected.
+        if (consumedUnconfirmed && !committed) {
+          const graceStart = Date.now();
+          while (Date.now() - graceStart < CONFIRM_GRACE_MS) {
+            await new Promise((r) => setTimeout(r, 300));
+            const post = await chrome.scripting.executeScript({
+              target: { tabId },
+              func: pierceFilePoll,
+              args: [filename, verifySelector ?? "", frame ?? ""],
+            });
+            const result = post[0]?.result as { total: number; filenameVisible: boolean; verifyOk: boolean } | undefined;
+            if (!result) continue;
+            if (result.verifyOk) { committed = true; verifyMatched = true; postTotal = result.total; break; }
+            if (result.total > preTotal) { committed = true; postTotal = result.total; break; }
+            if (result.filenameVisible) { committed = true; consumed = true; break; }
+          }
+          // A late confirmation here means the upload was fine all along, just
+          // slow to render — clear the ambiguity flag so the caller's
+          // escalation check (which only looks at consumedUnconfirmed, not
+          // committed) doesn't fire a redundant second delivery on top of an
+          // upload that already landed.
+          if (committed) consumedUnconfirmed = false;
         }
         return { committed, consumed, consumedUnconfirmed, postTotal, verifyMatched, commitRejectedMessage };
       };
