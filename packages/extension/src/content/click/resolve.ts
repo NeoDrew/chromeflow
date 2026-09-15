@@ -109,8 +109,32 @@ export function resolveLabelledControl(el: Element): HTMLElement | null {
  * Reddit's new submit page.
  */
 export function findClickableAll(lower: string, scope: Document | Element = document): { visible: Element[]; hidden: Element[] } {
+  // [tabindex="-1"] deliberately excluded: that value is the well-known
+  // "programmatically focusable, not part of tab order" convention, used to
+  // move focus onto a heading/panel/container after a route change for
+  // screen-reader announcement -- not a signal that the element handles
+  // clicks. Including it let a page's own section heading (tabindex="-1",
+  // exact-text match on the button's own label, e.g. an <h3>Create
+  // Account</h3> title above a "Create Account" button) win the tier-1
+  // exact-text slot over the button's real click target, since headings are
+  // visible while Workday's own decoy <button aria-hidden="true"> holding
+  // the matching text is not -- see ISSUE-2026-09-15-workday-click-filter-
+  // decoy-button-textHint-mismatch.md, confirmed live via captured
+  // isTrusted click events landing on the heading instead of either
+  // candidate button. tabindex="0" and positive values are unaffected -- those
+  // genuinely mean "part of the interactive tab sequence" and must keep
+  // matching custom-interactive elements with no button/role attribute.
+  //
+  // `label` narrowed to `label[for], label:has(...)`: a bare <label> with no
+  // `for` and no wrapped form control isn't activating anything -- it's
+  // text/UI chrome mislabeled with a form element for styling reasons. Same
+  // investigation caught a wizard's own step-breadcrumb (`<li><label>Create
+  // Account/Sign In</label></li>` inside the step <ol>, no `for`, wraps no
+  // control) partial-text-matching and winning once the heading above was
+  // excluded. A real label activates its control on click; requiring that
+  // relationship excludes exactly the cases that don't.
   const interactiveSelectors =
-    'button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], input[type="submit"], input[type="button"], label, [onclick], [tabindex]';
+    'button, a, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], input[type="submit"], input[type="button"], label[for], label:has(input, select, textarea), [onclick], [tabindex]:not([tabindex="-1"])';
 
   // ONE shadow-pierced tree walk over the union of every selector the tiers
   // below need, instead of 4 separate queryAllDeep passes. On a page with
