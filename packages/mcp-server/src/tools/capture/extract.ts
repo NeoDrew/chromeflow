@@ -21,7 +21,7 @@ Never use take_screenshot just to read page content — paginate with startIndex
         .number()
         .optional()
         .describe(
-          "Character offset to start from. Use this to read past the first 20,000 characters — the response will tell you the next startIndex when more content exists."
+          "Character offset to start from. Use this to read past the first 10,000 characters — the response will tell you the next startIndex when more content exists."
         ),
     },
     async ({ selector, startIndex }) => {

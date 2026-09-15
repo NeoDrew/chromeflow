@@ -209,8 +209,9 @@ open_page("https://www.linkedin.com/search/results/people/?keywords=...&origin=G
 Scrape result entities via `execute_script` over the result list
 (`li.reusable-search__result-container` / `[data-chameleon-result-urn]`),
 reading name, headline, and profile URL. For a single profile,
-`get_page_text` (no selector) gives the full visible profile; `read_element`
-plus `write_to_env` captures a specific value intentionally.
+`get_page_text` (no selector) gives the full visible profile;
+`get_page_text(selector=...)` or `execute_script` plus `write_to_env`
+captures a specific value intentionally.
 
 ## Feed engagement
 

@@ -181,8 +181,7 @@ export function opTagFileInput(msg: IncomingMessage): unknown {
     // — that path doesn't go through showOpenFilePicker() at all, so a drop
     // event can still deliver a file with no DOM input element in sight. Tag a
     // candidate drop-zone element so background.ts can attempt a CDP-level
-    // Input.dispatchDragEvent delivery (see ISSUE-2026-09-07-tradinghub-no-
-    // file-input.md).
+    // Input.dispatchDragEvent delivery.
     const dropZone = hasFileSystemAccessApi ? findDropZoneCandidate(hint, doc) : null;
     if (dropZone) {
       const dropAttr = markerIds.dropZoneAttr();

@@ -184,8 +184,9 @@ References live alongside this skill at `references/<topic>.md`:
   `fill_form` batch fills, ambiguous-match handling,
   `get_form_fields(only_empty=true)` for "why is Submit disabled".
 - **`references/react-recipes.md`** — React-Select dropdowns, hidden inputs,
-  `react_set_input` via the native value setter, `react_call_prop` for
-  bypassing stale-state validation handlers, React fiber walking.
+  `fill_input(selector=...)`'s native-value-setter mechanism, an
+  `execute_script` fiber-walk-and-invoke recipe for bypassing stale-state
+  validation handlers, React fiber walking.
 - **`references/multi-tab.md`** — Multi-tab workflows, `open_page(new_tab=
   true)`, `tab_query` to target a tab without focus-switching, parallel
   background flows, stuck-spinner detection.

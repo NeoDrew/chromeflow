@@ -149,8 +149,10 @@ The tab lost extension host access (Chrome quietly evicts the content
 script after long idle, navigation between origin variants). The
 handler auto-reloads the tab once and retries; the response carries
 `reauthorized: true` so you can see what happened. The reload may
-clear in-page form state, so `save_page_state` before long idles on
-pages with unsaved input.
+clear in-page form state, so capture field values via `get_form_fields()`
+before long idles on pages with unsaved input (restore later with
+`fill_form` — see references/multi-tab.md "Save state before navigating
+away").
 
 ## `fill_input` matched the wrong field
 

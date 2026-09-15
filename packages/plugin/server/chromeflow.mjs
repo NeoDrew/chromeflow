@@ -26008,7 +26008,7 @@ Never use take_screenshot just to read page content \u2014 paginate with startIn
         `CSS selector to scope the extraction (e.g. 'main', '.error-toast', '[data-testid="status"]'). Omit to auto-extract from the main content area.`
       ),
       startIndex: external_exports.number().optional().describe(
-        "Character offset to start from. Use this to read past the first 20,000 characters \u2014 the response will tell you the next startIndex when more content exists."
+        "Character offset to start from. Use this to read past the first 10,000 characters \u2014 the response will tell you the next startIndex when more content exists."
       )
     },
     async ({ selector, startIndex }) => {
@@ -26796,7 +26796,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.13.14" : "dev";
+var PACKAGE_VERSION = true ? "0.13.15" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);

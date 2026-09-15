@@ -27,7 +27,6 @@ via the extension's privileged `chrome.dom.openOrClosedShadowRoot` API:
 | `set_file_input(hint, path)` | ✓ | ✓ |
 | `wait_for(selector=…)` | ✓ | ✓ |
 | `wait_for(text=...)` | ✓ | ✓ |
-| `react_call_prop` | ✓ | ✓ (via content-script tagging) |
 | `execute_script` MAIN-world code | ✓ (via `$deep`) | ✗ |
 
 `execute_script` runs in MAIN world (the page's own context) and is subject

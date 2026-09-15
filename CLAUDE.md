@@ -10,7 +10,7 @@ the skill, not here.
 
 Chromeflow is a Chrome extension + MCP server pair that lets coding
 agents drive the user's real Chrome browser. The extension attaches via
-CDP; the MCP server exposes ~29 tools (`click_element`, `fill_input`,
+CDP; the MCP server exposes 30 tools (`click_element`, `fill_input`,
 `type_text`, `get_page_text`, etc.) over the standard Model Context
 Protocol. Agents call those tools; the extension performs the operations
 in the user's logged-in Chrome window.
@@ -28,7 +28,8 @@ React UIs.
 packages/
   extension/                # Chrome MV3 extension (TypeScript)
     src/
-      background.ts         # MCP message dispatcher, CDP helpers, ~3700 lines
+      background.ts         # MCP message dispatcher entry point, ~330 lines
+      background/           # CDP helpers, click/type dispatch, policy, state
       content/              # Content-script handlers (shadow-piercing DOM ops)
       offscreen.ts          # Persistent WebSocket connection to MCP server
       popup/                # Browser-action popup UI
@@ -75,16 +76,20 @@ cd packages/extension && npx tsc --noEmit
 cd packages/mcp-server && npx tsc --noEmit
 ```
 
-Extension has some pre-existing TS errors in `stealth.ts` and
-`content/find.ts` that are not load-bearing (the build uses esbuild,
-not tsc). New errors should still be fixed.
+Extension has some pre-existing TS errors in `stealth.ts`, `content/find.ts`,
+`content/highlight.ts`, `content/ops/click-watch.ts`, and `content/ops/read.ts`
+that are not load-bearing (the build uses esbuild, not tsc). New errors
+should still be fixed.
 
 **Test:**
 
 ```
-# No unit tests today. Validation is manual + the anti-bot harness in
-# tests/antibot/ (run locally; not in CI).
+npm test   # vitest run — unit tests for flow-store.ts and connections.ts
 ```
+
+Covers scope/glob/connection-id logic in the MCP server and extension.
+Live-platform validation is still manual + the anti-bot harness in
+`tests/antibot/` (run locally; not in CI).
 
 ## Release process
 
@@ -154,7 +159,7 @@ The GitLab CI pipeline definition is in `.gitlab-ci.yml`.
 
 - Case 1 (NOT IMPLEMENTED) -  solving the challenge itself: classifying which image tiles contain traffic lights, transcribing distorted audio, resolving a puzzle-slider. This is the literal, unambiguous definition of "CAPTCHA solving," and it's a fundamentally different thing from chromeflow's existing click/keystroke fidelity work. Won't be implemented as it is specifically designed for anti-automation.
 
-- Case 2 (IMPLMENTED) — visible/checkbox CAPTCHAs (trust-signal based) This is the "I'm not a robot" checkbox style (classic reCAPTCHA v2 checkbox mode, older hCaptcha checkbox mode). Under the hood, these don't grade your behavior in a sophisticated way most of the time — they check simpler trust signals: does this look like a real browser (correct navigator fingerprint, no automation flags like navigator.webdriver), is the click event a real PointerEvent/MouseEvent with isTrusted: true, is there a plausible mouse trajectory leading up to it, that kind of thing. If those signals look right, the checkbox just ticks and no image/audio challenge ever appears. This is genuinely just "chromeflow clicks like a human, on the user's real logged-in Chrome" — the exact same click pipeline (bezier path, pointerType: mouse, isPrimary, settle-hover jitter) that already exists for Reddit/X/etc. There's no separate "CAPTCHA-solving" logic; the checkbox just doesn't escalate because nothing about the interaction looks synthetic.
+- Case 2 (IMPLEMENTED) — visible/checkbox CAPTCHAs (trust-signal based) This is the "I'm not a robot" checkbox style (classic reCAPTCHA v2 checkbox mode, older hCaptcha checkbox mode). Under the hood, these don't grade your behavior in a sophisticated way most of the time — they check simpler trust signals: does this look like a real browser (correct navigator fingerprint, no automation flags like navigator.webdriver), is the click event a real PointerEvent/MouseEvent with isTrusted: true, is there a plausible mouse trajectory leading up to it, that kind of thing. If those signals look right, the checkbox just ticks and no image/audio challenge ever appears. This is genuinely just "chromeflow clicks like a human, on the user's real logged-in Chrome" — the exact same click pipeline (bezier path, pointerType: mouse, isPrimary, settle-hover jitter) that already exists for Reddit/X/etc. There's no separate "CAPTCHA-solving" logic; the checkbox just doesn't escalate because nothing about the interaction looks synthetic.
 
 - Case 3 (NEEDS IMPLEMENTATION) — invisible risk-scoring CAPTCHAs This is reCAPTCHA v3, hCaptcha Enterprise's invisible mode, and similar. There's no checkbox or challenge shown at all by default. Instead the site continuously scores the whole session, mouse movement patterns over time, timing between actions, scroll behavior, device/browser fingerprint entropy, historical reputation of the IP, and produces a risk score (like reCAPTCHA v3's 0.0-1.0). If the score is too low, the site can silently block the action, show a fallback challenge, or flag the account for review, without ever telling the automation why. This is still in implementation.
 
@@ -198,8 +203,8 @@ directory documents the validation approach and the platforms covered.
   the offscreen-held WebSocket.
 - `redact.ts` strips high-confidence secret patterns (API keys, JWTs)
   from `get_page_text` output so Claude doesn't accidentally read keys
-  into context. Use `read_element` + `write_to_env` to capture
-  specific values intentionally.
+  into context. Use `get_page_text(selector=...)` or `execute_script`
+  plus `write_to_env` to capture specific values intentionally.
 
 ## The skill files
 
@@ -263,10 +268,3 @@ Do NOT add new content to this file. Repo-developer concerns only.
   account changes since Aug 2026, direct publishing from Jan 2027). Keep
   the `NPM_TOKEN` CI/CD variable around as a fallback until OIDC is
   confirmed working end to end, then remove it.
-
-## Chrome Web Store distribution
-
-Currently `npx chromeflow setup` tells users to manually "Load
-unpacked" from the package's `extension/dist/` path. Once the
-extension is published to the Chrome Web Store, the setup command
-should link to the store listing instead. Known gap.
