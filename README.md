@@ -26,7 +26,7 @@
 
 **The problem**: Playwright, Browser Use, and Puppeteer launch a fresh empty browser every time — no cookies, no sessions, no 2FA. Your AI agent gets stuck at the first login screen.
 
-**Chromeflow**: drives your **actual Chrome**, where you're already logged into Stripe, AWS, Supabase, Canvas, GitHub. The agent automates what it can (clicks, fills, uploads, captures keys) and pauses for anything that needs you (passwords, 2FA, payment). One MCP server, 28 browser tools, works with both Claude Code and Codex CLI.
+**Chromeflow**: drives your **actual Chrome**, where you're already logged into Stripe, AWS, Supabase, Canvas, GitHub. The agent automates what it can (clicks, fills, uploads, captures keys) and pauses for anything that needs you (passwords, 2FA, payment). One MCP server, 30 browser tools, works with both Claude Code and Codex CLI.
 
 **Battle-tested**: shaped by **400+ hours of real agentic browser work** before public release — every gnarly edge case (React Selects, isTrusted-gated forms, shadow-DOM clicks, page-CSP fetches, silent redirects, cookie leaks, 0×0 hidden elements) is in the error-handling recipes. Not a weekend hackathon project.
 
@@ -69,7 +69,7 @@ Tested end-to-end against the live platform before every release. Procedures liv
 
 Chromeflow is two things that work together:
 
-- **MCP server** — gives your coding agent (Claude Code or Codex) a set of browser tools (`open_page`, `click_element`, `fill_form`, `set_file_input`, `read_element`, `write_to_env`, etc.)
+- **MCP server** — gives your coding agent (Claude Code or Codex) a set of browser tools (`open_page`, `click_element`, `fill_form`, `set_file_input`, `get_page_text`, `write_to_env`, etc.)
 - **Chrome extension** — receives those commands and acts on the active tab (highlights, clicks, fills, uploads files, captures screenshots)
 
 Claude drives the flow. You only touch the browser for things that genuinely need you — login, passwords, payment details, personal choices.
@@ -143,15 +143,14 @@ Claude will navigate, highlight steps, click what it can, pause for anything sen
 | Read page content as text | `get_page_text` (with `selector` scoping) |
 | Inspect all form fields | `get_form_fields` |
 | Scroll to a known element | `scroll_to_element` |
-| Highlight elements for the user | `highlight_region`, `find_and_highlight` |
+| Highlight elements for the user | `highlight_region` |
 | Wait for the user to click | `wait_for_click` |
-| Wait for async changes | `wait_for_selector` |
+| Wait for async changes | `wait_for` |
 | Run arbitrary JS | `execute_script` |
 | Read browser console output | `get_console_logs` |
-| Capture credentials to `.env` | `read_element`, `write_to_env` |
+| Capture credentials to `.env` | `get_page_text`, `write_to_env` |
 | Screenshot (Claude-only by default; pass `copy_to_clipboard` / `save_to` to share) | `take_screenshot` |
 | Screenshot the terminal window | `capture_terminal` |
-| Save/restore form state across tabs | `save_page_state`, `restore_page_state` |
 
 ### File uploads
 

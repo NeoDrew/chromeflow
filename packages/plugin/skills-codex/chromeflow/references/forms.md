@@ -19,7 +19,10 @@ shadow roots. Each field carries `type`, `label`, current `value`,
 
 Also reports:
 - **CAPTCHA presence** (`⚠ CAPTCHA detected: recaptcha/turnstile/hcaptcha`)
-  with the sitekey when available. We are looking to implement captcha parsing logic such that the flow is uninterrupted. 
+  with the sitekey and whether the vendor's response token has actually
+  populated. An empty token after a submit attempt can be probabilistic
+  (invisible/behavioural checks sometimes pass on a retry with a fresh
+  page load) rather than a fixed block — see references/anti-bot.md.
 - **OAuth provider buttons** (`Continue with Google`, `Sign in with
   GitHub`) detected on the page. If the user wants OAuth, click the
   provider button instead of filling email/password.
@@ -53,7 +56,9 @@ annotation dashboards, headlessui/Radix disclosure panels) that only mark a
 field required after a failed submit attempt — so run a submit first,
 then `get_form_fields(only_empty=true)` surfaces exactly what's still
 blocking. If it still returns nothing but Submit is disabled, the page
-likely uses a custom validation hook — try `react_call_prop` on it.
+likely uses a custom validation hook — try walking the fiber via
+`execute_script` to call the handler directly (see
+references/react-recipes.md's "Calling React props directly" recipe).
 
 ## Single fill — `fill_input`
 

@@ -25,12 +25,15 @@ validated against the following platforms (as of 0.10.0):
 
 This list is shorter than the one above for a reason. Don't oversell:
 
-- **We do try bypass reCAPTCHA / hCaptcha / Cloudflare Turnstile solving.**
+- **We do NOT bypass reCAPTCHA / hCaptcha / Cloudflare Turnstile solving.**
   `get_form_fields()` reports captcha presence as a `⚠ CAPTCHA detected`
-  line in the response. The submit will be silently rejected and there is
-  no automated recovery — most chromeflow sessions run unattended, so
-  `highlight_region` + `wait_for_click()` just blocks with no one to click.
-  Report the CAPTCHA back rather than waiting on it. We intend to fix this as best as possible. 
+  line in the response, including whether the vendor's response token has
+  actually populated. An empty token after a submit attempt can be
+  probabilistic (invisible/behavioural checks sometimes pass on a retry
+  with a fresh page load) rather than a fixed block — but there is no
+  automated way to force a pass, and most chromeflow sessions run
+  unattended, so `highlight_region` + `wait_for_click()` just blocks with
+  no one to click. Report the CAPTCHA back rather than waiting on it.
 - **We do NOT defeat IP-based fingerprinting / rate limits.** Those are
   network-layer signals chromeflow cannot influence. If a site refuses
   the user's IP, chromeflow cannot help.
@@ -38,7 +41,7 @@ This list is shorter than the one above for a reason. Don't oversell:
   signals** (account age, payment history, device telemetry). We
   maximise the behavioural-signal portion, but the server can still
   down-rank or block.
-- **We do try to claim Reddit / X submit clicks fire without user gesture.**
+- **We do NOT claim Reddit / X submit clicks fire without a real user gesture.**
   These platforms gate submit on isTrusted that survives a real human
   click ceremony most of the time. Pre-fill everything, retry with `try_fiber: true`,
   then report the rejection — don't stall a run waiting for a human who
@@ -183,12 +186,10 @@ and dispatches input + change events. Handles "Illegal invocation" inside
 iframes by reading the prototype from the instance. Pierces closed shadow
 roots via content-script tagging.
 
-```
-react_call_prop("input[name=justification]", "handleForceSubmitConfirmation", ["my reason"])
-```
 When a Submit button's onClick opens a modal that never renders because
-form-level React state is stale, walk up the fiber and call the bypass
-handler directly. Pierces closed shadow roots.
+form-level React state is stale, walk up the fiber via `execute_script`
+and call the bypass handler directly — see references/react-recipes.md's
+"Calling React props directly" recipe.
 
 ## The CDP click sequence, summarised
 

@@ -152,8 +152,9 @@ When the simple flow isn't enough, load the relevant `references/<topic>.md`:
 - **`references/forms.md`** — `get_form_fields`, fill patterns for React /
   contenteditable / CodeMirror / Monaco / TipTap / ProseMirror,
   `fill_form` batch fills, `only_empty` diagnostic.
-- **`references/react-recipes.md`** — React-Select, `react_set_input`,
-  `react_call_prop`, fiber walking.
+- **`references/react-recipes.md`** — React-Select, `fill_input(selector=...)`'s
+  native-value-setter mechanism, an `execute_script` fiber-walk-and-invoke
+  recipe for bypassing stale-state validation handlers, fiber walking.
 - **`references/multi-tab.md`** — Multi-tab workflows, background tabs,
   parallel sessions, stuck-spinner detection.
 - **`references/errors.md`** — Recovery patterns: `silently_rejected`,

@@ -71,11 +71,11 @@ loaded the agent skips `open_page`, so keying recall to `open_page` alone
 missed roughly half of revisits.):
 
 ```
-ℹ known_flow for https://www.reddit.com/submit — prefer these proven steps over rediscovery (verify each as usual):
+ℹ known_flow for https://www.reddit.com/submit — these calls worked before; prefer them over rediscovery, but VERIFY each. If a recalled step fails or its element isn't found on the first attempt, do NOT retry it — discard the hint and rediscover from scratch.
   "submit text post" (3 steps, 4x ok):
-   1. type_text textarea[name=title] (type_text)
-   2. type_text div[name=body] (type_text)
-   3. click_element #submit-post-button (until_url_change) [via dom-click]
+   1. type_text(into_selector="textarea[name=title]")
+   2. type_text(into_selector="div[name=body]")
+   3. click_element(selector="#submit-post-button", via="dom-click", until_url_changes=true)
 ```
 
 **Follow it.** Prefer the recalled steps over rediscovering from scratch.

@@ -29,7 +29,7 @@ import {
 } from "../connections";
 
 const groupsEl = document.getElementById("groups")!;
-const statusPill = document.getElementById("status-pill"); // removed from the header; may be absent
+const statusPill = document.getElementById("status-pill"); // not present in the current header markup; updateStatusPill() checks for null and no-ops when absent
 const connectionsEl = document.getElementById("connections")!;
 
 // True while the user is typing in the add/edit connection form. Background

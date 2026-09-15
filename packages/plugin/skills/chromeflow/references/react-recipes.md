@@ -130,27 +130,37 @@ modes:
 - `via: "cdp"` — CDP only, no fiber fallback ever
 - `via: "fiber"` — fiber only, no CDP
 
-## Calling React props directly — `react_call_prop`
+## Calling React props directly via `execute_script`
 
 When a Submit button's onClick opens a modal that never renders because
 form-level React state is stale (validation thinks the form is
 incomplete even though DOM inputs look filled), bypass the validation
-hook by calling the prop directly:
+hook by walking the fiber and calling the prop directly — there is no
+standalone `react_call_prop` tool; do this via `execute_script` using
+the same fiber-walk pattern as the section below:
 
+```js
+function findFiberProp(el, propName) {
+  let nodeKey = Object.keys(el).find(k => k.startsWith('__reactFiber'));
+  let fiber = el[nodeKey];
+  while (fiber) {
+    const props = fiber.memoizedProps || fiber.pendingProps;
+    if (props && propName in props) return props[propName];
+    fiber = fiber.return;
+  }
+  return null;
+}
+const el = $deep('input[name=justification]');
+const fn = findFiberProp(el, 'handleForceSubmitConfirmation');
+return fn ? fn('my justification text') : 'prop not found';
 ```
-react_call_prop("input[name=justification]", "handleForceSubmitConfirmation", ["my justification text"])
-```
 
-Walks up the React fiber from the selector, finds the nearest component
-with a prop function of the given name, calls it with the JSON-
-serializable args. Returns the component name and the stringified
-return value.
-
-Pierces closed shadow DOM via content-script tagging.
+`$deep` pierces open shadow DOM; closed shadow DOM needs `chrome.dom
+.openOrClosedShadowRoot` first (see shadow-dom.md).
 
 ## React fiber walk in raw `execute_script`
 
-When `react_call_prop` doesn't fit (you need to read state, not call a
+When the recipe above doesn't fit (you need to read state, not call a
 function), walk the fiber manually:
 
 ```js
