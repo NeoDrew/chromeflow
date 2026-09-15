@@ -25,15 +25,27 @@ validated against the following platforms (as of 0.10.0):
 
 This list is shorter than the one above for a reason. Don't oversell:
 
-- **We do NOT bypass reCAPTCHA / hCaptcha / Cloudflare Turnstile solving.**
-  `get_form_fields()` reports captcha presence as a `⚠ CAPTCHA detected`
-  line in the response, including whether the vendor's response token has
-  actually populated. An empty token after a submit attempt can be
-  probabilistic (invisible/behavioural checks sometimes pass on a retry
-  with a fresh page load) rather than a fixed block — but there is no
-  automated way to force a pass, and most chromeflow sessions run
-  unattended, so `highlight_region` + `wait_for_click()` just blocks with
-  no one to click. Report the CAPTCHA back rather than waiting on it.
+- **We do NOT solve the CAPTCHA challenge itself** — classifying image
+  tiles, transcribing distorted audio, resolving a puzzle-slider. That's
+  a fundamentally different thing from click/keystroke fidelity and is
+  explicitly out of scope (won't be implemented).
+- **Checkbox-style CAPTCHAs (reCAPTCHA v2 checkbox, hCaptcha checkbox)
+  pass reliably** — these grade trust signals (real navigator
+  fingerprint, `isTrusted` PointerEvent/MouseEvent, a plausible mouse
+  trajectory), not the interaction itself, and the same humanlike click
+  pipeline used everywhere else satisfies them. No separate
+  "CAPTCHA-solving" logic needed; the checkbox just doesn't escalate.
+- **Invisible risk-scoring CAPTCHAs (reCAPTCHA v3, hCaptcha Enterprise
+  invisible mode) pass most of the time, but not always.** These score
+  the whole session's behavior, not one interaction — confirmed live:
+  identical setup on the same hCaptcha-protected form passed, failed,
+  failed, then passed across four attempts. `get_form_fields()` reports
+  whether the vendor's response token actually populated after a submit
+  attempt; an empty token can mean "try again with a fresh page load,"
+  not a fixed block. There is no way to force a pass. Most chromeflow
+  sessions run unattended, so `highlight_region` + `wait_for_click()`
+  just blocks with no one to click — report the CAPTCHA back after a
+  bounded retry rather than waiting on it.
 - **We do NOT defeat IP-based fingerprinting / rate limits.** Those are
   network-layer signals chromeflow cannot influence. If a site refuses
   the user's IP, chromeflow cannot help.
