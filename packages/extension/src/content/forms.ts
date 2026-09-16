@@ -588,6 +588,46 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
     });
   }
 
+  // TinyMCE rich-text editors. The editable content lives inside an iframe
+  // (id "<editorId>_ifr"); the surrounding form validates a separate,
+  // hidden backing <textarea id="<editorId>"> that TinyMCE only syncs to
+  // on its own blur/autosave triggers, not on every keystroke. Without this
+  // block, isAncestorHidden's ancestor walk (used by the standard-inputs
+  // loop above) silently drops the backing textarea from the inventory
+  // entirely, so a genuinely required and genuinely empty TinyMCE field
+  // read as a clean bill of health from get_form_fields(only_empty:true) --
+  // exactly the "controlled input model doesn't register a synthetic
+  // interaction" shape already handled for Workday/TipTap/ProseMirror
+  // elsewhere in this codebase, just via a different sync mechanism.
+  // Detected purely via the iframe id convention (no MAIN-world access
+  // needed to reach window.tinymce) and read from the iframe's own live
+  // body content, which is the actual source of truth -- the backing
+  // textarea's .value can be stale even when the visible editor isn't.
+  const tinymceBackingIds = new Set<string>();
+  for (const ifr of queryAllDeep<HTMLIFrameElement>(doc, 'iframe[id$="_ifr"]')) {
+    if (isAncestorHidden(ifr, doc)) continue;
+    const editorId = ifr.id.slice(0, -4);
+    const backing = doc.getElementById(editorId);
+    if (!backing) continue;
+    tinymceBackingIds.add(editorId);
+    let liveText = "";
+    try {
+      liveText = ifr.contentDocument?.body?.textContent ?? "";
+    } catch { /* cross-origin iframe -- can't read, falls through as empty */ }
+    const context = getNearestHeading(backing, doc);
+    fields.push({
+      index: ++idx,
+      type: "tinymce",
+      label: deriveInputLabel(backing as HTMLElement, doc).replace(/\s+/g, " ").slice(0, 80),
+      value: liveText.trim().slice(0, 60),
+      y: getDocumentY(ifr, doc),
+      selector: `#${CSS.escape(editorId)}`,
+      required: isRequiredField(backing as HTMLElement, doc),
+      empty: liveText.trim().length === 0,
+      ...(context ? { context } : {}),
+    });
+  }
+
   // Sort by vertical position on page, then renumber
   fields.sort((a, b) => a.y - b.y);
   fields.forEach((f, i) => {
@@ -599,10 +639,14 @@ export function enumerateFormFields(doc: Document = document): EnumerateResult {
   // parent (the most common pattern for conditional form sections) are
   // counted, not just inputs hidden directly via their own style. Pierces
   // shadow roots so the count is accurate across web-component-heavy forms.
+  // Excludes TinyMCE backing textareas already surfaced above as their own
+  // field entry -- otherwise the same control would both appear as a real,
+  // actionable field AND count toward "N hidden fields not shown", which
+  // reads as a contradiction (it *is* shown, just not as a plain textarea).
   const hiddenFields = queryAllDeep<HTMLElement>(
     doc,
     "input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]), textarea, select"
-  ).filter((el) => isAncestorHidden(el, doc));
+  ).filter((el) => isAncestorHidden(el, doc) && !(el.id && tinymceBackingIds.has(el.id)));
 
   return {
     fields,

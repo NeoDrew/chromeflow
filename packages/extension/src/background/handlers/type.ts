@@ -736,17 +736,46 @@ export async function handleTypeText(msg: McpMsg, port: number): Promise<unknown
               if (!(active instanceof HTMLElement)) return { ok: false };
               active.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText" }));
               active.dispatchEvent(new Event("change", { bubbles: true }));
+              // TinyMCE-shaped rich-text widgets (iframe id ending in "_ifr",
+              // controller object exposed as window.tinymce in the HOST page,
+              // not inside the iframe) hold the actual editable content in
+              // this iframe's body, but the surrounding form validates a
+              // separate, hidden backing <textarea id="<editorId>"> that only
+              // syncs on TinyMCE's own blur/autosave triggers — CDP keystrokes
+              // land real content in the iframe body (confirmed independently
+              // of this fix) but don't fire whatever TinyMCE listens for to
+              // schedule that sync, the same "controlled input model doesn't
+              // register a synthetic interaction" shape already handled for
+              // Workday/TipTap/ProseMirror/Reddit's faceplate-* components.
+              // `.save()` is TinyMCE's own public API for exactly this: force
+              // an immediate flush from the live editor to its backing field.
+              let tinymceSynced = false;
+              const ifrId = iframe.id;
+              if (ifrId.endsWith("_ifr")) {
+                const editorId = ifrId.slice(0, -4);
+                const tm = (window as unknown as { tinymce?: { get: (id: string) => { save: () => void } | null } }).tinymce;
+                const editor = tm?.get?.(editorId);
+                if (editor) {
+                  editor.save();
+                  const backing = document.getElementById(editorId);
+                  if (backing) {
+                    backing.dispatchEvent(new Event("input", { bubbles: true }));
+                    backing.dispatchEvent(new Event("change", { bubbles: true }));
+                    tinymceSynced = true;
+                  }
+                }
+              }
               const txt = active.isContentEditable
                 ? (active.textContent ?? "")
                 : (active as HTMLInputElement).value ?? "";
-              return { ok: true, length: txt.length };
+              return { ok: true, length: txt.length, tinymceSynced };
             },
             args: [frameSelector],
           });
-          const v = r[0]?.result as { ok: boolean; length?: number } | undefined;
+          const v = r[0]?.result as { ok: boolean; length?: number; tinymceSynced?: boolean } | undefined;
           if (v?.ok && typeof v.length === "number") {
             landed = v.length >= text.length * 0.5;
-            frameVerify = `[frame editor now has ${v.length} chars]`;
+            frameVerify = `[frame editor now has ${v.length} chars]${v.tinymceSynced ? " [synced to TinyMCE backing field]" : ""}`;
           }
           // v.ok === false (cross-origin iframe, or no active element inside
           // it): genuinely can't verify — leave `landed` at its current

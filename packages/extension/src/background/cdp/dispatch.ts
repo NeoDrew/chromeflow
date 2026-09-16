@@ -165,8 +165,18 @@ export async function dispatchHumanMouseClick(
     // existing tight random-offset start so the common single-click case is
     // unaffected.
     const useTravel = !!prev && dist > 120;
-    const sx = useTravel ? prev!.x : cx + Math.round((Math.random() - 0.5) * 60);
-    const sy = useTravel ? prev!.y : cy + Math.round((Math.random() - 0.5) * 60);
+    // Random start offset kept well under the height of a typical tightly-
+    // packed list row (e.g. Google Places Autocomplete's .pac-item rows,
+    // ~31px apart) -- a wider offset here let the bezier approach's early
+    // samples land inside an ADJACENT row before the path ever reaches the
+    // real target, and some suggestion-list widgets track a mouseover-driven
+    // "highlighted index" separately from click coordinates, committing
+    // whichever row was last hovered rather than the literal click target.
+    // 60px (±30) reproduced this live; 24px (±12) stays comfortably inside
+    // a same-sized neighbor for any row taller than ~24px while still
+    // giving genuine start-position variance for anti-detection purposes.
+    const sx = useTravel ? prev!.x : cx + Math.round((Math.random() - 0.5) * 24);
+    const sy = useTravel ? prev!.y : cy + Math.round((Math.random() - 0.5) * 24);
     const midX = (sx + cx) / 2;
     const midY = (sy + cy) / 2;
     const perpDx = -(cy - sy);
