@@ -199,6 +199,41 @@ of a stray one — a screenshot is pixels you still can't grep, and for widgets
 `get_page_text` / `find_text` / `execute_script` gets the same confirmation
 for a fraction of the cost.
 
+### Native (non-React) autocomplete suggestion lists — Google Places and similar
+
+Google Maps JS Places Autocomplete (`.pac-container` / `.pac-item`) and other
+vanilla-JS suggestion-list widgets track a mouseover-driven "highlighted row"
+internally, separate from click coordinates — hovering an item highlights it,
+and the widget's own commit logic can read that internal highlighted index
+rather than strictly the click's target element. Confirmed live: even a real,
+`isTrusted:true` `click_at_coordinates` at a freshly-verified row center can
+land the wrong (vertically adjacent) suggestion when rows are packed tightly
+(~30px apart), and a direct `.click()` / synthetic mouse-event sequence on the
+correct element updates the visible text but never flips the widget's
+internal "place selected" state a required-field validator checks — the
+Continue button stays disabled with `get_form_fields()` showing nothing wrong.
+
+The reliable path is keyboard navigation, not any mouse-based method:
+```
+type_text(into_selector="#autocomplete-input", text="Fleet, Hampshire")
+# wait for suggestions to render, then arrow down to the desired row and commit:
+execute_script(`
+  const el = document.querySelector('#autocomplete-input');
+  const down = (n) => { for (let i=0;i<n;i++) el.dispatchEvent(new KeyboardEvent('keydown', {key:'ArrowDown', code:'ArrowDown', keyCode:40, which:40, bubbles:true})); };
+  down(1); // 1 = first suggestion, 2 = second, etc.
+  el.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', code:'Enter', keyCode:13, which:13, bubbles:true}));
+`)
+```
+Verify which row is actually correct before committing — two visually similar
+suggestions (e.g. "Fleet, Hampshire, UK" vs "Fleet, Hayling Island, Hampshire,
+UK") can both look plausible; read the full suggestion list text first
+(`get_page_text` / `find_text` scoped to the suggestion container) rather than
+assuming index 0 is the intended match.
+
+This generalizes to any suggestion-list widget with the same shape (hover
+tracks a highlighted index independently of click target) — not specific to
+Google Places.
+
 ### File inputs (including hidden drag-zone uploaders)
 
 ```
