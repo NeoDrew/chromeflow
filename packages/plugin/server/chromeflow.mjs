@@ -25296,7 +25296,9 @@ function registerNavigationTools(server, bridge, flowStore) {
 
 Set background=true (only with new_tab=true) to open the new tab WITHOUT switching focus to it. Use this when the current tab has a partially-filled form whose page auto-saves on focus loss (e.g. eBay seller listings) \u2014 switching away would trigger the auto-save and corrupt the in-progress draft.
 
-After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle check (document.readyState=complete, no visible spinner element, 250ms of mutation quiet). If a spinner is still visible at the end of the window, the response carries \`stuck_spinner: true\` with the matching selector \u2014 the canonical case is an SPA route that left a permanent .spinner-wrapper because the API request died. Set expect_selector to wait for a known-good element to appear before considering the page settled \u2014 the response carries \`expect_selector_appeared: false\` if it never showed up.`,
+After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle check (document.readyState=complete, no visible spinner element, 250ms of mutation quiet). If a spinner is still visible at the end of the window, the response carries \`stuck_spinner: true\` with the matching selector \u2014 the canonical case is an SPA route that left a permanent .spinner-wrapper because the API request died. Set expect_selector to wait for a known-good element to appear before considering the page settled \u2014 the response carries \`expect_selector_appeared: false\` if it never showed up.
+
+When new_tab=true, the response also carries \`tab_count\` (total tabs now open in this window) and, once that count gets high, a \`tab_count_warning\` \u2014 a gentle nudge at 25+ tabs, a stronger one at 50+. Long sessions that keep opening tabs without closing old ones can quietly clutter the user's real browser; close tabs you no longer need with close_tab rather than leaving them open indefinitely.`,
     {
       url: external_exports.string().url().describe("The URL to navigate to"),
       new_tab: external_exports.boolean().optional().describe("Open in a new tab instead of replacing the current one (default false)"),
@@ -25337,6 +25339,11 @@ After tabs.onUpdated fires status=complete, chromeflow also runs a 6s settle che
         text += `
 
 \u2139 dismissed_beforeunload: true \u2014 the previous page had unsaved content (typed text in a composer, form draft, etc.) and Chrome's "Are you sure you want to leave?" dialog was auto-dismissed so navigation could proceed. If that draft was load-bearing, navigate back and re-capture before continuing.`;
+      }
+      if (r.tab_count_warning) {
+        text += `
+
+${r.tab_count_warning}`;
       }
       flowStore.noteUrl(r.current_url ?? url);
       text += flowStore.recallHint(r.current_url ?? url);
@@ -26796,7 +26803,7 @@ function registerFlowTools(server, bridge, flowStore) {
 }
 
 // packages/mcp-server/src/index.ts
-var PACKAGE_VERSION = true ? "0.13.17" : "dev";
+var PACKAGE_VERSION = true ? "0.13.18" : "dev";
 main().catch((err) => {
   console.error("[chromeflow] Fatal error:", err);
   process.exit(1);
