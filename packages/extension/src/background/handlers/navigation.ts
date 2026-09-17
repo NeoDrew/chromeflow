@@ -46,6 +46,15 @@ export async function handleNavigate(msg: McpMsg, port: number): Promise<unknown
         }
       }
 
+      // Populated only when this call opens a new tab (see below) — a long
+      // agent session can quietly accumulate dozens of tabs one open_page
+      // call at a time, with no single moment that looks alarming on its
+      // own. Surfacing a count + warning here (the tool that's actually
+      // growing the number) beats a separate status/doctor tool nobody
+      // thinks to call.
+      let tabCount: number | undefined;
+      let tabCountWarning: string | null = null;
+
       if (msg.newTab) {
         // Ensure an assignment exists BEFORE creating the tab — otherwise
         // chrome.tabs.create with no windowId drops the tab into whatever
@@ -60,6 +69,13 @@ export async function handleNavigate(msg: McpMsg, port: number): Promise<unknown
         // background tab must NOT steal subsequent calls away from whatever
         // tab this port was already pinned to.
         if (!background && targetTab.id) setPinnedTab(port, targetTab.id);
+
+        tabCount = (await chrome.tabs.query({ windowId: wid })).length;
+        if (tabCount >= 50) {
+          tabCountWarning = `⚠ ${tabCount} tabs open in this window. Please close redundant tabs before continuing — this many makes it easy to lose track of in-progress work and slows the browser down.`;
+        } else if (tabCount >= 25) {
+          tabCountWarning = `ℹ ${tabCount} tabs open in this window. Please clean up the workspace when convenient — close any tabs you no longer need.`;
+        }
       } else {
         // Reuse active tab. When the current page is already on the same origin,
         // navigate via in-page location.href so sec-fetch-site is "same-origin"
@@ -257,6 +273,8 @@ export async function handleNavigate(msg: McpMsg, port: number): Promise<unknown
           current_url: currentUrl,
           anti_bot_detected: antiBotDetected,
           dismissed_beforeunload: dismissedBeforeunload,
+          ...(tabCount !== undefined ? { tab_count: tabCount } : {}),
+          ...(tabCountWarning ? { tab_count_warning: tabCountWarning } : {}),
         };
       }
       await pushInstanceInfoIfNeeded(port, port);
@@ -266,5 +284,7 @@ export async function handleNavigate(msg: McpMsg, port: number): Promise<unknown
         current_url: currentUrl,
         anti_bot_detected: antiBotDetected,
         dismissed_beforeunload: dismissedBeforeunload,
+        ...(tabCount !== undefined ? { tab_count: tabCount } : {}),
+        ...(tabCountWarning ? { tab_count_warning: tabCountWarning } : {}),
       };
 }
