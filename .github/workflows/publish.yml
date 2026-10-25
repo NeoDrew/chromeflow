@@ -1,0 +1,56 @@
+name: Publish to npm
+
+# Publishes the chromeflow npm package when packages/mcp-server/package.json
+# carries a version npm doesn't have yet. Auth is npm Trusted Publishing
+# (OIDC): npmjs.com trusts this exact repo + workflow file, so no NPM_TOKEN
+# secret exists. Provenance is attached automatically.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packages/mcp-server/**'
+      - 'packages/plugin/scripts/build-server.sh'
+      - '.github/workflows/publish.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Trusted Publishing needs npm >= 11.5.1.
+      - run: npm install -g npm@latest
+
+      # Repo-root deps so build-server.sh finds esbuild. `npm install`, not
+      # `npm ci`: the workspaces' nested lockfiles drift.
+      - run: npm install --no-audit --no-fund
+
+      - name: Build the bundled MCP server
+        run: |
+          packages/plugin/scripts/build-server.sh
+          mkdir -p packages/mcp-server/bin
+          cp packages/plugin/server/chromeflow.mjs packages/mcp-server/bin/chromeflow.mjs
+          ls -lh packages/mcp-server/bin/chromeflow.mjs
+
+      - name: Publish if this version is new
+        working-directory: packages/mcp-server
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+          PUBLISHED=$(npm view chromeflow version 2>/dev/null || echo "0.0.0")
+          echo "current=$CURRENT published=$PUBLISHED"
+          if [ "$CURRENT" = "$PUBLISHED" ]; then
+            echo "chromeflow@$CURRENT is already on npm; bump packages/mcp-server/package.json to release."
+            exit 0
+          fi
+          npm publish --access public

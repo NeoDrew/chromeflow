@@ -106,13 +106,12 @@ Live-platform validation is still manual + the anti-bot harness in
    bash packages/plugin/scripts/build-server.sh && node
    packages/extension/pack.mjs`.
 3. Commit. Use the form `feat: X.Y.Z, <subject>`.
-4. `git push`. GitLab CI publishes the npm package automatically when
-   the version in `packages/mcp-server/package.json` differs from the
-   one on the npm registry.
+4. `git push`. GitHub Actions (`.github/workflows/publish.yml`) publishes
+   the npm package automatically when the version in
+   `packages/mcp-server/package.json` differs from the one on the npm
+   registry. It can also be run by hand from the repo's Actions tab.
 5. Manually upload the new `chromeflow-X.Y.Z.zip` to the Chrome Web
    Store dev console (the listing is not auto-published yet).
-
-The GitLab CI pipeline definition is in `.gitlab-ci.yml`.
 
 ## Tool-surface philosophy
 
@@ -238,33 +237,12 @@ Do NOT add new content to this file. Repo-developer concerns only.
 
 ## CI / publish credentials
 
-- **npm auth**: `.gitlab-ci.yml`'s publish job is wired for Trusted
-  Publishing (OIDC) — requests an `NPM_ID_TOKEN` (`aud:
-  "npm:registry.npmjs.org"`), which npm CLI >= 11.5.1 auto-detects and
-  exchanges for a short-lived publish credential instead of a stored
-  `NPM_TOKEN`. **Status as of 2026-09-07: NOT YET WORKING.** A live publish
-  attempt failed with `ENEEDAUTH` / `OIDC token exchange error - package
-  not found` — npm's own docs warn a Trusted Publisher config isn't
-  validated when saved, only when a publish is attempted, and that's
-  exactly what happened here: the npmjs.com setup form (chromeflow →
-  Settings → Trusted Publisher → GitLab CI/CD → Namespace `NeoDrew` /
-  Project `chromeflow` / CI file `.gitlab-ci.yml`) hit a security-key 2FA
-  challenge on submit, and nobody was able to get back past that same
-  2FA wall afterward to confirm it actually saved. Needs re-verifying (or
-  redoing) the connection on npmjs.com next time someone's at a machine
-  with the security key — the CI-side config in `.gitlab-ci.yml` doesn't
-  need further changes, this is purely an npmjs.com-side setup gap.
-  Until fixed, releases need a manual `npm publish --access public` from
-  a machine with valid npm credentials (see git log around 2026-09-06 for
-  how 0.12.6 shipped this way).
-- **OIDC**: GitLab CI also signs npm's provenance attestation via Sigstore
-  using a second OIDC token (`id_tokens.SIGSTORE_ID_TOKEN: aud: sigstore`).
-  Provenance generation itself is automatic once Trusted Publishing is
-  actually working — no `--provenance` flag needed on `npm publish`. Note:
-  the manually-published 0.12.6 has NO provenance attestation as a result
-  (only releases published through a working CI OIDC flow get one).
-- The old 90-day granular `NPM_TOKEN` rotation is what Trusted Publishing
-  is meant to replace (npm is also restricting bypass-2FA tokens further:
-  account changes since Aug 2026, direct publishing from Jan 2027). Keep
-  the `NPM_TOKEN` CI/CD variable around as a fallback until OIDC is
-  confirmed working end to end, then remove it.
+- **npm auth**: `.github/workflows/publish.yml` uses npm Trusted
+  Publishing (OIDC, `id-token: write`): npmjs.com trusts the GitHub repo
+  `NeoDrew/chromeflow` and that workflow file, so there is no stored
+  `NPM_TOKEN`. Configured on npmjs.com under chromeflow → Settings →
+  Trusted Publisher → GitHub Actions. Saving that form needs the npm
+  account's security key. Provenance attestations are generated
+  automatically by the same OIDC flow. (Until 2026-10-25 this ran on GitLab
+  CI, which never got past the npmjs.com setup step; the repo moved back to
+  GitHub and GitLab was deleted.)

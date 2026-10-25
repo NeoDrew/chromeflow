@@ -50,7 +50,7 @@ import { markerIds } from "../../markers";
 async function mainWorldFiberInvoke(
   tabId: number,
   tagAttr: string,
-): Promise<{ fired: boolean; component?: string; propUsed?: string; reason?: string }> {
+): Promise<{ fired: boolean; component?: string; propUsed?: string; reason?: string; threwInternally?: boolean; error?: string }> {
   const r = await chrome.scripting.executeScript({
     target: { tabId },
     world: "MAIN",
@@ -78,11 +78,24 @@ async function mainWorldFiberInvoke(
           for (const [propName, evType] of [["onClick", "click"], ["onMouseDown", "mousedown"], ["onPointerDown", "pointerdown"]] as const) {
             const handler = props?.[propName];
             if (typeof handler === "function") {
+              // nativeEvent must be a REAL Event, not a stub — Radix/shadcn
+              // controlled components (Checkbox, Button) read properties off
+              // it beyond .isTrusted (instanceof checks, .type, .button) and
+              // throw when it's a plain object. persist() is React's
+              // event-pooling back-compat API; some component libraries call
+              // it unconditionally even though React 17+ no longer pools.
+              // Both are load-bearing for at least Radix UI's click handlers
+              // (see ISSUE-2026-09-20-fiber-click-minimal-synthetic-event-
+              // silently-noops-on-radix-shadcn-controlled-components.md).
+              const nativeEvent = evType === "pointerdown"
+                ? new PointerEvent(evType, { bubbles: true, cancelable: true })
+                : new MouseEvent(evType, { bubbles: true, cancelable: true });
               const ev = {
                 preventDefault() { /* noop */ },
                 stopPropagation() { /* noop */ },
                 stopImmediatePropagation() { /* noop */ },
-                nativeEvent: { isTrusted: true },
+                nativeEvent,
+                persist() { /* noop */ },
                 target: el,
                 currentTarget: el,
                 type: evType,
@@ -92,10 +105,24 @@ async function mainWorldFiberInvoke(
                 isDefaultPrevented: () => false,
                 isPropagationStopped: () => false,
               };
+              let threwInternally = false;
+              let error: string | undefined;
               try {
                 (handler as (e: unknown) => void)(ev);
-              } catch { /* component threw; still counts as "fired" */ }
-              return { fired: true, component: node instanceof Element ? node.tagName.toLowerCase() : undefined, propUsed: propName };
+              } catch (e) {
+                // Still counts as "fired" — the handler WAS invoked — but the
+                // exception is surfaced instead of silently swallowed, so a
+                // caller can tell "ran clean" apart from "ran but threw"
+                // rather than trusting a false-positive success report.
+                threwInternally = true;
+                error = String(e);
+              }
+              return {
+                fired: true,
+                component: node instanceof Element ? node.tagName.toLowerCase() : undefined,
+                propUsed: propName,
+                ...(threwInternally ? { threwInternally, error } : {}),
+              };
             }
           }
         } catch {
@@ -228,7 +255,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           type: "click_element_response",
           success: fiberResult.fired,
           message: fiberResult.fired
-            ? `Invoked React fiber ${fiberResult.propUsed} on "${prep.label ?? msg.textHint ?? msg.selector}"${fiberResult.component ? ` (component: ${fiberResult.component})` : ""}`
+            ? `Invoked React fiber ${fiberResult.propUsed} on "${prep.label ?? msg.textHint ?? msg.selector}"${fiberResult.component ? ` (component: ${fiberResult.component})` : ""}${fiberResult.threwInternally ? ` — WARNING: the handler threw internally (${fiberResult.error}); state may not have actually changed, verify with get_form_fields/find_text/execute_script before trusting this` : ""}`
             : `Found "${prep.label ?? msg.textHint ?? msg.selector}" but ${fiberResult.reason}`,
           before_url,
           after_url: afterUrlF,
@@ -263,7 +290,7 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           return {
             type: "click_element_response",
             success: true,
-            message: `Invoked React fiber ${earlyFiber.propUsed} on "${prep.label ?? msg.textHint ?? msg.selector}"${earlyFiber.component ? ` (component: ${earlyFiber.component})` : ""} (role="option", tried fiber before any real click to avoid losing the race against the list closing)`,
+            message: `Invoked React fiber ${earlyFiber.propUsed} on "${prep.label ?? msg.textHint ?? msg.selector}"${earlyFiber.component ? ` (component: ${earlyFiber.component})` : ""} (role="option", tried fiber before any real click to avoid losing the race against the list closing)${earlyFiber.threwInternally ? ` — WARNING: the handler threw internally (${earlyFiber.error}); state may not have actually changed, verify before trusting this` : ""}`,
             before_url,
             after_url: afterUrlRole,
             navigated: afterUrlRole !== before_url,
@@ -940,13 +967,13 @@ export async function handleClickElement(msg: McpMsg, port: number): Promise<unk
           // footer-icon mismatch class of bug), and the tag is already
           // guaranteed to point at the exact right one.
           const fiberOutcome = await phaseRace("react_fiber_click", 3500, mainWorldFiberInvoke(tab.id!, markerIds.clickTargetAttr()))
-            .catch((e) => ({ fired: false, component: undefined, propUsed: undefined, reason: String(e) }));
+            .catch((e) => ({ fired: false, component: undefined, propUsed: undefined, reason: String(e), threwInternally: undefined, error: undefined }));
           const fiberResult = {
             success: fiberOutcome.fired,
             fired: fiberOutcome.fired,
             component: fiberOutcome.component,
             message: fiberOutcome.fired
-              ? `Invoked React fiber ${fiberOutcome.propUsed} on "${prep.label ?? msg.textHint ?? msg.selector}"${fiberOutcome.component ? ` (component: ${fiberOutcome.component})` : ""}`
+              ? `Invoked React fiber ${fiberOutcome.propUsed} on "${prep.label ?? msg.textHint ?? msg.selector}"${fiberOutcome.component ? ` (component: ${fiberOutcome.component})` : ""}${fiberOutcome.threwInternally ? ` — WARNING: the handler threw internally (${fiberOutcome.error}); state may not have actually changed, verify before trusting this` : ""}`
               : `Found "${prep.label ?? msg.textHint ?? msg.selector}" but ${fiberOutcome.reason}`,
           };
 

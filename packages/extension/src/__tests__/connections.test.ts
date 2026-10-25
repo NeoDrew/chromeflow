@@ -189,7 +189,7 @@ describe("isDefaultPort", () => {
 
   it("is false just outside the range and for synthetic ids", () => {
     expect(isDefaultPort(7877)).toBe(false);
-    expect(isDefaultPort(7889)).toBe(false);
+    expect(isDefaultPort(DEFAULT_PORT_MAX + 1)).toBe(false);
     expect(isDefaultPort(SYNTHETIC_CONNID_BASE)).toBe(false);
   });
 });
