@@ -5,7 +5,7 @@ const HOST_CONFIG = {
   claude: {
     title: 'Install the Claude Code plugin',
     cmds: [
-      '/plugin marketplace add https://gitlab.com/NeoDrew/chromeflow.git',
+      '/plugin marketplace add https://github.com/NeoDrew/chromeflow.git',
       '/plugin install chromeflow',
     ],
     name: 'Claude Code',
@@ -16,7 +16,7 @@ const HOST_CONFIG = {
   codex: {
     title: 'Install the Codex CLI plugin',
     cmds: [
-      'codex plugin marketplace add https://gitlab.com/NeoDrew/chromeflow.git',
+      'codex plugin marketplace add https://github.com/NeoDrew/chromeflow.git',
       '/plugins install chromeflow',
     ],
     name: 'Codex CLI',

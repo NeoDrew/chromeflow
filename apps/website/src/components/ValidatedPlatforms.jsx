@@ -339,7 +339,7 @@ export default function ValidatedPlatforms() {
             chromeflow.run/validated
           </a>
           {' '}or in the{' '}
-          <a href="https://gitlab.com/NeoDrew/chromeflow/-/tree/main/tests/antibot" style={{ color: 'var(--amber)', textDecoration: 'underline' }}>
+          <a href="https://github.com/NeoDrew/chromeflow/tree/main/tests/antibot" style={{ color: 'var(--amber)', textDecoration: 'underline' }}>
             tests/antibot/
           </a>
           {' '}directory.

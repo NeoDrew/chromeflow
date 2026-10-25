@@ -46,7 +46,7 @@ const NAV_LINKS = [
   { href: '/use-cases', label: 'Use cases' },
   { href: '/compare', label: 'Compare' },
   { href: '/faq', label: 'FAQ' },
-  { href: 'https://gitlab.com/NeoDrew/chromeflow', label: 'GitLab', external: true },
+  { href: 'https://github.com/NeoDrew/chromeflow', label: 'GitHub', external: true },
 ]
 
 export default function Nav() {

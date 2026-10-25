@@ -7,14 +7,14 @@ The standalone npm package for the [Chromeflow](https://chromeflow.run) MCP serv
 For **Claude Code**:
 
 ```
-/plugin marketplace add https://gitlab.com/NeoDrew/chromeflow.git
+/plugin marketplace add https://github.com/NeoDrew/chromeflow.git
 /plugin install chromeflow
 ```
 
 For **Codex CLI**:
 
 ```
-codex plugin marketplace add https://gitlab.com/NeoDrew/chromeflow.git
+codex plugin marketplace add https://github.com/NeoDrew/chromeflow.git
 /plugins
 ```
 
@@ -47,11 +47,11 @@ You still need the [Chromeflow Chrome extension](https://chromewebstore.google.c
 
 ## What's in this package
 
-A single bundled file: `bin/chromeflow.mjs` (~890 KB ESM), built from `packages/mcp-server/src/` via esbuild. Reading source? See the [GitLab repository](https://gitlab.com/NeoDrew/chromeflow).
+A single bundled file: `bin/chromeflow.mjs` (~890 KB ESM), built from `packages/mcp-server/src/` via esbuild. Reading source? See the [GitHub repository](https://github.com/NeoDrew/chromeflow).
 
 ## Tools exposed (v0.9.5)
 
-28 MCP tools across navigation, reading, interaction, waiting, privileged network, highlight + handoff, and utility. The full catalogue lives in [CLAUDE.md](https://gitlab.com/NeoDrew/chromeflow/-/blob/main/CLAUDE.md) — read that before writing an agent that calls these tools.
+28 MCP tools across navigation, reading, interaction, waiting, privileged network, highlight + handoff, and utility. The full catalogue lives in [CLAUDE.md](https://github.com/NeoDrew/chromeflow/blob/main/CLAUDE.md) — read that before writing an agent that calls these tools.
 
 ## Links
 
@@ -59,10 +59,10 @@ A single bundled file: `bin/chromeflow.mjs` (~890 KB ESM), built from `packages/
 - **Compare to Playwright / Browser Use / Puppeteer**: https://chromeflow.run/compare
 - **Use cases** (Stripe, Canvas, OAuth, API keys): https://chromeflow.run/use-cases
 - **FAQ**: https://chromeflow.run/faq
-- **GitLab**: https://gitlab.com/NeoDrew/chromeflow
+- **GitHub**: https://github.com/NeoDrew/chromeflow
 - **Chrome Web Store**: https://chromewebstore.google.com/detail/chromeflow/lkdchdgkbkodliefobkkhiegjdiidime
 - **MCP Registry**: `run.chromeflow/chromeflow` (DNS-verified namespace via chromeflow.run)
 
 ## License
 
-MIT — see [LICENSE](https://gitlab.com/NeoDrew/chromeflow/-/blob/main/LICENSE).
+MIT — see [LICENSE](https://github.com/NeoDrew/chromeflow/blob/main/LICENSE).
